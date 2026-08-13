@@ -4,7 +4,7 @@
 
 > 정리는 나중에. 생각부터 붙인다.
 
-현재 버전은 `v0.1.0`입니다. 버전은 로그인 화면과 프로필 컨텍스트 메뉴에 함께 표시됩니다.
+현재 버전은 `v0.2.0`입니다. 버전은 로그인 화면과 프로필 컨텍스트 메뉴에 함께 표시됩니다.
 
 ## 핵심 경험
 
@@ -12,6 +12,10 @@
 - 저장 버튼 없는 자동 저장, Drag/Resize, Zoom/Pan, 검색, 연결, 위치 Undo/Redo
 - 미세한 종이 질감·안착 애니메이션과 Semantic Color
 - 연결된 생각을 사용자가 요청할 때만 모으는 Thought Gravity
+- 외부 AI 없이 동작하는 의미 기반 Related Thoughts·Cluster와 메모 버전 복원
+- 선택한 생각을 조용히 발전시키는 요약·질문·확장·반대 관점·실행 항목 도구
+- 공간 멤버 권한, PostgreSQL 이벤트 기반 실시간 Canvas 동기화, 알림
+- Markdown·PNG·PDF 내보내기와 작업별 조건부 승인
 - Keycloak OIDC Discovery 기반 SSO와 역할/그룹 자동 매핑
 - 서비스 관리자와 개인 설정의 명확한 분리
 - 개인 API/MCP 키의 세부 scope 변경, 만료, 폐기, 중첩 시간 기반 회전
@@ -65,21 +69,21 @@ Go 서버는 `:8080`, Vite는 `:5173`에서 실행되며 Vite가 `/api`와 `/mcp
 릴리스 자산 이름과 이미지 태그는 고정 규칙을 따릅니다.
 
 ```text
-Docker image: umm:v0.1.0
-Release file: umm-v0.1.0.tar.gz
+Docker image: umm:v0.2.0
+Release file: umm-v0.2.0.tar.gz
 ```
 
 연결망에서 GitHub Release의 `umm-vX.Y.Z.tar.gz` 한 파일을 반입한 뒤:
 
 ```bash
-gzip -dc umm-v0.1.0.tar.gz | docker load
+gzip -dc umm-v0.2.0.tar.gz | docker load
 docker run -d --name umm --restart unless-stopped \
   -p 8080:8080 \
   -e POSTGRES_DSN='postgres://umm:...@postgres.internal:5432/umm?sslmode=require' \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='긴-초기-비밀번호' \
   -e ENCRYPTION_KEY='base64-32-byte-key' \
-  umm:v0.1.0
+  umm:v0.2.0
 ```
 
 PostgreSQL은 운영 조직이 관리하는 기존 인스턴스를 사용합니다. Dream을 켜려면 오프라인망 내부의 OpenAI 호환 LLM Gateway를 관리자 페이지에서 지정합니다. AI와 Keycloak이 없어도 로컬 로그인과 Canvas 기능은 동작합니다.
@@ -109,7 +113,7 @@ Discovery endpoint와 서명키는 Keycloak에서 자동으로 찾으며 Client 
 로컬 산출물:
 
 ```bash
-./scripts/release-image.sh 0.1.0
+./scripts/release-image.sh 0.2.0
 ```
 
-Git tag `v0.1.0`을 push하면 CI가 `VERSION` 일치 여부를 확인하고 `umm:v0.1.0`을 빌드한 뒤, Docker image만 담은 `umm-v0.1.0.tar.gz`를 GitHub Release에 첨부합니다.
+Git tag `v0.2.0`을 push하면 CI가 `VERSION` 일치 여부를 확인하고 `umm:v0.2.0`을 빌드한 뒤, Docker image만 담은 `umm-v0.2.0.tar.gz`를 GitHub Release에 첨부합니다.

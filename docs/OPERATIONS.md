@@ -13,8 +13,8 @@
 ## 설치
 
 ```bash
-./scripts/load-offline.sh umm-v0.1.0.tar.gz
-docker image inspect umm:v0.1.0
+./scripts/load-offline.sh umm-v0.2.0.tar.gz
+docker image inspect umm:v0.2.0
 ```
 
 PostgreSQL user는 대상 database에 schema/table/extension을 생성할 권한이 필요합니다. 시작 시 embedded migration이 transaction으로 실행됩니다.
@@ -66,4 +66,4 @@ AI Gateway 오류는 retry 후 failed job과 `ai_calls`에 기록됩니다. 일�
 
 ## Release 규칙
 
-`VERSION`이 `0.1.0`이면 tag는 `v0.1.0`, image는 `umm:v0.1.0`, GitHub asset은 `umm-v0.1.0.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 서비스 Docker image tarball만 첨부합니다.
+`VERSION`이 `0.2.0`이면 tag는 `v0.2.0`, image는 `umm:v0.2.0`, GitHub asset은 `umm-v0.2.0.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 서비스 Docker image tarball만 첨부합니다.

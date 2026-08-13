@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: umm API
-  version: 0.1.0
+  version: 0.2.0
   description: Spatial Thought Memory, key management, workflow and Dream Layer API.
 servers:
   - url: /api/v1
@@ -11,6 +11,8 @@ security:
 tags:
   - name: Auth
   - name: Thoughts
+  - name: Collaboration
+  - name: AI
   - name: Personal
   - name: Dream
   - name: Workflow
@@ -108,6 +110,89 @@ paths:
       summary: Soft-delete a note
       x-required-scope: notes:write
       responses: { '204': { description: Deleted } }
+  /notes/{noteId}/related:
+    parameters:
+      - { $ref: '#/components/parameters/NoteID' }
+    get:
+      tags: [Thoughts]
+      summary: Discover semantically related thoughts with the offline embedding
+      x-required-scope: notes:read
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 20, default: 8 } }
+      responses:
+        '200': { description: Ranked related thoughts, content: { application/json: { schema: { type: object, properties: { related: { type: array, items: { $ref: '#/components/schemas/RelatedNote' } } } } } } }
+  /notes/{noteId}/history:
+    parameters:
+      - { $ref: '#/components/parameters/NoteID' }
+    get:
+      tags: [Thoughts]
+      summary: List autosaved revisions of a note
+      responses:
+        '200': { description: Revisions, content: { application/json: { schema: { type: object, properties: { history: { type: array, items: { $ref: '#/components/schemas/NoteRevision' } } } } } } }
+  /notes/{noteId}/restore/{version}:
+    parameters:
+      - { $ref: '#/components/parameters/NoteID' }
+      - { in: path, name: version, required: true, schema: { type: integer, minimum: 1 } }
+    post:
+      tags: [Thoughts]
+      summary: Restore a prior revision while preserving the current state in history
+      responses: { '200': { description: Restored note, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } } }
+  /spaces/{spaceId}/clusters:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+    get:
+      tags: [Thoughts]
+      summary: Discover coherent semantic clusters without an external AI service
+      x-required-scope: notes:read
+      responses:
+        '200': { description: Thought clusters, content: { application/json: { schema: { type: object, properties: { clusters: { type: array, items: { $ref: '#/components/schemas/ThoughtCluster' } } } } } } }
+  /spaces/{spaceId}/events:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+    get:
+      tags: [Collaboration]
+      summary: Subscribe to authorized canvas changes with Server-Sent Events
+      parameters:
+        - { in: query, name: after, schema: { type: integer, format: int64 } }
+      responses:
+        '200': { description: Space change event stream, content: { text/event-stream: { schema: { type: string } } } }
+  /spaces/{spaceId}/members:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+    get:
+      tags: [Collaboration]
+      summary: List space members and the caller's management capability
+      responses:
+        '200': { description: Members, content: { application/json: { schema: { type: object, properties: { members: { type: array, items: { $ref: '#/components/schemas/SpaceMember' } }, canManage: { type: boolean } } } } } }
+    post:
+      tags: [Collaboration]
+      summary: Share a space immediately or create a configured approval request
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [username, permission], properties: { username: { type: string }, permission: { type: string, enum: [view, edit, manage] } } } } } }
+      responses: { '201': { description: Shared immediately }, '202': { description: Approval required }, '403': { $ref: '#/components/responses/Error' } }
+  /spaces/{spaceId}/members/{memberId}:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+      - { in: path, name: memberId, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Collaboration]
+      summary: Remove a non-owner space member
+      responses: { '204': { description: Member removed }, '403': { $ref: '#/components/responses/Error' } }
+  /spaces/{spaceId}/export/authorize:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+    get:
+      tags: [Workflow]
+      summary: Check whether an export is currently authorized
+      parameters:
+        - { in: query, name: format, schema: { type: string, enum: [markdown, image, pdf] } }
+      responses: { '200': { description: Export allowed }, '409': { description: Approval required } }
+  /spaces/{spaceId}/export/markdown:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+    get:
+      tags: [Thoughts]
+      summary: Export notes and connections as Markdown
+      responses: { '200': { description: Markdown file, content: { text/markdown: { schema: { type: string } } } }, '409': { description: Approval required } }
   /spaces/{spaceId}/edges:
     parameters:
       - { $ref: '#/components/parameters/SpaceID' }
@@ -117,6 +202,12 @@ paths:
       x-required-scope: notes:write
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EdgeWrite' } } } }
       responses: { '201': { description: Edge created, content: { application/json: { schema: { $ref: '#/components/schemas/Edge' } } } } }
+  /ai/assist:
+    post:
+      tags: [AI]
+      summary: Quietly develop selected thoughts with the configured internal AI Gateway
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [noteIds, mode], properties: { noteIds: { type: array, minItems: 1, maxItems: 20, items: { type: string, format: uuid } }, mode: { type: string, enum: [summarize, questions, expand, challenge, actions] } } } } } }
+      responses: { '200': { description: Generated thought aid }, '400': { $ref: '#/components/responses/Error' } }
   /preferences:
     get:
       tags: [Personal]
@@ -140,6 +231,18 @@ paths:
         required: true
         content: { application/json: { schema: { type: object, required: [name, scopes], properties: { name: { type: string }, scopes: { type: array, items: { type: string } }, expiresDays: { type: integer, minimum: 1, maximum: 3650 } } } } }
       responses: { '201': { description: Key metadata and one-time secret } }
+  /notifications:
+    get:
+      tags: [Personal]
+      summary: List personal Dream and collaboration notifications
+      responses: { '200': { description: Notifications and unread count } }
+  /notifications/{notificationId}/read:
+    parameters:
+      - { in: path, name: notificationId, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Personal]
+      summary: Mark a notification as read
+      responses: { '200': { description: Marked read }, '404': { $ref: '#/components/responses/Error' } }
   /api-keys/{keyId}:
     parameters:
       - { $ref: '#/components/parameters/KeyID' }
@@ -260,8 +363,8 @@ components:
       properties: { error: { type: string } }
     Meta:
       type: object
-      required: [serviceName, version, oidcEnabled, mcpProtocol]
-      properties: { serviceName: { type: string }, version: { type: string }, oidcEnabled: { type: boolean }, mcpProtocol: { type: string } }
+      required: [serviceName, version, oidcEnabled, dreamEnabled, dreamAllowUserDisable, mcpProtocol]
+      properties: { serviceName: { type: string }, version: { type: string }, oidcEnabled: { type: boolean }, dreamEnabled: { type: boolean }, dreamAllowUserDisable: { type: boolean }, mcpProtocol: { type: string } }
     User:
       type: object
       required: [id, username, displayName, role, active]
@@ -301,8 +404,48 @@ components:
             authorId: { type: string, format: uuid }
             source: { type: string, enum: [user, dream, api, mcp] }
             version: { type: integer }
+            relatedCount: { type: integer, minimum: 0 }
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
+    RelatedNote:
+      type: object
+      required: [note, score, reason]
+      properties:
+        note: { $ref: '#/components/schemas/Note' }
+        score: { type: number, minimum: 0, maximum: 1 }
+        reason: { type: string }
+    ThoughtCluster:
+      type: object
+      required: [id, label, noteIds, cohesion]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        noteIds: { type: array, items: { type: string, format: uuid } }
+        cohesion: { type: number, minimum: 0, maximum: 1 }
+    NoteRevision:
+      type: object
+      required: [version, content, title, color, kind, x, y, width, height, rotation, createdAt]
+      properties:
+        version: { type: integer, minimum: 1 }
+        content: { type: string }
+        title: { type: string }
+        color: { type: string }
+        kind: { type: string }
+        x: { type: number }
+        y: { type: number }
+        width: { type: number }
+        height: { type: number }
+        rotation: { type: number }
+        createdAt: { type: string, format: date-time }
+    SpaceMember:
+      type: object
+      required: [id, username, displayName, email, permission]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        email: { type: string }
+        permission: { type: string, enum: [owner, view, edit, manage] }
     EdgeWrite:
       type: object
       required: [source, target]

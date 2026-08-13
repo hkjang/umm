@@ -24,6 +24,8 @@ Mcp-Method: tools/list
 | `search_notes` | `notes:read` | 공간 안의 생각 검색 |
 | `create_note` | `notes:write` | 캔버스에 생각 붙이기 |
 | `connect_notes` | `notes:write` | 두 생각 연결 |
+| `get_related_notes` | `notes:read` | 로컬 의미 벡터로 연관 생각 발견 |
+| `list_clusters` | `notes:read` | 공간의 의미 기반 생각 군집 조회 |
 | `list_dreams` | `dreams:read` | 개인 Dream 기록 조회 |
 
 도구는 캐시 안정성을 위해 이름순으로 고정되어 있습니다. 쓰기 도구 호출은 감사 로그에 기록됩니다.
@@ -51,3 +53,5 @@ curl https://umm.internal/mcp \
 ```
 
 키를 회전하면 관리자 설정의 중첩 시간 동안 이전 키가 함께 유효합니다. 새 secret은 생성 직후 한 번만 표시됩니다.
+
+연관 검색과 군집화는 외부 임베딩 API를 호출하지 않는 내장 feature-hashing 벡터를 사용하므로 폐쇄망에서도 기본 동작합니다. Dream과 인라인 AI 도구만 관리자가 설정한 망 내부 AI Gateway를 사용합니다.

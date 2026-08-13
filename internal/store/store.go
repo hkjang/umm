@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/intelligence"
 	"github.com/hkjang/umm/migrations"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -35,22 +37,23 @@ type Space struct {
 }
 
 type Note struct {
-	ID        uuid.UUID `json:"id"`
-	SpaceID   uuid.UUID `json:"spaceId"`
-	AuthorID  uuid.UUID `json:"authorId"`
-	Content   string    `json:"content"`
-	Title     string    `json:"title"`
-	Color     string    `json:"color"`
-	Kind      string    `json:"kind"`
-	Source    string    `json:"source"`
-	X         float64   `json:"x"`
-	Y         float64   `json:"y"`
-	Width     float64   `json:"width"`
-	Height    float64   `json:"height"`
-	Rotation  float64   `json:"rotation"`
-	Version   int       `json:"version"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID           uuid.UUID `json:"id"`
+	SpaceID      uuid.UUID `json:"spaceId"`
+	AuthorID     uuid.UUID `json:"authorId"`
+	Content      string    `json:"content"`
+	Title        string    `json:"title"`
+	Color        string    `json:"color"`
+	Kind         string    `json:"kind"`
+	Source       string    `json:"source"`
+	X            float64   `json:"x"`
+	Y            float64   `json:"y"`
+	Width        float64   `json:"width"`
+	Height       float64   `json:"height"`
+	Rotation     float64   `json:"rotation"`
+	Version      int       `json:"version"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+	RelatedCount int       `json:"relatedCount"`
 }
 
 type Edge struct {
@@ -59,6 +62,31 @@ type Edge struct {
 	SourceID uuid.UUID `json:"source"`
 	TargetID uuid.UUID `json:"target"`
 	Relation string    `json:"relation"`
+}
+
+type RelatedNote struct {
+	Note   Note    `json:"note"`
+	Score  float64 `json:"score"`
+	Reason string  `json:"reason"`
+}
+type ThoughtCluster struct {
+	ID       string      `json:"id"`
+	Label    string      `json:"label"`
+	NoteIDs  []uuid.UUID `json:"noteIds"`
+	Cohesion float64     `json:"cohesion"`
+}
+type NoteRevision struct {
+	Version   int       `json:"version"`
+	Content   string    `json:"content"`
+	Title     string    `json:"title"`
+	Color     string    `json:"color"`
+	Kind      string    `json:"kind"`
+	X         float64   `json:"x"`
+	Y         float64   `json:"y"`
+	Width     float64   `json:"width"`
+	Height    float64   `json:"height"`
+	Rotation  float64   `json:"rotation"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 func Open(ctx context.Context, dsn string) (*Store, error) {
@@ -74,23 +102,55 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
-	initialSchema, err := migrations.FS.ReadFile("001_init.sql")
+	conn, err := s.Pool.Acquire(ctx)
 	if err != nil {
-		return fmt.Errorf("read embedded schema: %w", err)
+		return fmt.Errorf("acquire migration connection: %w", err)
 	}
-	tx, err := s.Pool.Begin(ctx)
+	defer conn.Release()
+	if _, err = conn.Exec(ctx, `SELECT pg_advisory_lock(8112026)`); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer conn.Exec(context.Background(), `SELECT pg_advisory_unlock(8112026)`)
+	if _, err = conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
+		return fmt.Errorf("initialize migration ledger: %w", err)
+	}
+	entries, err := migrations.FS.ReadDir(".")
 	if err != nil {
-		return err
+		return fmt.Errorf("read embedded migrations: %w", err)
 	}
-	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, string(initialSchema)); err != nil {
-		return fmt.Errorf("apply schema: %w", err)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		version := strings.TrimSuffix(entry.Name(), ".sql")
+		var applied bool
+		if err := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version=$1)`, version).Scan(&applied); err != nil {
+			return fmt.Errorf("check migration %s: %w", entry.Name(), err)
+		}
+		if applied {
+			continue
+		}
+		raw, readErr := migrations.FS.ReadFile(entry.Name())
+		if readErr != nil {
+			return readErr
+		}
+		tx, beginErr := conn.Begin(ctx)
+		if beginErr != nil {
+			return beginErr
+		}
+		if _, execErr := tx.Exec(ctx, string(raw)); execErr != nil {
+			_ = tx.Rollback(ctx)
+			return fmt.Errorf("apply migration %s: %w", entry.Name(), execErr)
+		}
+		if _, insertErr := tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES($1) ON CONFLICT DO NOTHING`, version); insertErr != nil {
+			_ = tx.Rollback(ctx)
+			return insertErr
+		}
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			return commitErr
+		}
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO schema_migrations(version) VALUES('001_init') ON CONFLICT DO NOTHING`)
-	if err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (s *Store) BootstrapAdmin(ctx context.Context, username, password string) error {
@@ -268,6 +328,15 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 		}
 		notes = append(notes, n)
 	}
+	s.ensureEmbeddings(ctx, notes)
+	vectors := s.loadEmbeddings(ctx, notes)
+	for i := range notes {
+		for j := range notes {
+			if i != j && intelligence.Cosine(vectors[notes[i].ID], vectors[notes[j].ID]) >= .34 {
+				notes[i].RelatedCount++
+			}
+		}
+	}
 	edgeRows, err := s.Pool.Query(ctx, `SELECT id,space_id,source_note_id,target_note_id,relation FROM note_edges WHERE space_id=$1`, spaceID)
 	if err != nil {
 		return nil, nil, err
@@ -310,12 +379,31 @@ func (s *Store) CreateNote(ctx context.Context, userID uuid.UUID, n Note) (Note,
 		n.Height = 160
 	}
 	err := s.Pool.QueryRow(ctx, `INSERT INTO notes(space_id,author_id,content,title,color,kind,source,x,y,width,height,rotation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id,space_id,author_id,content,title,color,kind,source,x,y,width,height,rotation,version,created_at,updated_at`, n.SpaceID, userID, n.Content, n.Title, n.Color, n.Kind, n.Source, n.X, n.Y, n.Width, n.Height, n.Rotation).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+	if err == nil {
+		_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
+	}
 	return n, err
 }
 
 func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note) (Note, error) {
-	err := s.Pool.QueryRow(ctx, `UPDATE notes SET content=$3,title=$4,color=$5,kind=$6,x=$7,y=$8,width=$9,height=$10,rotation=$11,version=version+1,updated_at=now() WHERE id=$1 AND version=$2 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$12 WHERE s.id=notes.space_id AND (s.owner_id=$12 OR m.permission IN ('edit','manage'))) RETURNING id,space_id,author_id,content,title,color,kind,source,x,y,width,height,rotation,version,created_at,updated_at`, n.ID, n.Version, n.Content, n.Title, n.Color, n.Kind, n.X, n.Y, n.Width, n.Height, n.Rotation, userID).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
-	return n, err
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return Note{}, err
+	}
+	defer tx.Rollback(ctx)
+	_, err = tx.Exec(ctx, `INSERT INTO note_revisions(note_id,version,content,title,color,kind,x,y,width,height,rotation,changed_by) SELECT id,version,content,title,color,kind,x,y,width,height,rotation,$3 FROM notes WHERE id=$1 AND version=$2 AND deleted_at IS NULL ON CONFLICT(note_id,version) DO NOTHING`, n.ID, n.Version, userID)
+	if err != nil {
+		return Note{}, err
+	}
+	err = tx.QueryRow(ctx, `UPDATE notes SET content=$3,title=$4,color=$5,kind=$6,x=$7,y=$8,width=$9,height=$10,rotation=$11,version=version+1,updated_at=now() WHERE id=$1 AND version=$2 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$12 WHERE s.id=notes.space_id AND (s.owner_id=$12 OR m.permission IN ('edit','manage'))) RETURNING id,space_id,author_id,content,title,color,kind,source,x,y,width,height,rotation,version,created_at,updated_at`, n.ID, n.Version, n.Content, n.Title, n.Color, n.Kind, n.X, n.Y, n.Width, n.Height, n.Rotation, userID).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+	if err != nil {
+		return Note{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Note{}, err
+	}
+	_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
+	return n, nil
 }
 
 func (s *Store) DeleteNote(ctx context.Context, userID, noteID uuid.UUID) error {
@@ -336,11 +424,150 @@ func (s *Store) CreateEdge(ctx context.Context, userID uuid.UUID, e Edge) (Edge,
 	if e.Relation == "" {
 		e.Relation = "related"
 	}
-	err := s.Pool.QueryRow(ctx, `INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by) VALUES($1,$2,$3,$4,$5) RETURNING id`, e.SpaceID, e.SourceID, e.TargetID, e.Relation, userID).Scan(&e.ID)
+	err := s.Pool.QueryRow(ctx, `INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by) SELECT $1,$2,$3,$4,$5 WHERE EXISTS(SELECT 1 FROM notes WHERE id=$2 AND space_id=$1 AND deleted_at IS NULL) AND EXISTS(SELECT 1 FROM notes WHERE id=$3 AND space_id=$1 AND deleted_at IS NULL) RETURNING id`, e.SpaceID, e.SourceID, e.TargetID, e.Relation, userID).Scan(&e.ID)
 	return e, err
 }
 
 func (s *Store) Audit(ctx context.Context, actor *uuid.UUID, action, resourceType, resourceID string, metadata any) {
 	raw, _ := json.Marshal(metadata)
 	_, _ = s.Pool.Exec(ctx, `INSERT INTO audit_logs(actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,$4,$5)`, actor, action, resourceType, resourceID, raw)
+}
+
+func (s *Store) UpsertEmbedding(ctx context.Context, noteID uuid.UUID, content string, version int) error {
+	vector := intelligence.Embed(content)
+	_, err := s.Pool.Exec(ctx, `INSERT INTO note_embeddings(note_id,dimensions,vector,content_version,updated_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(note_id) DO UPDATE SET dimensions=EXCLUDED.dimensions,vector=EXCLUDED.vector,content_version=EXCLUDED.content_version,updated_at=now() WHERE note_embeddings.content_version<EXCLUDED.content_version`, noteID, len(vector), vector, version)
+	return err
+}
+func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
+	for _, n := range notes {
+		_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
+	}
+}
+func (s *Store) loadEmbeddings(ctx context.Context, notes []Note) map[uuid.UUID][]float32 {
+	out := map[uuid.UUID][]float32{}
+	if len(notes) == 0 {
+		return out
+	}
+	ids := make([]uuid.UUID, len(notes))
+	for i, n := range notes {
+		ids[i] = n.ID
+	}
+	rows, err := s.Pool.Query(ctx, `SELECT note_id,vector FROM note_embeddings WHERE note_id=ANY($1)`, ids)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var vector []float32
+		if rows.Scan(&id, &vector) == nil {
+			out[id] = vector
+		}
+	}
+	return out
+}
+
+func (s *Store) RelatedNotes(ctx context.Context, userID, noteID uuid.UUID, limit int) ([]RelatedNote, error) {
+	if limit < 1 || limit > 20 {
+		limit = 5
+	}
+	var base Note
+	err := s.Pool.QueryRow(ctx, `SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at FROM notes n WHERE n.id=$1 AND n.deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2 WHERE s.id=n.space_id AND (s.owner_id=$2 OR m.user_id=$2))`, noteID, userID).Scan(&base.ID, &base.SpaceID, &base.AuthorID, &base.Content, &base.Title, &base.Color, &base.Kind, &base.Source, &base.X, &base.Y, &base.Width, &base.Height, &base.Rotation, &base.Version, &base.CreatedAt, &base.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	notes, _, err := s.ListNotes(ctx, userID, base.SpaceID, "")
+	if err != nil {
+		return nil, err
+	}
+	vectors := s.loadEmbeddings(ctx, notes)
+	baseVector := vectors[noteID]
+	related := []RelatedNote{}
+	for _, n := range notes {
+		if n.ID == noteID {
+			continue
+		}
+		score := intelligence.Cosine(baseVector, vectors[n.ID])
+		if score >= .22 {
+			keywords := intelligence.Keywords(base.Content+" "+n.Content, 2)
+			related = append(related, RelatedNote{Note: n, Score: score, Reason: strings.Join(keywords, " · ")})
+		}
+	}
+	sort.Slice(related, func(i, j int) bool { return related[i].Score > related[j].Score })
+	if len(related) > limit {
+		related = related[:limit]
+	}
+	return related, nil
+}
+
+func (s *Store) Clusters(ctx context.Context, userID, spaceID uuid.UUID) ([]ThoughtCluster, error) {
+	notes, _, err := s.ListNotes(ctx, userID, spaceID, "")
+	if err != nil {
+		return nil, err
+	}
+	vectors := s.loadEmbeddings(ctx, notes)
+	used := map[uuid.UUID]bool{}
+	clusters := []ThoughtCluster{}
+	for _, seed := range notes {
+		if used[seed.ID] {
+			continue
+		}
+		ids := []uuid.UUID{seed.ID}
+		used[seed.ID] = true
+		var cohesion float64
+		text := seed.Content
+		for _, candidate := range notes {
+			if used[candidate.ID] {
+				continue
+			}
+			score := intelligence.Cosine(vectors[seed.ID], vectors[candidate.ID])
+			if score >= .34 {
+				ids = append(ids, candidate.ID)
+				used[candidate.ID] = true
+				cohesion += score
+				text += " " + candidate.Content
+			}
+		}
+		if len(ids) < 2 {
+			continue
+		}
+		keywords := intelligence.Keywords(text, 2)
+		label := "연결된 생각"
+		if len(keywords) > 0 {
+			label = strings.Join(keywords, " · ")
+		}
+		clusters = append(clusters, ThoughtCluster{ID: "cluster-" + seed.ID.String(), Label: label, NoteIDs: ids, Cohesion: cohesion / float64(len(ids)-1)})
+	}
+	sort.Slice(clusters, func(i, j int) bool { return clusters[i].Cohesion > clusters[j].Cohesion })
+	return clusters, nil
+}
+
+func (s *Store) NoteHistory(ctx context.Context, userID, noteID uuid.UUID) ([]NoteRevision, error) {
+	var allowed bool
+	_ = s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2 WHERE n.id=$1 AND (sp.owner_id=$2 OR sm.user_id=$2))`, noteID, userID).Scan(&allowed)
+	if !allowed {
+		return nil, pgx.ErrNoRows
+	}
+	rows, err := s.Pool.Query(ctx, `SELECT version,content,title,color,kind,x,y,width,height,rotation,created_at FROM note_revisions WHERE note_id=$1 ORDER BY version DESC LIMIT 50`, noteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []NoteRevision{}
+	for rows.Next() {
+		var v NoteRevision
+		if err := rows.Scan(&v.Version, &v.Content, &v.Title, &v.Color, &v.Kind, &v.X, &v.Y, &v.Width, &v.Height, &v.Rotation, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+func (s *Store) RestoreNote(ctx context.Context, userID, noteID uuid.UUID, version int) (Note, error) {
+	var n Note
+	err := s.Pool.QueryRow(ctx, `SELECT n.id,n.space_id,n.author_id,r.content,r.title,r.color,r.kind,n.source,r.x,r.y,r.width,r.height,r.rotation,n.version,n.created_at,n.updated_at FROM notes n JOIN note_revisions r ON r.note_id=n.id AND r.version=$2 WHERE n.id=$1 AND n.deleted_at IS NULL`, noteID, version).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+	if err != nil {
+		return Note{}, err
+	}
+	return s.UpdateNote(ctx, userID, n)
 }

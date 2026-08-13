@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"slices"
 	"strings"
@@ -95,20 +96,52 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "팀장 또는 관리자만 검토할 수 있습니다.")
 		return
 	}
-	query := `UPDATE approval_requests SET status=$2,comment=CASE WHEN $3='' THEN comment ELSE $3 END,reviewer_id=$4,reviewed_at=now() WHERE id=$1 AND status='pending'`
-	args := []any{id, body.Decision, body.Comment, p.User.ID}
-	if p.User.Role == "team_lead" {
-		if p.User.TeamID == nil {
-			writeError(w, 403, "소속 팀이 설정되지 않았습니다.")
-			return
-		}
-		query += ` AND team_id=$5`
-		args = append(args, p.User.TeamID)
+	tx, err := s.Store.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "검토 처리를 시작하지 못했습니다.")
+		return
 	}
-	cmd, err := s.Store.Pool.Exec(r.Context(), query, args...)
-	if err != nil || cmd.RowsAffected() == 0 {
+	defer tx.Rollback(r.Context())
+	var action string
+	var resourceID, requesterID uuid.UUID
+	var requestTeam *uuid.UUID
+	var payloadRaw json.RawMessage
+	err = tx.QueryRow(r.Context(), `SELECT action,resource_id,payload,requester_id,team_id FROM approval_requests WHERE id=$1 AND status='pending' FOR UPDATE`, id).Scan(&action, &resourceID, &payloadRaw, &requesterID, &requestTeam)
+	if err != nil {
 		writeError(w, 404, "처리할 검토 요청을 찾을 수 없습니다.")
 		return
+	}
+	if p.User.Role == "team_lead" {
+		if p.User.TeamID == nil || requestTeam == nil || *requestTeam != *p.User.TeamID || requesterID == p.User.ID {
+			writeError(w, 403, "자신의 요청 또는 다른 팀의 요청은 검토할 수 없습니다.")
+			return
+		}
+	}
+	var sharePayload struct {
+		TargetUserID uuid.UUID `json:"targetUserId"`
+		Permission   string    `json:"permission"`
+	}
+	if body.Decision == "approved" && action == "space_share" {
+		if json.Unmarshal(payloadRaw, &sharePayload) != nil || sharePayload.TargetUserID == uuid.Nil || !slices.Contains([]string{"view", "edit", "manage"}, sharePayload.Permission) {
+			writeError(w, 500, "승인 대상 공유 정보가 올바르지 않습니다.")
+			return
+		}
+		if _, err = tx.Exec(r.Context(), `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,$3) ON CONFLICT(space_id,user_id) DO UPDATE SET permission=EXCLUDED.permission`, resourceID, sharePayload.TargetUserID, sharePayload.Permission); err != nil {
+			writeError(w, 500, "공간 공유 승인을 적용하지 못했습니다.")
+			return
+		}
+		_, _ = tx.Exec(r.Context(), `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id) VALUES($1,'space_shared','새 공간이 공유되었습니다','공유된 공간을 열어 생각을 함께 발전시켜 보세요.','space',$2)`, sharePayload.TargetUserID, resourceID)
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE approval_requests SET status=$2,comment=CASE WHEN $3='' THEN comment ELSE $3 END,reviewer_id=$4,reviewed_at=now() WHERE id=$1`, id, body.Decision, body.Comment, p.User.ID); err != nil {
+		writeError(w, 500, "검토 결과를 저장하지 못했습니다.")
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "검토 결과를 확정하지 못했습니다.")
+		return
+	}
+	if body.Decision == "approved" && action == "space_share" {
+		s.publishSpaceEvent(r, resourceID, "member.updated", sharePayload.TargetUserID, sharePayload)
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "approval."+body.Decision, "approval", id.String(), map[string]any{})
 	writeJSON(w, 200, map[string]string{"status": body.Decision})

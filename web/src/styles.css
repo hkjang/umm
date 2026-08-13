@@ -90,6 +90,9 @@ button, input, textarea { font: inherit; }
 .quick-capture input { font-size: 16px; }
 .onboarding-hint { position: absolute; inset: 0; pointer-events: none; display: grid; place-items: center; z-index: 3; color: #6b6559; text-align: center; }
 .morning-overlay { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(244,240,232,.74); backdrop-filter: blur(6px); animation: dream-arrive .7s ease; }
+.related-panel { position: absolute; z-index: 8; top: 78px; right: 18px; width: min(330px, calc(100% - 36px)); max-height: calc(100% - 180px); overflow: auto; }
+.related-row { display: block; width: 100%; border: 0; border-radius: 10px; padding: 10px 12px; background: rgba(255,255,255,.52); cursor: pointer; }
+.related-row:hover { background: rgba(238,231,247,.8); }
 
 .login-page { min-height: 100%; display: grid; grid-template-columns: 1.15fr .85fr; background: #f5f2ea; overflow: auto; }
 .login-scene { position: relative; min-height: 100vh; overflow: hidden; background: linear-gradient(145deg,#efe9da,#f8f4e9 56%,#eee8f5); }
@@ -100,6 +103,7 @@ button, input, textarea { font: inherit; }
 .admin-layout { height: 100%; display: grid; grid-template-columns: 255px 1fr; background: #f4f2ed; }
 .admin-menu { padding: 22px 15px; background: #28252e; color: #f1edf5; overflow-y: auto; }
 .admin-content { overflow: auto; padding: 34px; }
+.admin-mobile-menu { display: none; }
 .mobile-tabs { display: none; }
 
 @media (max-width: 48em) {
@@ -115,6 +119,7 @@ button, input, textarea { font: inherit; }
   .admin-layout { grid-template-columns: 1fr; }
   .admin-menu { display: none; }
   .admin-content { padding: 20px 16px 90px; }
+  .admin-mobile-menu { display: block; margin-left: 56px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ActionIcon, Menu, Tooltip } from '@mantine/core';
-import { IconDots, IconPalette, IconTrash } from '@tabler/icons-react';
+import { IconDots, IconHistory, IconPalette, IconTrash } from '@tabler/icons-react';
 import { Handle, NodeResizer, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { ThoughtNote } from '../api';
 
@@ -11,6 +11,7 @@ export type PostItData = {
   onGather: (id: string) => void;
   onPatch: (id: string, patch: Partial<ThoughtNote>) => void;
   onDelete: (id: string) => void;
+  onRestore: (id: string) => void;
 };
 export type PostItNodeType = Node<PostItData, 'postit'>;
 
@@ -52,6 +53,7 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
     <div className="note-actions nodrag">
       <Menu shadow="sm" width={170} position="bottom-end"><Menu.Target><Tooltip label="메모 메뉴"><ActionIcon variant="subtle" color="dark" size="sm" aria-label="메모 메뉴"><IconDots size={17} /></ActionIcon></Tooltip></Menu.Target><Menu.Dropdown>
         {note.source !== 'dream' && <Menu.Sub><Menu.Sub.Target><Menu.Sub.Item leftSection={<IconPalette size={15} />}>색상</Menu.Sub.Item></Menu.Sub.Target><Menu.Sub.Dropdown>{colors.map((color) => <Menu.Item key={color} leftSection={<span style={{ width: 13, height: 13, borderRadius: 99, background: `var(--note-${color}, #ddd)` }} />} onClick={() => data.onPatch(note.id, { color })}>{color}</Menu.Item>)}</Menu.Sub.Dropdown></Menu.Sub>}
+        <Menu.Item leftSection={<IconHistory size={15}/>} onClick={()=>data.onRestore(note.id)}>이전 버전 복원</Menu.Item>
         <Menu.Item color="red" leftSection={<IconTrash size={15} />} onClick={() => data.onDelete(note.id)}>지우기</Menu.Item>
       </Menu.Dropdown></Menu>
     </div>

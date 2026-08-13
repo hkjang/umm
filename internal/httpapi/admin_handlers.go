@@ -121,6 +121,16 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 		if !ok || len(scopes) == 0 {
 			return errors.New("하나 이상의 API 키 권한이 필요합니다")
 		}
+	case "workflow":
+		actions, ok := v["actions"].([]any)
+		if !ok {
+			return errors.New("검토 작업 목록이 올바르지 않습니다")
+		}
+		for _, action := range actions {
+			if !slices.Contains([]string{"space_share", "export"}, fmt.Sprint(action)) {
+				return errors.New("지원하지 않는 검토 작업입니다")
+			}
+		}
 	case "dream":
 		threshold, ok := v["quality_threshold"].(float64)
 		if !ok || threshold < 0 || threshold > 1 {
@@ -130,6 +140,28 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 		if _, err := time.Parse("15:04", schedule); err != nil {
 			return errors.New("Dream 생성 시간은 HH:MM 형식이어야 합니다")
 		}
+		frequency := fmt.Sprint(v["frequency"])
+		if !slices.Contains([]string{"daily", "weekdays", "weekends", "custom", "interval"}, frequency) {
+			return errors.New("Dream 생성 주기가 올바르지 않습니다")
+		}
+		if frequency == "custom" {
+			days, ok := v["custom_days"].([]any)
+			if !ok || len(days) == 0 {
+				return errors.New("Dream 생성 요일을 하나 이상 선택해 주세요")
+			}
+			for _, day := range days {
+				n, ok := day.(float64)
+				if !ok || n < 1 || n > 7 {
+					return errors.New("Dream 생성 요일이 올바르지 않습니다")
+				}
+			}
+		}
+		if frequency == "interval" {
+			days, ok := v["interval_days"].(float64)
+			if !ok || days < 2 || days > 365 {
+				return errors.New("Dream N일 간격은 2~365일이어야 합니다")
+			}
+		}
 	case "ai_gateway":
 		raw := strings.TrimSpace(fmt.Sprint(v["base_url"]))
 		if raw != "" {
@@ -137,6 +169,10 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 			if err != nil || !(u.Scheme == "http" || u.Scheme == "https") || u.Host == "" {
 				return errors.New("AI Gateway URL이 올바르지 않습니다")
 			}
+		}
+		retention, ok := v["log_retention_days"].(float64)
+		if !ok || retention < 1 || retention > 3650 {
+			return errors.New("AI 로그 보존 기간은 1~3650일이어야 합니다")
 		}
 	}
 	return nil
