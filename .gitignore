@@ -5,7 +5,7 @@ web/dist/
 dist/
 coverage/
 *.tar.gz
-umm
+/umm
 *.tsbuildinfo
 web/vite.config.js
 web/vite.config.d.ts
