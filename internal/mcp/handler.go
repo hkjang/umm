@@ -127,6 +127,8 @@ func toolDefinitions() []map[string]any {
 	return []map[string]any{
 		{"name": "connect_notes", "title": "Connect thoughts", "description": "Connect two notes in the same space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "source_note_id": str("Source note UUID"), "target_note_id": str("Target note UUID"), "relation": str("Relationship label")}, "space_id", "source_note_id", "target_note_id")},
 		{"name": "create_note", "title": "Drop a thought", "description": "Create a post-it in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "content": str("Thought text"), "x": num("Canvas x"), "y": num("Canvas y"), "color": str("Semantic color")}, "space_id", "content")},
+		{"name": "get_related_notes", "title": "Discover related thoughts", "description": "Find related notes using the offline similarity embedding.", "inputSchema": schema(map[string]any{"note_id": str("Source note UUID")}, "note_id")},
+		{"name": "list_clusters", "title": "List thought clusters", "description": "Discover coherent groups of notes in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
 		{"name": "list_dreams", "title": "List Dream notes", "description": "List the user's recent Dream notes.", "inputSchema": schema(map[string]any{})},
 		{"name": "list_notes", "title": "List thoughts", "description": "List notes and connections in one space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
 		{"name": "list_spaces", "title": "List spaces", "description": "List spaces available to this user.", "inputSchema": schema(map[string]any{})},
@@ -184,6 +186,32 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 			return nil, err
 		}
 		return success(map[string]any{"notes": notes, "edges": edges})
+	case "get_related_notes":
+		if err := require("notes:read"); err != nil {
+			return nil, err
+		}
+		noteID, err := uuid.Parse(fmt.Sprint(args["note_id"]))
+		if err != nil {
+			return nil, errors.New("valid note_id required")
+		}
+		related, err := h.Store.RelatedNotes(ctx, p.User.ID, noteID, 8)
+		if err != nil {
+			return nil, err
+		}
+		return success(map[string]any{"related": related})
+	case "list_clusters":
+		if err := require("notes:read"); err != nil {
+			return nil, err
+		}
+		sid, err := spaceID()
+		if err != nil {
+			return nil, errors.New("valid space_id required")
+		}
+		clusters, err := h.Store.Clusters(ctx, p.User.ID, sid)
+		if err != nil {
+			return nil, err
+		}
+		return success(map[string]any{"clusters": clusters})
 	case "create_note":
 		if err := require("notes:write"); err != nil {
 			return nil, err

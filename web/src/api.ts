@@ -2,6 +2,8 @@ export interface Meta {
   serviceName: string;
   version: string;
   oidcEnabled: boolean;
+  dreamEnabled: boolean;
+  dreamAllowUserDisable: boolean;
   mcpProtocol: string;
 }
 
@@ -39,6 +41,7 @@ export interface ThoughtNote {
   version: number;
   createdAt: string;
   updatedAt: string;
+  relatedCount: number;
 }
 
 export interface ThoughtEdge {

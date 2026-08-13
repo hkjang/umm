@@ -11,6 +11,19 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: umm-ci
+          POSTGRES_DB: umm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d umm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -23,6 +36,15 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: go test ./...
+      - name: PostgreSQL integration smoke
+        env:
+          POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
+          BOOTSTRAP_ADMIN: admin
+          BOOTSTRAP_ADMIN_PASSWORD: CI-Admin-Password-2026!
+          ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        run: |
+          go build -ldflags '-X main.version=ci' -o /tmp/umm-ci ./cmd/umm
+          ./scripts/integration-smoke.sh
       - run: npm ci
         working-directory: web
       - run: npm run build

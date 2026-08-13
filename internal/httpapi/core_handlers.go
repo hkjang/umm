@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -20,7 +21,12 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 	if general.ServiceName == "" {
 		general.ServiceName = "umm"
 	}
-	writeJSON(w, 200, map[string]any{"serviceName": general.ServiceName, "version": s.Version, "oidcEnabled": s.OIDC.Enabled(r.Context()), "mcpProtocol": "2026-07-28"})
+	var dreamConfig struct {
+		Enabled          bool `json:"enabled"`
+		AllowUserDisable bool `json:"allow_user_disable"`
+	}
+	_ = s.Store.GetSetting(r.Context(), "dream", &dreamConfig)
+	writeJSON(w, 200, map[string]any{"serviceName": general.ServiceName, "version": s.Version, "oidcEnabled": s.OIDC.Enabled(r.Context()), "dreamEnabled": dreamConfig.Enabled, "dreamAllowUserDisable": dreamConfig.AllowUserDisable, "mcpProtocol": "2026-07-28"})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
@@ -154,6 +160,7 @@ func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "note.create", "note", created.ID.String(), map[string]any{"spaceId": spaceID})
+	s.publishSpaceEvent(r, spaceID, "note.created", created.ID, created)
 	writeJSON(w, 201, created)
 }
 
@@ -187,6 +194,7 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 			_ = s.Dreams.Feedback(r.Context(), p.User.ID, dreamID, "edited")
 		}
 	}
+	s.publishSpaceEvent(r, updated.SpaceID, "note.updated", updated.ID, updated)
 	writeJSON(w, 200, updated)
 }
 
@@ -199,6 +207,8 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
+	var spaceID uuid.UUID
+	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT space_id FROM notes WHERE id=$1`, id).Scan(&spaceID)
 	var dreamID uuid.UUID
 	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT dream_id FROM dream_notes WHERE note_id=$1 AND user_id=$2`, id, p.User.ID).Scan(&dreamID)
 	if err := s.Store.DeleteNote(r.Context(), p.User.ID, id); err != nil {
@@ -209,6 +219,9 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 		_ = s.Dreams.Feedback(r.Context(), p.User.ID, dreamID, "deleted")
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "note.delete", "note", id.String(), map[string]any{})
+	if spaceID != uuid.Nil {
+		s.publishSpaceEvent(r, spaceID, "note.deleted", id, map[string]any{})
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -237,5 +250,106 @@ func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
 	if s.Store.Pool.QueryRow(r.Context(), `SELECT dream_id FROM dream_notes WHERE note_id IN ($1,$2) AND user_id=$3 LIMIT 1`, e.SourceID, e.TargetID, p.User.ID).Scan(&dreamID) == nil {
 		_ = s.Dreams.Feedback(r.Context(), p.User.ID, dreamID, "connected")
 	}
+	s.publishSpaceEvent(r, spaceID, "edge.created", created.ID, created)
 	writeJSON(w, 201, created)
+}
+
+func (s *Server) relatedNotes(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	id, ok := parseID(w, r, "noteID")
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	related, err := s.Store.RelatedNotes(r.Context(), principal(r).User.ID, id, limit)
+	if err != nil {
+		writeError(w, 404, "관련 생각을 찾을 수 없습니다.")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"related": related})
+}
+
+func (s *Server) thoughtClusters(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	spaceID, ok := parseID(w, r, "spaceID")
+	if !ok {
+		return
+	}
+	clusters, err := s.Store.Clusters(r.Context(), principal(r).User.ID, spaceID)
+	if err != nil {
+		writeError(w, 404, "생각 군집을 찾을 수 없습니다.")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"clusters": clusters})
+}
+
+func (s *Server) aiAssist(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	var body struct {
+		NoteIDs []uuid.UUID `json:"noteIds"`
+		Mode    string      `json:"mode"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		writeError(w, 400, "AI 요청 형식이 올바르지 않습니다.")
+		return
+	}
+	p := principal(r)
+	result, err := s.Dreams.Assist(r.Context(), p.User.ID, body.NoteIDs, body.Mode)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "ai.assist", "notes", strings.Join(func() []string {
+		ids := make([]string, len(body.NoteIDs))
+		for i, id := range body.NoteIDs {
+			ids[i] = id.String()
+		}
+		return ids
+	}(), ","), map[string]any{"mode": body.Mode})
+	writeJSON(w, 200, result)
+}
+
+func (s *Server) noteHistory(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	id, ok := parseID(w, r, "noteID")
+	if !ok {
+		return
+	}
+	history, err := s.Store.NoteHistory(r.Context(), principal(r).User.ID, id)
+	if err != nil {
+		writeError(w, 404, "메모 기록을 찾을 수 없습니다.")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"history": history})
+}
+func (s *Server) restoreNote(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:write") {
+		return
+	}
+	id, ok := parseID(w, r, "noteID")
+	if !ok {
+		return
+	}
+	version, err := strconv.Atoi(chi.URLParam(r, "version"))
+	if err != nil || version < 1 {
+		writeError(w, 400, "복원할 버전이 올바르지 않습니다.")
+		return
+	}
+	p := principal(r)
+	restored, err := s.Store.RestoreNote(r.Context(), p.User.ID, id, version)
+	if err != nil {
+		writeError(w, 404, "복원할 기록을 찾을 수 없습니다.")
+		return
+	}
+	s.publishSpaceEvent(r, restored.SpaceID, "note.restored", restored.ID, restored)
+	s.Store.Audit(r.Context(), &p.User.ID, "note.restore", "note", id.String(), map[string]any{"fromVersion": version})
+	writeJSON(w, 200, restored)
 }

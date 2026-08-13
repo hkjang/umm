@@ -57,11 +57,24 @@ func (s *Server) Handler() http.Handler {
 			protected.Get("/spaces", s.listSpaces)
 			protected.Post("/spaces", s.createSpace)
 			protected.Get("/spaces/{spaceID}/notes", s.listNotes)
+			protected.Get("/spaces/{spaceID}/events", s.spaceEvents)
+			protected.Get("/spaces/{spaceID}/members", s.listSpaceMembers)
+			protected.Post("/spaces/{spaceID}/members", s.shareSpace)
+			protected.Delete("/spaces/{spaceID}/members/{memberID}", s.removeSpaceMember)
 			protected.Post("/spaces/{spaceID}/notes", s.createNote)
 			protected.Put("/notes/{noteID}", s.updateNote)
+			protected.Get("/notes/{noteID}/related", s.relatedNotes)
+			protected.Get("/notes/{noteID}/history", s.noteHistory)
+			protected.Post("/notes/{noteID}/restore/{version}", s.restoreNote)
+			protected.Get("/spaces/{spaceID}/clusters", s.thoughtClusters)
+			protected.Get("/spaces/{spaceID}/export/authorize", s.authorizeExport)
+			protected.Get("/spaces/{spaceID}/export/markdown", s.exportMarkdown)
+			protected.Post("/ai/assist", s.aiAssist)
 			protected.Delete("/notes/{noteID}", s.deleteNote)
 			protected.Post("/spaces/{spaceID}/edges", s.createEdge)
 			protected.Get("/preferences", s.getPreferences)
+			protected.Get("/notifications", s.listNotifications)
+			protected.Post("/notifications/{notificationID}/read", s.readNotification)
 			protected.Put("/preferences", s.putPreferences)
 			protected.Get("/api-keys", s.listAPIKeys)
 			protected.Post("/api-keys", s.createAPIKey)
@@ -118,7 +131,7 @@ func (s *Server) spa() http.Handler {
 	}
 	fileServer := http.FileServer(http.Dir(dir))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.NotFound(w, r)
 			return
 		}

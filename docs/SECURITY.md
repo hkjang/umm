@@ -26,6 +26,8 @@ User API/MCP key (one-time plaintext display)
 - Roles: `user`, `team_lead`, `admin`
 - API/MCP: Bearer key와 세부 scope. MCP는 browser cookie를 허용하지 않음
 - Workflow: 팀장은 자신의 team 요청만 결정, 관리자는 전체 결정
+- Collaboration: 공간 소유자 또는 `manage` 멤버만 공유 권한 변경, `view`/`edit`/`manage` 분리
+- Export: 관리자가 `export` 검토를 켠 경우 승인 후 24시간 동안만 허용
 - Admin secret: API 응답에서 항상 마스킹, 감사 로그에 원문 미기록
 
 TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장하며 `X-Forwarded-Proto: https`를 전달해야 합니다. Keycloak redirect URI는 wildcard가 아니라 callback 전체 경로로 제한하세요.
@@ -35,7 +37,7 @@ TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장하며 
 - Dream은 기본 OFF, 자동 생성도 별도 OFF
 - 필요한 최근 메모만 최대 개수/기간 내에서 전송
 - 알려진 password/API key/token 패턴 사전 redaction
-- 원문 prompt 저장 기본 OFF
+- 원문 prompt 저장 기본 OFF. ON이면 redaction 후 `ENCRYPTION_KEY`로 암호화하며 관리자 설정의 보존 기간 후 자동 삭제
 - AI call 로그는 상태, token, 비용, latency와 짧은 error만 기록
 - 관리자 원문 접근 API 없음
 - 사용자는 Dream OFF/Pause 가능
@@ -44,6 +46,6 @@ TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장하며 
 
 ## 보안 헤더와 제한
 
-응답에는 CSP, frame deny, nosniff, same-origin referrer, device permission 제한이 기본 적용됩니다. JSON body는 1 MiB, MCP body도 1 MiB로 제한합니다. HTTP server는 header/read/write/idle timeout을 둡니다. MCP는 Origin 검증과 현재 프로토콜 routing header 일치를 확인합니다.
+응답에는 CSP, frame deny, nosniff, same-origin referrer, device permission 제한이 기본 적용됩니다. JSON body는 1 MiB, MCP body도 1 MiB로 제한합니다. HTTP server는 header/read/write/idle timeout을 둡니다. 공간 SSE는 인증·공간 조회 권한을 먼저 확인하고 event payload에 관리자 secret을 싣지 않습니다. MCP는 Origin 검증과 현재 프로토콜 routing header 일치를 확인합니다.
 
 취약점은 공개 issue에 secret 또는 실제 사용자 내용을 포함하지 말고 저장소 관리자의 비공개 보안 채널로 전달하세요.
