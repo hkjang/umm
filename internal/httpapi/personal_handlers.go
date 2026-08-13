@@ -1,0 +1,222 @@
+package httpapi
+
+import (
+	"net/http"
+	"slices"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type preferences struct {
+	DreamEnabled       bool       `json:"dream_enabled"`
+	DreamFrequency     string     `json:"dream_frequency"`
+	DreamStyle         string     `json:"dream_style"`
+	DreamNotifications bool       `json:"dream_notifications"`
+	IncludeOldNotes    bool       `json:"include_old_notes"`
+	DreamPauseUntil    *time.Time `json:"dream_pause_until"`
+	Theme              string     `json:"theme"`
+	Locale             string     `json:"locale"`
+}
+
+func (s *Server) getPreferences(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	var v preferences
+	err := s.Store.Pool.QueryRow(r.Context(), `SELECT dream_enabled,dream_frequency,dream_style,dream_notifications,include_old_notes,dream_pause_until,theme,locale FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.DreamEnabled, &v.DreamFrequency, &v.DreamStyle, &v.DreamNotifications, &v.IncludeOldNotes, &v.DreamPauseUntil, &v.Theme, &v.Locale)
+	if err != nil {
+		writeError(w, 500, "개인 설정을 불러오지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
+	var v preferences
+	if decodeJSON(w, r, &v) != nil {
+		writeError(w, 400, "개인 설정 형식이 올바르지 않습니다.")
+		return
+	}
+	if !slices.Contains([]string{"daily", "three_week", "weekly"}, v.DreamFrequency) {
+		writeError(w, 400, "Dream 빈도가 올바르지 않습니다.")
+		return
+	}
+	if !slices.Contains([]string{"auto", "connection", "question", "expansion", "free"}, v.DreamStyle) {
+		writeError(w, 400, "Dream 스타일이 올바르지 않습니다.")
+		return
+	}
+	if !slices.Contains([]string{"light", "dark", "system"}, v.Theme) {
+		writeError(w, 400, "테마가 올바르지 않습니다.")
+		return
+	}
+	p := principal(r)
+	var dreamCfg struct {
+		AllowUserDisable bool `json:"allow_user_disable"`
+	}
+	_ = s.Store.GetSetting(r.Context(), "dream", &dreamCfg)
+	if !dreamCfg.AllowUserDisable {
+		v.DreamEnabled = true
+	}
+	_, err := s.Store.Pool.Exec(r.Context(), `UPDATE user_preferences SET dream_enabled=$2,dream_frequency=$3,dream_style=$4,dream_notifications=$5,include_old_notes=$6,dream_pause_until=$7,theme=$8,locale=$9,updated_at=now() WHERE user_id=$1`, p.User.ID, v.DreamEnabled, v.DreamFrequency, v.DreamStyle, v.DreamNotifications, v.IncludeOldNotes, v.DreamPauseUntil, v.Theme, v.Locale)
+	if err != nil {
+		writeError(w, 500, "개인 설정을 저장하지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, v)
+}
+
+type securityConfig struct {
+	APIKeyScopes         []string `json:"api_key_scopes"`
+	DefaultKeyDays       int      `json:"default_key_days"`
+	RotationOverlapHours int      `json:"rotation_overlap_hours"`
+}
+
+func (s *Server) getSecurityConfig(r *http.Request) securityConfig {
+	var cfg securityConfig
+	_ = s.Store.GetSetting(r.Context(), "security", &cfg)
+	if cfg.DefaultKeyDays <= 0 {
+		cfg.DefaultKeyDays = 90
+	}
+	return cfg
+}
+func validateScopes(requested, allowed []string) bool {
+	if len(requested) == 0 {
+		return false
+	}
+	for _, v := range requested {
+		if !slices.Contains(allowed, v) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	keys, err := s.Auth.ListKeys(r.Context(), p.User.ID)
+	if err != nil {
+		writeError(w, 500, "키를 불러오지 못했습니다.")
+		return
+	}
+	cfg := s.getSecurityConfig(r)
+	writeJSON(w, 200, map[string]any{"keys": keys, "availableScopes": cfg.APIKeyScopes, "rotationOverlapHours": cfg.RotationOverlapHours})
+}
+
+func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name        string   `json:"name"`
+		Scopes      []string `json:"scopes"`
+		ExpiresDays int      `json:"expiresDays"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		writeError(w, 400, "키 설정 형식이 올바르지 않습니다.")
+		return
+	}
+	cfg := s.getSecurityConfig(r)
+	if !validateScopes(body.Scopes, cfg.APIKeyScopes) {
+		writeError(w, 400, "허용되지 않은 키 권한입니다.")
+		return
+	}
+	if body.ExpiresDays == 0 {
+		body.ExpiresDays = cfg.DefaultKeyDays
+	}
+	if body.ExpiresDays < 1 || body.ExpiresDays > 3650 {
+		writeError(w, 400, "키 만료 기간은 1~3650일이어야 합니다.")
+		return
+	}
+	p := principal(r)
+	key, secret, err := s.Auth.CreateKey(r.Context(), p.User.ID, body.Name, body.Scopes, body.ExpiresDays)
+	if err != nil {
+		writeError(w, 500, "키를 만들지 못했습니다.")
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "api_key.create", "api_key", key.ID.String(), map[string]any{"scopes": body.Scopes})
+	writeJSON(w, 201, map[string]any{"key": key, "secret": secret, "warning": "이 키는 다시 표시되지 않습니다."})
+}
+
+func (s *Server) updateAPIKey(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "keyID")
+	if !ok {
+		return
+	}
+	var body struct {
+		Scopes []string `json:"scopes"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		writeError(w, 400, "키 권한 형식이 올바르지 않습니다.")
+		return
+	}
+	cfg := s.getSecurityConfig(r)
+	if !validateScopes(body.Scopes, cfg.APIKeyScopes) {
+		writeError(w, 400, "허용되지 않은 키 권한입니다.")
+		return
+	}
+	p := principal(r)
+	if err := s.Auth.UpdateKeyScopes(r.Context(), p.User.ID, id, body.Scopes); err != nil {
+		writeError(w, 404, "활성 키를 찾을 수 없습니다.")
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "api_key.permissions", "api_key", id.String(), map[string]any{"scopes": body.Scopes})
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) rotateAPIKey(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "keyID")
+	if !ok {
+		return
+	}
+	cfg := s.getSecurityConfig(r)
+	p := principal(r)
+	key, secret, err := s.Auth.RotateKey(r.Context(), p.User.ID, id, cfg.RotationOverlapHours)
+	if err != nil {
+		writeError(w, 404, "회전할 활성 키를 찾을 수 없습니다.")
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "api_key.rotate", "api_key", id.String(), map[string]any{"replacement": key.ID, "overlapHours": cfg.RotationOverlapHours})
+	writeJSON(w, 201, map[string]any{"key": key, "secret": secret, "overlapHours": cfg.RotationOverlapHours, "warning": "새 키는 다시 표시되지 않습니다."})
+}
+
+func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "keyID")
+	if !ok {
+		return
+	}
+	p := principal(r)
+	if err := s.Auth.RevokeKey(r.Context(), p.User.ID, id); err != nil {
+		writeError(w, 404, "키를 찾을 수 없습니다.")
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "api_key.revoke", "api_key", id.String(), map[string]any{})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) dreamHistory(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "dreams:read") {
+		return
+	}
+	v, err := s.Dreams.History(r.Context(), principal(r).User.ID)
+	if err != nil {
+		writeError(w, 500, "Dream 기록을 불러오지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"dreams": v})
+}
+func (s *Server) dreamFeedback(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "dreamID")
+	if !ok {
+		return
+	}
+	var body struct {
+		Action string `json:"action"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		writeError(w, 400, "피드백 형식이 올바르지 않습니다.")
+		return
+	}
+	if err := s.Dreams.Feedback(r.Context(), principal(r).User.ID, id, body.Action); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+var _ = uuid.Nil

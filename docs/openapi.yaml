@@ -1,0 +1,327 @@
+openapi: 3.1.0
+info:
+  title: umm API
+  version: 0.1.0
+  description: Spatial Thought Memory, key management, workflow and Dream Layer API.
+servers:
+  - url: /api/v1
+security:
+  - cookieAuth: []
+  - bearerAuth: []
+tags:
+  - name: Auth
+  - name: Thoughts
+  - name: Personal
+  - name: Dream
+  - name: Workflow
+  - name: Admin
+paths:
+  /meta:
+    get:
+      security: []
+      summary: Get public service name, version and enabled login methods
+      responses:
+        '200': { description: Public metadata, content: { application/json: { schema: { $ref: '#/components/schemas/Meta' } } } }
+  /auth/login:
+    post:
+      security: []
+      tags: [Auth]
+      summary: Sign in with the bootstrap/local administrator
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [username, password], properties: { username: { type: string }, password: { type: string, format: password } } } } }
+      responses:
+        '200': { description: Signed in, headers: { Set-Cookie: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/oidc/start:
+    get:
+      security: []
+      tags: [Auth]
+      summary: Begin Keycloak Authorization Code flow
+      parameters:
+        - { in: query, name: return_to, schema: { type: string, default: / } }
+      responses: { '302': { description: Redirect to Keycloak } }
+  /auth/oidc/callback:
+    get:
+      security: []
+      tags: [Auth]
+      summary: Complete Keycloak Authorization Code flow
+      parameters:
+        - { in: query, name: state, required: true, schema: { type: string } }
+        - { in: query, name: code, required: true, schema: { type: string } }
+      responses: { '302': { description: Session established and redirected } }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the current browser session
+      responses: { '200': { description: Signed out } }
+  /me:
+    get:
+      tags: [Auth]
+      summary: Get the authenticated user
+      responses: { '200': { description: Current user, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } } }
+  /spaces:
+    get:
+      tags: [Thoughts]
+      summary: List visible spaces
+      x-required-scope: spaces:read
+      responses: { '200': { description: Spaces, content: { application/json: { schema: { type: object, properties: { spaces: { type: array, items: { $ref: '#/components/schemas/Space' } } } } } } } }
+    post:
+      tags: [Thoughts]
+      summary: Create a space
+      x-required-scope: notes:write
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, maxLength: 200 } } } } } }
+      responses: { '201': { description: Space created, content: { application/json: { schema: { $ref: '#/components/schemas/Space' } } } } }
+  /spaces/{spaceId}/notes:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+    get:
+      tags: [Thoughts]
+      summary: List or search notes and edges in a space
+      x-required-scope: notes:read
+      parameters:
+        - { in: query, name: q, schema: { type: string } }
+      responses:
+        '200':
+          description: Canvas graph
+          content: { application/json: { schema: { type: object, properties: { notes: { type: array, items: { $ref: '#/components/schemas/Note' } }, edges: { type: array, items: { $ref: '#/components/schemas/Edge' } } } } } }
+    post:
+      tags: [Thoughts]
+      summary: Drop a post-it onto the canvas
+      x-required-scope: notes:write
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NoteWrite' } } } }
+      responses: { '201': { description: Note created, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } } }
+  /notes/{noteId}:
+    parameters:
+      - { $ref: '#/components/parameters/NoteID' }
+    put:
+      tags: [Thoughts]
+      summary: Autosave note content, appearance and position
+      description: Uses optimistic concurrency. Send the last server version; a stale version returns 409.
+      x-required-scope: notes:write
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }
+      responses:
+        '200': { description: Updated note, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [Thoughts]
+      summary: Soft-delete a note
+      x-required-scope: notes:write
+      responses: { '204': { description: Deleted } }
+  /spaces/{spaceId}/edges:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+    post:
+      tags: [Thoughts]
+      summary: Connect two notes
+      x-required-scope: notes:write
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EdgeWrite' } } } }
+      responses: { '201': { description: Edge created, content: { application/json: { schema: { $ref: '#/components/schemas/Edge' } } } } }
+  /preferences:
+    get:
+      tags: [Personal]
+      summary: Get personal Dream and UI preferences
+      responses: { '200': { description: Preferences, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } } }
+    put:
+      tags: [Personal]
+      summary: Replace personal preferences
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
+      responses: { '200': { description: Preferences saved } }
+  /api-keys:
+    get:
+      tags: [Personal]
+      summary: List personal key metadata and allowed scopes
+      responses: { '200': { description: Key list; secrets are never returned } }
+    post:
+      tags: [Personal]
+      summary: Create a personal API/MCP key
+      description: The secret is returned exactly once.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [name, scopes], properties: { name: { type: string }, scopes: { type: array, items: { type: string } }, expiresDays: { type: integer, minimum: 1, maximum: 3650 } } } } }
+      responses: { '201': { description: Key metadata and one-time secret } }
+  /api-keys/{keyId}:
+    parameters:
+      - { $ref: '#/components/parameters/KeyID' }
+    put:
+      tags: [Personal]
+      summary: Change scopes on an active personal key
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [scopes], properties: { scopes: { type: array, items: { type: string } } } } } } }
+      responses: { '200': { description: Scopes changed } }
+    delete:
+      tags: [Personal]
+      summary: Revoke a personal key immediately
+      responses: { '204': { description: Revoked } }
+  /api-keys/{keyId}/rotate:
+    parameters:
+      - { $ref: '#/components/parameters/KeyID' }
+    post:
+      tags: [Personal]
+      summary: Rotate a key with the configured overlap window
+      description: Returns the replacement secret exactly once. The old key remains valid only for the administrator-configured overlap period.
+      responses: { '201': { description: Replacement key and one-time secret } }
+  /dreams:
+    get:
+      tags: [Dream]
+      summary: List personal Dream history
+      x-required-scope: dreams:read
+      responses: { '200': { description: Dream history } }
+  /dreams/{dreamId}/feedback:
+    parameters:
+      - { in: path, name: dreamId, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Dream]
+      summary: Record implicit Dream feedback
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [action], properties: { action: { type: string, enum: [exposed, kept, edited, connected, expanded, moved, deleted, hidden] } } } } } }
+      responses: { '200': { description: Feedback recorded } }
+  /approvals:
+    get:
+      tags: [Workflow]
+      summary: List requests visible to the user, team lead or administrator
+      responses: { '200': { description: Approval requests } }
+    post:
+      tags: [Workflow]
+      summary: Request review for an action
+      description: If the administrator has not enabled this action, returns required=false and approved without creating a workflow record.
+      x-required-scope: approvals:write
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [resourceType, resourceId, action], properties: { resourceType: { type: string }, resourceId: { type: string, format: uuid }, action: { type: string }, comment: { type: string } } } } }
+      responses: { '200': { description: No workflow required }, '201': { description: Pending request created } }
+  /approvals/{requestId}/decision:
+    parameters:
+      - { in: path, name: requestId, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Workflow]
+      summary: Approve or reject as matching team lead or administrator
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [decision], properties: { decision: { type: string, enum: [approved, rejected] }, comment: { type: string } } } } } }
+      responses: { '200': { description: Decision saved }, '403': { $ref: '#/components/responses/Error' } }
+  /admin/settings:
+    get:
+      tags: [Admin]
+      summary: Get all service settings with masked secrets
+      responses: { '200': { description: Setting sections } }
+  /admin/settings/{section}:
+    parameters:
+      - { in: path, name: section, required: true, schema: { type: string, enum: [general, oidc, security, workflow, dream, ai_gateway] } }
+    put:
+      tags: [Admin]
+      summary: Replace one settings section
+      description: OIDC client_secret and AI api_key are AES-256-GCM encrypted before PostgreSQL storage.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+      responses: { '200': { description: Saved }, '400': { $ref: '#/components/responses/Error' } }
+  /admin/oidc/test:
+    post:
+      tags: [Admin]
+      summary: Test OIDC Discovery and client configuration
+      responses: { '200': { description: Discovery succeeded }, '400': { $ref: '#/components/responses/Error' } }
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: List users, roles, teams and status
+      responses: { '200': { description: Users } }
+  /admin/users/{userId}:
+    parameters:
+      - { in: path, name: userId, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Admin]
+      summary: Update role, active state and team
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [role, active, teamName], properties: { role: { type: string, enum: [user, team_lead, admin] }, active: { type: boolean }, teamName: { type: string } } } } } }
+      responses: { '200': { description: User updated } }
+  /admin/metrics:
+    get:
+      tags: [Admin]
+      summary: Get product, Dream quality, token and cost metrics
+      responses: { '200': { description: Current operational metrics } }
+  /admin/dreams/run:
+    post:
+      tags: [Admin]
+      summary: Manually enqueue eligible users
+      responses: { '202': { description: Queued } }
+  /admin/audit:
+    get:
+      tags: [Admin]
+      summary: Get the newest 300 audit events
+      responses: { '200': { description: Audit events } }
+components:
+  securitySchemes:
+    cookieAuth: { type: apiKey, in: cookie, name: umm_session }
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: umm_key }
+  parameters:
+    SpaceID: { in: path, name: spaceId, required: true, schema: { type: string, format: uuid } }
+    NoteID: { in: path, name: noteId, required: true, schema: { type: string, format: uuid } }
+    KeyID: { in: path, name: keyId, required: true, schema: { type: string, format: uuid } }
+  responses:
+    Error: { description: Error, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties: { error: { type: string } }
+    Meta:
+      type: object
+      required: [serviceName, version, oidcEnabled, mcpProtocol]
+      properties: { serviceName: { type: string }, version: { type: string }, oidcEnabled: { type: boolean }, mcpProtocol: { type: string } }
+    User:
+      type: object
+      required: [id, username, displayName, role, active]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [user, team_lead, admin] }
+        teamId: { type: [string, 'null'], format: uuid }
+        active: { type: boolean }
+    Space:
+      type: object
+      required: [id, ownerId, name, color]
+      properties: { id: { type: string, format: uuid }, ownerId: { type: string, format: uuid }, name: { type: string }, color: { type: string } }
+    NoteWrite:
+      type: object
+      required: [content, x, y]
+      properties:
+        content: { type: string }
+        title: { type: string }
+        color: { type: string, enum: [yellow, blue, purple, green, red, gray, lavender] }
+        kind: { type: string }
+        x: { type: number }
+        y: { type: number }
+        width: { type: number, minimum: 120 }
+        height: { type: number, minimum: 80 }
+        rotation: { type: number }
+    Note:
+      allOf:
+        - { $ref: '#/components/schemas/NoteWrite' }
+        - type: object
+          required: [id, spaceId, authorId, source, version, createdAt, updatedAt]
+          properties:
+            id: { type: string, format: uuid }
+            spaceId: { type: string, format: uuid }
+            authorId: { type: string, format: uuid }
+            source: { type: string, enum: [user, dream, api, mcp] }
+            version: { type: integer }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+    EdgeWrite:
+      type: object
+      required: [source, target]
+      properties: { source: { type: string, format: uuid }, target: { type: string, format: uuid }, relation: { type: string, default: related } }
+    Edge:
+      allOf:
+        - { $ref: '#/components/schemas/EdgeWrite' }
+        - type: object
+          required: [id, spaceId]
+          properties: { id: { type: string, format: uuid }, spaceId: { type: string, format: uuid } }
+    Preferences:
+      type: object
+      required: [dream_enabled, dream_frequency, dream_style, dream_notifications, include_old_notes, theme, locale]
+      properties:
+        dream_enabled: { type: boolean }
+        dream_frequency: { type: string, enum: [daily, three_week, weekly] }
+        dream_style: { type: string, enum: [auto, connection, question, expansion, free] }
+        dream_notifications: { type: boolean }
+        include_old_notes: { type: boolean }
+        dream_pause_until: { type: [string, 'null'], format: date-time }
+        theme: { type: string, enum: [light, dark, system] }
+        locale: { type: string }

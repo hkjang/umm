@@ -1,0 +1,11 @@
+.env
+.DS_Store
+web/node_modules/
+web/dist/
+dist/
+coverage/
+*.tar.gz
+umm
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts

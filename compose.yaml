@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: umm
+      POSTGRES_USER: umm
+      POSTGRES_PASSWORD: local-development-only
+    volumes:
+      - umm-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U umm -d umm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  umm:
+    build:
+      context: .
+      args:
+        VERSION: 0.1.0
+    image: umm:v0.1.0
+    environment:
+      POSTGRES_DSN: postgres://umm:local-development-only@postgres:5432/umm?sslmode=disable
+      BOOTSTRAP_ADMIN: admin
+      BOOTSTRAP_ADMIN_PASSWORD: change-this-before-production
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  umm-postgres:

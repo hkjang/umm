@@ -1,0 +1,115 @@
+package httpapi
+
+import (
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type workflowConfig struct {
+	Enabled bool     `json:"enabled"`
+	Actions []string `json:"actions"`
+}
+
+func (s *Server) createApproval(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "approvals:write") {
+		return
+	}
+	var body struct {
+		ResourceType string    `json:"resourceType"`
+		ResourceID   uuid.UUID `json:"resourceId"`
+		Action       string    `json:"action"`
+		Comment      string    `json:"comment"`
+	}
+	if decodeJSON(w, r, &body) != nil || body.ResourceID == uuid.Nil || strings.TrimSpace(body.Action) == "" {
+		writeError(w, 400, "검토 요청 형식이 올바르지 않습니다.")
+		return
+	}
+	var cfg workflowConfig
+	_ = s.Store.GetSetting(r.Context(), "workflow", &cfg)
+	if !cfg.Enabled || !slices.Contains(cfg.Actions, body.Action) {
+		writeJSON(w, 200, map[string]any{"required": false, "status": "approved", "message": "관리자가 이 작업에 검토 절차를 설정하지 않았습니다."})
+		return
+	}
+	p := principal(r)
+	var id uuid.UUID
+	err := s.Store.Pool.QueryRow(r.Context(), `INSERT INTO approval_requests(requester_id,team_id,resource_type,resource_id,action,comment) VALUES($1,$2,$3,$4,$5,$6) RETURNING id`, p.User.ID, p.User.TeamID, body.ResourceType, body.ResourceID, body.Action, body.Comment).Scan(&id)
+	if err != nil {
+		writeError(w, 500, "검토 요청을 만들지 못했습니다.")
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "approval.request", "approval", id.String(), map[string]any{"action": body.Action})
+	writeJSON(w, 201, map[string]any{"required": true, "id": id, "status": "pending"})
+}
+
+func (s *Server) listApprovals(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	query := `SELECT a.id,a.requester_id,a.team_id,a.resource_type,a.resource_id,a.action,a.status,a.comment,a.reviewer_id,a.reviewed_at,a.created_at,u.display_name FROM approval_requests a JOIN users u ON u.id=a.requester_id WHERE a.requester_id=$1 ORDER BY a.created_at DESC`
+	args := []any{p.User.ID}
+	if p.User.Role == "admin" {
+		query = `SELECT a.id,a.requester_id,a.team_id,a.resource_type,a.resource_id,a.action,a.status,a.comment,a.reviewer_id,a.reviewed_at,a.created_at,u.display_name FROM approval_requests a JOIN users u ON u.id=a.requester_id ORDER BY (a.status='pending') DESC,a.created_at DESC`
+		args = nil
+	} else if p.User.Role == "team_lead" && p.User.TeamID != nil {
+		query = `SELECT a.id,a.requester_id,a.team_id,a.resource_type,a.resource_id,a.action,a.status,a.comment,a.reviewer_id,a.reviewed_at,a.created_at,u.display_name FROM approval_requests a JOIN users u ON u.id=a.requester_id WHERE a.team_id=$1 OR a.requester_id=$2 ORDER BY (a.status='pending') DESC,a.created_at DESC`
+		args = []any{p.User.TeamID, p.User.ID}
+	}
+	rows, err := s.Store.Pool.Query(r.Context(), query, args...)
+	if err != nil {
+		writeError(w, 500, "검토 요청을 불러오지 못했습니다.")
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id, requester, resource uuid.UUID
+		var team, reviewer *uuid.UUID
+		var resourceType, action, status, comment, name string
+		var reviewed *time.Time
+		var created time.Time
+		if rows.Scan(&id, &requester, &team, &resourceType, &resource, &action, &status, &comment, &reviewer, &reviewed, &created, &name) != nil {
+			continue
+		}
+		out = append(out, map[string]any{"id": id, "requesterId": requester, "requesterName": name, "teamId": team, "resourceType": resourceType, "resourceId": resource, "action": action, "status": status, "comment": comment, "reviewerId": reviewer, "reviewedAt": reviewed, "createdAt": created})
+	}
+	writeJSON(w, 200, map[string]any{"requests": out})
+}
+
+func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseID(w, r, "requestID")
+	if !ok {
+		return
+	}
+	var body struct {
+		Decision string `json:"decision"`
+		Comment  string `json:"comment"`
+	}
+	if decodeJSON(w, r, &body) != nil || !slices.Contains([]string{"approved", "rejected"}, body.Decision) {
+		writeError(w, 400, "승인 또는 반려를 선택해 주세요.")
+		return
+	}
+	p := principal(r)
+	if p.User.Role != "admin" && p.User.Role != "team_lead" {
+		writeError(w, 403, "팀장 또는 관리자만 검토할 수 있습니다.")
+		return
+	}
+	query := `UPDATE approval_requests SET status=$2,comment=CASE WHEN $3='' THEN comment ELSE $3 END,reviewer_id=$4,reviewed_at=now() WHERE id=$1 AND status='pending'`
+	args := []any{id, body.Decision, body.Comment, p.User.ID}
+	if p.User.Role == "team_lead" {
+		if p.User.TeamID == nil {
+			writeError(w, 403, "소속 팀이 설정되지 않았습니다.")
+			return
+		}
+		query += ` AND team_id=$5`
+		args = append(args, p.User.TeamID)
+	}
+	cmd, err := s.Store.Pool.Exec(r.Context(), query, args...)
+	if err != nil || cmd.RowsAffected() == 0 {
+		writeError(w, 404, "처리할 검토 요청을 찾을 수 없습니다.")
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "approval."+body.Decision, "approval", id.String(), map[string]any{})
+	writeJSON(w, 200, map[string]string{"status": body.Decision})
+}

@@ -1,0 +1,29 @@
+{
+  "name": "umm-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "lint": "tsc -b --pretty false",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@fontsource-variable/noto-sans-kr": "5.3.0",
+    "@mantine/core": "9.5.1",
+    "@mantine/hooks": "9.5.1",
+    "@tabler/icons-react": "3.46.0",
+    "@xyflow/react": "12.11.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-router-dom": "7.18.2"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "typescript": "7.0.2",
+    "vite": "8.2.1"
+  }
+}
