@@ -13,7 +13,7 @@ export default function LoginPage() {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setError(''); setBusy(true);
-    try { await api('/auth/login', json('POST', { username, password })); await refresh(); }
+    try { await api('/auth/login', {...json('POST', { username, password }),silent:true}); await refresh(); }
     catch (err) { setError(err instanceof Error ? err.message : '로그인하지 못했습니다.'); }
     finally { setBusy(false); }
   };

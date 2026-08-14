@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: umm API
-  version: 0.3.0
+  version: 0.4.0
   description: Spatial Thought Memory, key management, workflow and Dream Layer API.
 servers:
   - url: /api/v1
@@ -74,6 +74,16 @@ paths:
       x-required-scope: notes:write
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, maxLength: 200 } } } } } }
       responses: { '201': { description: Space created, content: { application/json: { schema: { $ref: '#/components/schemas/Space' } } } } }
+  /search:
+    get:
+      tags: [Thoughts]
+      summary: Search accessible notes across spaces for quick navigation
+      x-required-scope: notes:read
+      parameters:
+        - { in: query, name: q, required: true, schema: { type: string, maxLength: 200 } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 30, default: 12 } }
+      responses:
+        '200': { description: Matching note shortcuts, content: { application/json: { schema: { type: object, properties: { notes: { type: array, items: { $ref: '#/components/schemas/NoteSearchResult' } } } } } } }
   /spaces/{spaceId}/notes:
     parameters:
       - { $ref: '#/components/parameters/SpaceID' }
@@ -427,6 +437,17 @@ components:
             relatedCount: { type: integer, minimum: 0 }
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
+    NoteSearchResult:
+      type: object
+      required: [id, spaceId, spaceName, title, content, kind, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        spaceId: { type: string, format: uuid }
+        spaceName: { type: string }
+        title: { type: string }
+        content: { type: string }
+        kind: { type: string }
+        updatedAt: { type: string, format: date-time }
     NoteUpdate:
       allOf:
         - { $ref: '#/components/schemas/NoteWrite' }
@@ -485,7 +506,7 @@ components:
           properties: { id: { type: string, format: uuid }, spaceId: { type: string, format: uuid } }
     Preferences:
       type: object
-      required: [dream_enabled, dream_frequency, dream_style, dream_notifications, include_old_notes, theme, locale]
+      required: [dream_enabled, dream_frequency, dream_style, dream_notifications, include_old_notes, theme, locale, edge_style]
       properties:
         dream_enabled: { type: boolean }
         dream_frequency: { type: string, enum: [daily, three_week, weekly] }
@@ -495,3 +516,4 @@ components:
         dream_pause_until: { type: [string, 'null'], format: date-time }
         theme: { type: string, enum: [light, dark, system] }
         locale: { type: string }
+        edge_style: { type: string, enum: [bezier, smoothstep, straight], default: bezier }

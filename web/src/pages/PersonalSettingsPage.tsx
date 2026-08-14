@@ -1,22 +1,26 @@
 import { useEffect, useState } from 'react';
 import { Alert, Badge, Button, Card, Checkbox, Code, CopyButton, Divider, Group, Modal, NumberInput, Select, SimpleGrid, Stack, Switch, Text, TextInput, Title } from '@mantine/core';
-import { IconCheck, IconCopy, IconKey, IconMoonStars, IconRefresh, IconShieldLock, IconTrash } from '@tabler/icons-react';
-import { api, json } from '../api';
+import { IconCheck, IconCopy, IconKey, IconMoonStars, IconRefresh, IconShieldLock, IconTrash, IconVectorBezier } from '@tabler/icons-react';
+import { api, json, type EdgeStyle, type Preferences } from '../api';
 import { useAuth } from '../auth-context';
 
-interface Preferences {dream_enabled:boolean;dream_frequency:string;dream_style:string;dream_notifications:boolean;include_old_notes:boolean;dream_pause_until?:string;theme:string;locale:string}
 interface APIKey {id:string;name:string;prefix:string;scopes:string[];status:string;expiresAt?:string;overlapUntil?:string;lastUsedAt?:string;createdAt:string}
+
+function EdgePreview({style}:{style:EdgeStyle}){
+  const path=style==='straight'?'M8 34 L112 34':style==='smoothstep'?'M8 34 H44 Q54 34 54 24 V18 Q54 8 64 8 H112':'M8 34 C38 -2 78 70 112 22';
+  return <svg className="edge-preview" viewBox="0 0 120 44" role="img" aria-label="선택한 연결선 미리보기"><circle cx="7" cy="34" r="4"/><path d={path}/><circle cx="113" cy={style==='smoothstep'?8:style==='bezier'?22:34} r="4"/></svg>;
+}
 
 export default function PersonalSettingsPage(){
   const {meta}=useAuth();
   const [prefs,setPrefs]=useState<Preferences>(); const [keys,setKeys]=useState<APIKey[]>([]); const [available,setAvailable]=useState<string[]>([]); const [overlap,setOverlap]=useState(24); const [opened,setOpened]=useState(false); const [name,setName]=useState('My integration'); const [scopes,setScopes]=useState<string[]>(['notes:read']); const [days,setDays]=useState<number|string>(90); const [secret,setSecret]=useState(''); const [message,setMessage]=useState('');
-  const load=()=>Promise.all([api<Preferences>('/preferences').then(setPrefs),api<{keys:APIKey[];availableScopes:string[];rotationOverlapHours:number}>('/api-keys').then(v=>{setKeys(v.keys);setAvailable(v.availableScopes);setOverlap(v.rotationOverlapHours)})]);
-  useEffect(()=>{void load()},[]);
-  const savePrefs=async(next:Preferences)=>{setPrefs(next);await api('/preferences',json('PUT',next));setMessage('개인 설정을 저장했습니다.');};
-  const create=async()=>{const v=await api<{key:APIKey;secret:string}>('/api-keys',json('POST',{name,scopes,expiresDays:Number(days)}));setSecret(v.secret);setKeys(all=>[v.key,...all]);};
-  const rotate=async(id:string)=>{if(!window.confirm(`${overlap}시간 동안 이전 키와 새 키를 함께 사용할까요?`))return;const v=await api<{key:APIKey;secret:string}>(`/api-keys/${id}/rotate`,{method:'POST'});setSecret(v.secret);await load();};
-  const revoke=async(id:string)=>{if(!window.confirm('이 키를 즉시 폐기할까요? 이 작업은 되돌릴 수 없습니다.'))return;await api(`/api-keys/${id}`,{method:'DELETE'});await load();};
-  const changeScope=async(key:APIKey,scope:string,checked:boolean)=>{const next=checked?[...key.scopes,scope]:key.scopes.filter(v=>v!==scope);if(next.length===0)return;await api(`/api-keys/${key.id}`,json('PUT',{scopes:next}));setKeys(all=>all.map(v=>v.id===key.id?{...v,scopes:next}:v));};
+  const load=()=>Promise.all([api<Preferences>('/preferences').then(value=>{setPrefs(value);localStorage.setItem('umm:edge-style',value.edge_style||'bezier')}),api<{keys:APIKey[];availableScopes:string[];rotationOverlapHours:number}>('/api-keys').then(v=>{setKeys(v.keys);setAvailable(v.availableScopes);setOverlap(v.rotationOverlapHours)})]);
+  useEffect(()=>{void load().catch(()=>undefined)},[]);
+  const savePrefs=async(next:Preferences)=>{const previous=prefs;setPrefs(next);try{const saved=await api<Preferences>('/preferences',json('PUT',next));setPrefs(saved);localStorage.setItem('umm:edge-style',saved.edge_style);setMessage('개인 설정을 저장했습니다.')}catch{setPrefs(previous)}};
+  const create=async()=>{try{const v=await api<{key:APIKey;secret:string}>('/api-keys',json('POST',{name,scopes,expiresDays:Number(days)}));setSecret(v.secret);setKeys(all=>[v.key,...all])}catch{/* 화면 알림에서 안내합니다. */}};
+  const rotate=async(id:string)=>{if(!window.confirm(`${overlap}시간 동안 이전 키와 새 키를 함께 사용할까요?`))return;try{const v=await api<{key:APIKey;secret:string}>(`/api-keys/${id}/rotate`,{method:'POST'});setSecret(v.secret);await load()}catch{/* 화면 알림에서 안내합니다. */}};
+  const revoke=async(id:string)=>{if(!window.confirm('이 키를 즉시 폐기할까요? 이 작업은 되돌릴 수 없습니다.'))return;try{await api(`/api-keys/${id}`,{method:'DELETE'});await load()}catch{/* 화면 알림에서 안내합니다. */}};
+  const changeScope=async(key:APIKey,scope:string,checked:boolean)=>{const next=checked?[...key.scopes,scope]:key.scopes.filter(v=>v!==scope);if(next.length===0)return;try{await api(`/api-keys/${key.id}`,json('PUT',{scopes:next}));setKeys(all=>all.map(v=>v.id===key.id?{...v,scopes:next}:v))}catch{/* 화면 알림에서 안내합니다. */}};
   return <main className="settings-page"><Stack maw={980} mx="auto" gap="xl">
     <div><Text size="sm" c="grape.7" fw={700}>PERSONAL</Text><Title order={1} mt={5}>나에게 맞는 umm</Title><Text c="dimmed" mt="xs">개인 경험과 나의 연동 키를 관리합니다. 서비스 전체 설정과는 분리되어 있습니다.</Text></div>
     {message&&<Alert color="green" icon={<IconCheck size={18}/>} withCloseButton onClose={()=>setMessage('')}>{message}</Alert>}
@@ -24,6 +28,9 @@ export default function PersonalSettingsPage(){
       {!meta?.dreamEnabled&&<Alert color="gray" mt="lg">서비스 관리자가 Dream 기능을 아직 활성화하지 않았습니다.</Alert>}
       {prefs&&<SimpleGrid cols={{base:1,sm:2}} mt="xl"><Select disabled={!meta?.dreamEnabled} label="빈도" size="md" value={prefs.dream_frequency} data={[{value:'daily',label:'매일'},{value:'three_week',label:'주 3회'},{value:'weekly',label:'주 1회'}]} onChange={v=>v&&void savePrefs({...prefs,dream_frequency:v})}/><Select disabled={!meta?.dreamEnabled} label="Dream 스타일" size="md" value={prefs.dream_style} data={[{value:'auto',label:'자동 선택'},{value:'connection',label:'연결'},{value:'question',label:'질문'},{value:'expansion',label:'확장'},{value:'free',label:'자유'}]} onChange={v=>v&&void savePrefs({...prefs,dream_style:v})}/><Switch disabled={!meta?.dreamEnabled} label="오래된 생각도 활용" checked={prefs.include_old_notes} onChange={e=>void savePrefs({...prefs,include_old_notes:e.currentTarget.checked})}/><Switch disabled={!meta?.dreamEnabled} label="Dream 도착 알림" checked={prefs.dream_notifications} onChange={e=>void savePrefs({...prefs,dream_notifications:e.currentTarget.checked})}/></SimpleGrid>}
       {prefs&&meta?.dreamEnabled&&<Group mt="lg"><Text size="sm" c="dimmed">Dream 잠시 쉬기</Text>{[{label:'오늘',d:1},{label:'3일',d:3},{label:'일주일',d:7}].map(v=><Button key={v.d} size="xs" variant="subtle" onClick={()=>void savePrefs({...prefs,dream_pause_until:new Date(Date.now()+v.d*86400000).toISOString()})}>{v.label}</Button>)}{meta.dreamAllowUserDisable&&<Button size="xs" variant="subtle" color="gray" onClick={()=>void savePrefs({...prefs,dream_enabled:false})}>끄기</Button>}<Button size="xs" variant="subtle" color="grape" onClick={()=>void savePrefs({...prefs,dream_enabled:true,dream_pause_until:undefined})}>다시 시작</Button></Group>}
+    </Card>
+    <Card radius="lg" p="xl" withBorder><Group justify="space-between" align="flex-start" wrap="nowrap"><Group align="flex-start" wrap="nowrap"><IconVectorBezier color="#765c96"/><div><Title order={2} fz="xl">캔버스 연결선</Title><Text c="dimmed" mt={4}>생각 사이의 연결을 읽기 편한 형태로 표시합니다.</Text></div></Group>{prefs&&<EdgePreview style={prefs.edge_style||'bezier'}/>}</Group>
+      {prefs&&<Select mt="xl" maw={420} label="연결선 형태" description="새 연결과 기존 연결에 즉시 함께 적용됩니다." value={prefs.edge_style||'bezier'} data={[{value:'bezier',label:'부드러운 곡선'},{value:'smoothstep',label:'둥근 꺾은선'},{value:'straight',label:'직선'}]} onChange={value=>value&&void savePrefs({...prefs,edge_style:value as EdgeStyle})}/>}
     </Card>
     <Card radius="lg" p="xl" withBorder><Group justify="space-between"><Group><IconShieldLock/><div><Title order={2} fz="xl">개인 API · MCP 키</Title><Text c="dimmed" mt={4}>권한을 최소로 부여하고 정기적으로 회전하세요.</Text></div></Group><Button leftSection={<IconKey size={17}/>} onClick={()=>{setSecret('');setOpened(true)}}>새 키</Button></Group>
       <Divider my="lg"/>{keys.length===0?<Text c="dimmed">아직 만든 키가 없습니다.</Text>:<Stack>{keys.map(key=><Card key={key.id} bg="gray.0" radius="md"><Group justify="space-between" align="flex-start"><div><Group><Text fw={650}>{key.name}</Text><Badge color={key.status==='active'?'green':key.status==='overlap'?'yellow':'gray'} variant="light">{key.status}</Badge></Group><Text size="sm" c="dimmed" mt={4}>umm_key_{key.prefix}_•••• · 생성 {new Date(key.createdAt).toLocaleDateString('ko-KR')}</Text></div><Group gap="xs"><Button size="xs" variant="light" leftSection={<IconRefresh size={15}/>} disabled={key.status!=='active'} onClick={()=>void rotate(key.id)}>회전</Button><Button size="xs" variant="subtle" color="red" leftSection={<IconTrash size={15}/>} disabled={key.status==='revoked'} onClick={()=>void revoke(key.id)}>폐기</Button></Group></Group><Group gap="md" mt="md">{available.map(scope=><Checkbox key={scope} size="sm" checked={key.scopes.includes(scope)} label={scope} disabled={key.status!=='active'} onChange={e=>void changeScope(key,scope,e.currentTarget.checked)}/>)}</Group></Card>)}</Stack>}

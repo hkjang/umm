@@ -17,12 +17,13 @@ type preferences struct {
 	DreamPauseUntil    *time.Time `json:"dream_pause_until"`
 	Theme              string     `json:"theme"`
 	Locale             string     `json:"locale"`
+	EdgeStyle          string     `json:"edge_style"`
 }
 
 func (s *Server) getPreferences(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	var v preferences
-	err := s.Store.Pool.QueryRow(r.Context(), `SELECT dream_enabled,dream_frequency,dream_style,dream_notifications,include_old_notes,dream_pause_until,theme,locale FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.DreamEnabled, &v.DreamFrequency, &v.DreamStyle, &v.DreamNotifications, &v.IncludeOldNotes, &v.DreamPauseUntil, &v.Theme, &v.Locale)
+	err := s.Store.Pool.QueryRow(r.Context(), `SELECT dream_enabled,dream_frequency,dream_style,dream_notifications,include_old_notes,dream_pause_until,theme,locale,edge_style FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.DreamEnabled, &v.DreamFrequency, &v.DreamStyle, &v.DreamNotifications, &v.IncludeOldNotes, &v.DreamPauseUntil, &v.Theme, &v.Locale, &v.EdgeStyle)
 	if err != nil {
 		writeError(w, 500, "개인 설정을 불러오지 못했습니다.")
 		return
@@ -31,6 +32,7 @@ func (s *Server) getPreferences(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
 	var v preferences
 	if decodeJSON(w, r, &v) != nil {
 		writeError(w, 400, "개인 설정 형식이 올바르지 않습니다.")
@@ -48,7 +50,16 @@ func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "테마가 올바르지 않습니다.")
 		return
 	}
-	p := principal(r)
+	if v.EdgeStyle == "" {
+		_ = s.Store.Pool.QueryRow(r.Context(), `SELECT edge_style FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.EdgeStyle)
+		if v.EdgeStyle == "" {
+			v.EdgeStyle = "bezier"
+		}
+	}
+	if !slices.Contains([]string{"bezier", "smoothstep", "straight"}, v.EdgeStyle) {
+		writeError(w, 400, "연결선 형태가 올바르지 않습니다.")
+		return
+	}
 	var dreamCfg struct {
 		AllowUserDisable bool `json:"allow_user_disable"`
 	}
@@ -56,7 +67,7 @@ func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
 	if !dreamCfg.AllowUserDisable {
 		v.DreamEnabled = true
 	}
-	_, err := s.Store.Pool.Exec(r.Context(), `UPDATE user_preferences SET dream_enabled=$2,dream_frequency=$3,dream_style=$4,dream_notifications=$5,include_old_notes=$6,dream_pause_until=$7,theme=$8,locale=$9,updated_at=now() WHERE user_id=$1`, p.User.ID, v.DreamEnabled, v.DreamFrequency, v.DreamStyle, v.DreamNotifications, v.IncludeOldNotes, v.DreamPauseUntil, v.Theme, v.Locale)
+	_, err := s.Store.Pool.Exec(r.Context(), `UPDATE user_preferences SET dream_enabled=$2,dream_frequency=$3,dream_style=$4,dream_notifications=$5,include_old_notes=$6,dream_pause_until=$7,theme=$8,locale=$9,edge_style=$10,updated_at=now() WHERE user_id=$1`, p.User.ID, v.DreamEnabled, v.DreamFrequency, v.DreamStyle, v.DreamNotifications, v.IncludeOldNotes, v.DreamPauseUntil, v.Theme, v.Locale, v.EdgeStyle)
 	if err != nil {
 		writeError(w, 500, "개인 설정을 저장하지 못했습니다.")
 		return

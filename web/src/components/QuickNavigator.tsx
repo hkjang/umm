@@ -1,9 +1,10 @@
-import { Badge, Button, Group, Kbd, Modal, ScrollArea, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from '@mantine/core';
-import { IconAdjustments, IconCheckupList, IconHome, IconKeyboard, IconLayoutDashboard, IconMoonStars, IconSearch, IconSparkles } from '@tabler/icons-react';
+import { Badge, Button, Group, Kbd, Loader, Modal, ScrollArea, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from '@mantine/core';
+import { IconAdjustments, IconCheckupList, IconFileText, IconHome, IconKeyboard, IconLayoutDashboard, IconMoonStars, IconSearch, IconSparkles } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api, type Space } from '../api';
+import { api, type NoteSearchResult, type Space } from '../api';
 import { useAuth } from '../auth-context';
+import { showError } from '../ui-notifications';
 
 interface QuickItem {
   id: string;
@@ -11,6 +12,7 @@ interface QuickItem {
   description: string;
   to?: string;
   icon: typeof IconHome;
+  badge?: string;
   action?: () => void;
 }
 
@@ -24,12 +26,28 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
   const [helpOpened, setHelpOpened] = useState(false);
   const [query, setQuery] = useState('');
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [notes, setNotes] = useState<NoteSearchResult[]>([]);
+  const [searchingNotes, setSearchingNotes] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const mod = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
 
   useEffect(() => {
     if (opened) void api<{ spaces: Space[] }>('/spaces').then((value) => setSpaces(value.spaces)).catch(() => setSpaces([]));
   }, [opened]);
+
+  useEffect(() => {
+    const term = normalize(query);
+    if (!opened || term.length === 0) { setNotes([]); setSearchingNotes(false); return; }
+    let active = true;
+    setSearchingNotes(true);
+    const timer = window.setTimeout(() => {
+      void api<{ notes: NoteSearchResult[] }>(`/search?q=${encodeURIComponent(term)}&limit=12`, { silent: true })
+        .then((value) => { if (active) setNotes(value.notes); })
+        .catch(() => { if (active) { setNotes([]); showError('메모 검색 결과를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.','빠른 이동','quick-note-search'); } })
+        .finally(() => { if (active) setSearchingNotes(false); });
+    }, 180);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [opened, query]);
 
   const destinations = useMemo<QuickItem[]>(() => {
     const next: QuickItem[] = [
@@ -49,14 +67,21 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
       { id: 'shortcuts', label: '키보드 단축키', description: '전체 단축키 안내', icon: IconKeyboard, action: () => setHelpOpened(true) },
     ];
     const terms = normalize(query).split(/\s+/).filter(Boolean);
-    return terms.length === 0 ? all : all.filter((item) => terms.every((term) => normalize(`${item.label} ${item.description}`).includes(term)));
-  }, [destinations, query, spaces]);
+    if (terms.length === 0) return all;
+    const localMatches = all.filter((item) => terms.every((term) => normalize(`${item.label} ${item.description}`).includes(term)));
+    const noteMatches: QuickItem[] = notes.map((note) => {
+      const content = note.content.replace(/\s+/g, ' ').trim();
+      const title = note.title.trim() || content.slice(0, 52) || '내용 없는 메모';
+      return { id: `note:${note.id}`, label: title, description: `${note.spaceName} · ${content.slice(0, 90)}`, to: `/space/${note.spaceId}?note=${note.id}`, icon: IconFileText, badge: '메모' };
+    });
+    return [...localMatches, ...noteMatches];
+  }, [destinations, notes, query, spaces]);
 
   useEffect(() => setActiveIndex(0), [query, opened]);
 
   const select = (item?: QuickItem) => {
     if (!item) return;
-    setOpened(false);
+    setOpened(false); setQuery(''); setNotes([]);
     if (item.to) navigate(item.to);
     item.action?.();
   };
@@ -91,8 +116,8 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
     <Button className={admin ? 'quick-nav-trigger quick-nav-trigger-admin' : 'quick-nav-trigger'} aria-label="빠른 이동" variant={admin ? 'white' : 'subtle'} color="dark" size="compact-sm" leftSection={<IconSearch size={16}/>} onClick={() => setOpened(true)}>
       빠른 이동 <Kbd ml="xs" size="xs">{mod} K</Kbd>
     </Button>
-    <Modal opened={opened} onClose={() => setOpened(false)} title="빠른 이동" centered size="lg" classNames={{ content: 'quick-nav-modal' }}>
-      <TextInput autoFocus value={query} onChange={(event) => setQuery(event.currentTarget.value)} leftSection={<IconSearch size={18}/>} placeholder="화면이나 공간 이름 검색" size="lg" onKeyDown={(event) => {
+    <Modal opened={opened} onClose={() => { setOpened(false); setQuery(''); setNotes([]); }} title="빠른 이동" centered size="lg" classNames={{ content: 'quick-nav-modal' }}>
+      <TextInput autoFocus value={query} onChange={(event) => setQuery(event.currentTarget.value)} leftSection={<IconSearch size={18}/>} rightSection={searchingNotes?<Loader size={17}/>:undefined} placeholder="화면, 공간 또는 메모 검색" size="lg" onKeyDown={(event) => {
         if (event.key === 'ArrowDown' && items.length > 0) { event.preventDefault(); setActiveIndex((value) => Math.min(items.length - 1, value + 1)); }
         if (event.key === 'ArrowUp') { event.preventDefault(); setActiveIndex((value) => Math.max(0, value - 1)); }
         if (event.key === 'Enter') { event.preventDefault(); select(items[activeIndex]); }
@@ -100,9 +125,9 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
       <ScrollArea.Autosize mah={430} mt="md" type="auto">
         <Stack gap={5} role="listbox" aria-label="빠른 이동 결과">
           {items.map((item, index) => <UnstyledButton key={item.id} className="quick-nav-item" data-active={index === activeIndex || undefined} aria-selected={index === activeIndex} role="option" onMouseEnter={() => setActiveIndex(index)} onClick={() => select(item)}>
-            <Group wrap="nowrap"><ThemeIcon variant="light" color="grape" size="lg"><item.icon size={19}/></ThemeIcon><div><Text fw={650}>{item.label}</Text><Text size="xs" c="dimmed">{item.description}</Text></div>{item.to === location.pathname && <Badge ml="auto" variant="light" color="grape">현재</Badge>}</Group>
+            <Group wrap="nowrap"><ThemeIcon variant="light" color="grape" size="lg"><item.icon size={19}/></ThemeIcon><div className="quick-nav-copy"><Text fw={650} lineClamp={1}>{item.label}</Text><Text size="xs" c="dimmed" lineClamp={1}>{item.description}</Text></div>{item.badge&&<Badge ml="auto" variant="light" color="blue">{item.badge}</Badge>}{item.to === location.pathname && <Badge ml="auto" variant="light" color="grape">현재</Badge>}</Group>
           </UnstyledButton>)}
-          {items.length === 0 && <Text c="dimmed" ta="center" py="xl">일치하는 화면이나 공간이 없습니다.</Text>}
+          {items.length === 0 && !searchingNotes && <Text c="dimmed" ta="center" py="xl">일치하는 화면, 공간 또는 메모가 없습니다.</Text>}
         </Stack>
       </ScrollArea.Autosize>
       <Text size="xs" c="dimmed" mt="md">↑↓ 선택 · Enter 이동 · Esc 닫기</Text>

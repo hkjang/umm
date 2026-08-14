@@ -19,7 +19,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refresh = async () => {
     const [metaResult, userResult] = await Promise.all([
       api<Meta>('/meta'),
-      api<User>('/me').catch(() => undefined),
+      api<User>('/me', { silent: true }).catch(() => undefined),
     ]);
     setMeta(metaResult);
     setUser(userResult);

@@ -69,6 +69,16 @@ type RelatedNote struct {
 	Score  float64 `json:"score"`
 	Reason string  `json:"reason"`
 }
+
+type NoteSearchResult struct {
+	ID        uuid.UUID `json:"id"`
+	SpaceID   uuid.UUID `json:"spaceId"`
+	SpaceName string    `json:"spaceName"`
+	Title     string    `json:"title"`
+	Content   string    `json:"content"`
+	Kind      string    `json:"kind"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
 type ThoughtCluster struct {
 	ID       string      `json:"id"`
 	Label    string      `json:"label"`
@@ -337,6 +347,44 @@ func noteSearchPatterns(query string) []string {
 		patterns = append(patterns, "%"+escape.Replace(term)+"%")
 	}
 	return patterns
+}
+
+func (s *Store) SearchNotes(ctx context.Context, userID uuid.UUID, query string, limit int) ([]NoteSearchResult, error) {
+	patterns := noteSearchPatterns(query)
+	if len(patterns) == 0 {
+		return []NoteSearchResult{}, nil
+	}
+	if limit < 1 {
+		limit = 12
+	}
+	if limit > 30 {
+		limit = 30
+	}
+	rows, err := s.Pool.Query(ctx, `
+		SELECT n.id,n.space_id,sp.name,n.title,left(n.content,500),n.kind,n.updated_at
+		FROM notes n
+		JOIN spaces sp ON sp.id=n.space_id
+		WHERE n.deleted_at IS NULL
+		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
+		  AND NOT EXISTS(
+			SELECT 1 FROM unnest($2::text[]) AS term(pattern)
+			WHERE concat_ws(' ',n.title,n.content,sp.name) NOT ILIKE term.pattern ESCAPE E'\\'
+		  )
+		ORDER BY (NULLIF(trim(n.title),'') IS NOT NULL) DESC,n.updated_at DESC
+		LIMIT $3`, userID, patterns, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	results := []NoteSearchResult{}
+	for rows.Next() {
+		var result NoteSearchResult
+		if err := rows.Scan(&result.ID, &result.SpaceID, &result.SpaceName, &result.Title, &result.Content, &result.Kind, &result.UpdatedAt); err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, rows.Err()
 }
 
 func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query string) ([]Note, []Edge, error) {

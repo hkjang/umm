@@ -54,6 +54,7 @@ func (s *Server) Handler() http.Handler {
 			protected.Use(auth.Require)
 			protected.Post("/auth/logout", s.logout)
 			protected.Get("/me", s.me)
+			protected.Get("/search", s.searchNotes)
 			protected.Get("/spaces", s.listSpaces)
 			protected.Post("/spaces", s.createSpace)
 			protected.Put("/spaces/{spaceID}", s.updateSpace)

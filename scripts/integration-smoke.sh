@@ -53,8 +53,16 @@ done
 notes="$(curl -fsS -b "$cookie" "$base/spaces/$space/notes")"
 test "$(printf '%s' "$notes" | jq '.notes | length')" -eq 3
 note="$(printf '%s' "$notes" | jq -r '.notes[0].id')"
+search="$(curl -fsS -b "$cookie" --get --data-urlencode 'q=사용자별 권한' --data-urlencode 'limit=5' "$base/search")"
+test "$(printf '%s' "$search" | jq '.notes | length')" -ge 1
+test "$(printf '%s' "$search" | jq -r '.notes[0].spaceId')" = "$space"
 test "$(curl -fsS -b "$cookie" "$base/notes/$note/related" | jq '.related | length')" -ge 1
 test "$(curl -fsS -b "$cookie" "$base/spaces/$space/clusters" | jq '.clusters | length')" -ge 1
+
+preferences="$(curl -fsS -b "$cookie" "$base/preferences")"
+test "$(printf '%s' "$preferences" | jq -r '.edge_style')" = "bezier"
+updated_preferences="$(printf '%s' "$preferences" | jq '.edge_style="smoothstep"' | curl -fsS -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary @- "$base/preferences")"
+test "$(printf '%s' "$updated_preferences" | jq -r '.edge_style')" = "smoothstep"
 
 created="$(curl -fsS -b "$cookie" -H 'Content-Type: application/json' \
   -d '{"name":"ci-mcp","scopes":["notes:read","spaces:read"],"expiresDays":1}' "$base/api-keys")"

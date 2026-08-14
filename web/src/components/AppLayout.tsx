@@ -23,7 +23,7 @@ export default function AppLayout() {
     ? location.pathname === '/' || location.pathname.startsWith('/space/')
     : location.pathname === to;
   const [notifications,setNotifications]=useState<Array<{id:string;title:string;body:string;readAt?:string}>>([]);const [unread,setUnread]=useState(0);
-  const loadNotifications=()=>api<{notifications:Array<{id:string;title:string;body:string;readAt?:string}>;unread:number}>('/notifications').then(v=>{setNotifications(v.notifications);setUnread(v.unread)}).catch(()=>undefined);
+  const loadNotifications=()=>api<{notifications:Array<{id:string;title:string;body:string;readAt?:string}>;unread:number}>('/notifications',{silent:true}).then(v=>{setNotifications(v.notifications);setUnread(v.unread)}).catch(()=>undefined);
   useEffect(()=>{void loadNotifications();const timer=window.setInterval(loadNotifications,60000);return()=>window.clearInterval(timer)},[]);
   return <AppShell className="warm-shell" header={{ height: isAdmin ? 0 : 66 }} navbar={{ width: 238, breakpoint: 'sm', collapsed: { mobile: !opened, desktop: isAdmin } }} padding={0}>
     {!isAdmin && <AppShell.Header className="app-header"><Group h="100%" px={{ base: 'md', sm: 'lg' }} justify="space-between">

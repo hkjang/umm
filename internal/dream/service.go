@@ -422,6 +422,65 @@ func containsHangul(v string) bool {
 	return false
 }
 
+func requestChat(ctx context.Context, client *http.Client, endpoint, key string, body chatRequest) (chatResponse, error) {
+	var result chatResponse
+	raw, err := json.Marshal(body)
+	if err != nil {
+		return result, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return result, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if key != "" {
+		request.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := client.Do(request)
+	if err != nil {
+		return result, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return result, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return result, fmt.Errorf("AI gateway status %d: %s", resp.StatusCode, truncate(string(responseBody), 300))
+	}
+	if json.Unmarshal(responseBody, &result) != nil || len(result.Choices) == 0 {
+		return result, errors.New("invalid AI gateway response")
+	}
+	return result, nil
+}
+
+// preferKoreanResponse tries one lightweight rewrite when a model ignores the
+// Korean-only instruction. A failed rewrite never hides a usable original
+// response: availability is more important than enforcing the display language.
+func preferKoreanResponse(ctx context.Context, client *http.Client, endpoint, key, model string, maxTokens int, original string) (string, int, int) {
+	if containsHangul(original) {
+		return original, 0, 0
+	}
+	request := chatRequest{
+		Model: model,
+		Messages: []chatMessage{
+			{Role: "system", Content: "다음 답변의 의미와 형식을 유지하면서 자연스러운 한국어로 옮기세요. 설명, 머리말, 내부 추론, <think> 태그 없이 변환된 최종 본문만 출력하세요."},
+			{Role: "user", Content: redact(truncate(original, 4000))},
+		},
+		Temperature: 0.1,
+		MaxTokens:   maxTokens,
+	}
+	result, err := requestChat(ctx, client, endpoint, key, request)
+	if err != nil {
+		return original, 0, 0
+	}
+	repaired := visibleModelResponse(result.Choices[0].Message.Content)
+	if repaired == "" || !containsHangul(repaired) {
+		return original, result.Usage.PromptTokens, result.Usage.CompletionTokens
+	}
+	return repaired, result.Usage.PromptTokens, result.Usage.CompletionTokens
+}
+
 func sourcePrompt(sources []sourceNote) string {
 	var b strings.Builder
 	for i, source := range sources {
@@ -483,7 +542,6 @@ func (s *Service) callGateway(ctx context.Context, cfg Config, g GatewayConfig, 
 		system += " " + extra
 	}
 	reqBody := chatRequest{Model: cfg.Model, Messages: []chatMessage{{Role: "system", Content: system}, {Role: "user", Content: b.String()}}, Temperature: cfg.Temperature, MaxTokens: cfg.TokenLimit}
-	raw, _ := json.Marshal(reqBody)
 	timeout := g.TimeoutSeconds
 	if timeout <= 0 {
 		timeout = 45
@@ -496,29 +554,9 @@ func (s *Service) callGateway(ctx context.Context, cfg Config, g GatewayConfig, 
 	start := time.Now()
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
-		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
-		request.Header.Set("Content-Type", "application/json")
-		if key != "" {
-			request.Header.Set("Authorization", "Bearer "+key)
-		}
-		resp, err := client.Do(request)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		resp.Body.Close()
-		if readErr != nil {
-			lastErr = readErr
-			continue
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("AI gateway status %d: %s", resp.StatusCode, truncate(string(body), 300))
-			continue
-		}
-		var result chatResponse
-		if err = json.Unmarshal(body, &result); err != nil || len(result.Choices) == 0 {
-			lastErr = errors.New("invalid AI gateway response")
+		result, requestErr := requestChat(ctx, client, endpoint, key, reqBody)
+		if requestErr != nil {
+			lastErr = requestErr
 			continue
 		}
 		text := visibleModelResponse(result.Choices[0].Message.Content)
@@ -526,11 +564,8 @@ func (s *Service) callGateway(ctx context.Context, cfg Config, g GatewayConfig, 
 			lastErr = errors.New("empty Dream response")
 			continue
 		}
-		if !containsHangul(text) {
-			lastErr = errors.New("Dream 응답이 한국어가 아닙니다")
-			continue
-		}
-		return truncate(text, 500), result.Usage.PromptTokens, result.Usage.CompletionTokens, cfg.Model, time.Since(start), nil
+		text, repairInput, repairOutput := preferKoreanResponse(ctx, client, endpoint, key, cfg.Model, cfg.TokenLimit, text)
+		return truncate(text, 500), result.Usage.PromptTokens + repairInput, result.Usage.CompletionTokens + repairOutput, cfg.Model, time.Since(start), nil
 	}
 	return "", 0, 0, cfg.Model, time.Since(start), lastErr
 }
@@ -672,7 +707,7 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 			return "", 0, 0, 0, err
 		}
 	}
-	raw, _ := json.Marshal(chatRequest{Model: model, Messages: []chatMessage{{Role: "system", Content: system}, {Role: "user", Content: user}}, Temperature: temperature, MaxTokens: maxTokens})
+	reqBody := chatRequest{Model: model, Messages: []chatMessage{{Role: "system", Content: system}, {Role: "user", Content: user}}, Temperature: temperature, MaxTokens: maxTokens}
 	timeout := g.TimeoutSeconds
 	if timeout <= 0 {
 		timeout = 45
@@ -685,29 +720,9 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 	start := time.Now()
 	var lastErr error
 	for attempt := 0; attempt <= retries; attempt++ {
-		request, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
-		request.Header.Set("Content-Type", "application/json")
-		if key != "" {
-			request.Header.Set("Authorization", "Bearer "+key)
-		}
-		resp, doErr := client.Do(request)
-		if doErr != nil {
-			lastErr = doErr
-			continue
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		resp.Body.Close()
-		if readErr != nil {
-			lastErr = readErr
-			continue
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			lastErr = fmt.Errorf("AI gateway status %d: %s", resp.StatusCode, truncate(string(body), 300))
-			continue
-		}
-		var result chatResponse
-		if json.Unmarshal(body, &result) != nil || len(result.Choices) == 0 {
-			lastErr = errors.New("invalid AI gateway response")
+		result, requestErr := requestChat(ctx, client, endpoint, key, reqBody)
+		if requestErr != nil {
+			lastErr = requestErr
 			continue
 		}
 		text := visibleModelResponse(result.Choices[0].Message.Content)
@@ -715,11 +730,8 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 			lastErr = errors.New("empty AI response")
 			continue
 		}
-		if !containsHangul(text) {
-			lastErr = errors.New("AI 응답이 한국어가 아닙니다")
-			continue
-		}
-		return truncate(text, 2000), result.Usage.PromptTokens, result.Usage.CompletionTokens, time.Since(start), nil
+		text, repairInput, repairOutput := preferKoreanResponse(ctx, client, endpoint, key, model, maxTokens, text)
+		return truncate(text, 2000), result.Usage.PromptTokens + repairInput, result.Usage.CompletionTokens + repairOutput, time.Since(start), nil
 	}
 	return "", 0, 0, time.Since(start), lastErr
 }

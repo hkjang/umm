@@ -51,7 +51,10 @@ button, a, input, textarea, [tabindex] { -webkit-tap-highlight-color: transparen
 .quick-nav-modal { border: 1px solid rgba(73,62,84,.1); }
 .quick-nav-item { width: 100%; padding: 10px 12px; border: 1px solid transparent; border-radius: 11px; transition: background 120ms ease, border-color 120ms ease; }
 .quick-nav-item:hover, .quick-nav-item[data-active] { background: #f3edf7; border-color: #e2d5eb; }
+.quick-nav-copy { min-width: 0; flex: 1; }
 .shortcut-row { min-height: 38px; padding: 5px 2px; border-bottom: 1px solid #eee9df; }
+.app-notifications { position: fixed; z-index: 1000; top: 80px; right: 18px; width: min(400px, calc(100% - 36px)); pointer-events: none; }
+.app-notification { pointer-events: auto; border: 1px solid rgba(52,45,38,.1); box-shadow: 0 12px 32px rgba(40,34,28,.17); background: rgba(255,253,249,.98); backdrop-filter: blur(14px); }
 
 .canvas-page { position: relative; width: 100%; height: calc(100dvh - var(--app-shell-header-offset, 66px)); background: var(--canvas); isolation: isolate; overflow: hidden; }
 .canvas-page::before {
@@ -145,8 +148,11 @@ button, a, input, textarea, [tabindex] { -webkit-tap-highlight-color: transparen
 .login-scene::after { content: ''; position: absolute; inset: 0; opacity: .28; background-image: radial-gradient(#9d9482 .8px,transparent .8px); background-size: 25px 25px; }
 .login-note { position: absolute; z-index: 1; width: 210px; min-height: 140px; padding: 22px; border-radius: 10px 13px 9px 12px; box-shadow: 0 15px 35px rgba(54,48,34,.13); font-size: 18px; line-height: 1.55; font-weight: 600; }
 .login-form-side { display: grid; place-items: center; padding: 48px; background: #fffdf9; min-height: 100vh; }
-.settings-page { min-height: 100%; background: #f8f6f0; overflow: auto; padding: 34px; scrollbar-gutter: stable; }
+.settings-page { height: calc(100dvh - var(--app-shell-header-offset, 66px)); min-height: 0; background: #f8f6f0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 34px 34px 64px; scrollbar-gutter: stable; }
 .settings-page .mantine-Card-root, .admin-content .mantine-Card-root { border-color: #e0dbd0; box-shadow: 0 1px 2px rgba(58,51,39,.025); }
+.edge-preview { flex: 0 0 auto; width: 132px; height: 50px; overflow: visible; }
+.edge-preview path { fill: none; stroke: #765c96; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.edge-preview circle { fill: #fff; stroke: #765c96; stroke-width: 2; }
 .admin-layout { height: 100dvh; min-height: 0; display: grid; grid-template-columns: 255px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); background: #f4f2ed; overflow: hidden; }
 .admin-menu { min-height: 0; padding: 22px 15px; background: linear-gradient(180deg, #25212b 0%, #2c2832 100%); color: #f7f2fa; overflow-y: auto; }
 .admin-brand { color: #fff; }
@@ -186,8 +192,10 @@ button, a, input, textarea, [tabindex] { -webkit-tap-highlight-color: transparen
   .quick-nav-trigger { width: 36px; padding-inline: 0; }
   .quick-nav-trigger .mantine-Button-label { font-size: 0; }
   .quick-nav-trigger .mantine-Kbd-root { display: none; }
+  .app-notifications { top: 76px; right: 12px; width: calc(100% - 24px); }
   .mobile-tabs { display: flex; position: fixed; z-index: 50; left: 0; right: 0; bottom: 0; height: calc(62px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); background: rgba(255,253,248,.98); border-top: 1px solid #ded8cb; box-shadow: 0 -6px 20px rgba(54,48,38,.07); justify-content: space-around; align-items: center; }
   .settings-page { padding: 22px 16px 90px; }
+  .edge-preview { width: 96px; }
   .admin-layout { grid-template-columns: 1fr; }
   .admin-menu { display: none; }
   .admin-content { padding: 76px 16px 90px; }

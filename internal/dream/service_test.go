@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -81,5 +82,57 @@ func TestCallTextReturnsOnlyKoreanBodyAfterClosingThinkTag(t *testing.T) {
 	}
 	if len(received.Messages) == 0 || !strings.Contains(received.Messages[0].Content, "한국어") || !strings.Contains(received.Messages[0].Content, "<think>") {
 		t.Fatalf("Korean-only reasoning instruction missing: %#v", received.Messages)
+	}
+}
+
+func TestCallTextRepairsEnglishResponseWithoutFailing(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		content := "Connect the two notes with a small experiment."
+		if call == 2 {
+			content = "두 메모를 작은 실험으로 연결해 보세요."
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": content}}},
+			"usage":   map[string]any{"prompt_tokens": 5, "completion_tokens": 4},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{}
+	text, inputTokens, outputTokens, _, err := service.callText(context.Background(), GatewayConfig{BaseURL: server.URL, TimeoutSeconds: 2}, "test-model", .2, 200, koreanOnlyInstruction, "사용자 메모")
+	if err != nil {
+		t.Fatalf("callText failed: %v", err)
+	}
+	if text != "두 메모를 작은 실험으로 연결해 보세요." || calls.Load() != 2 {
+		t.Fatalf("English response was not repaired: text=%q calls=%d", text, calls.Load())
+	}
+	if inputTokens != 10 || outputTokens != 8 {
+		t.Fatalf("repair usage was not included: input=%d output=%d", inputTokens, outputTokens)
+	}
+}
+
+func TestCallTextKeepsUsableResponseWhenKoreanRepairFails(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []any{map[string]any{"message": map[string]any{"role": "assistant", "content": "A usable final answer."}}},
+				"usage":   map[string]any{"prompt_tokens": 5, "completion_tokens": 4},
+			})
+			return
+		}
+		http.Error(w, "temporary failure", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	service := &Service{}
+	text, _, _, _, err := service.callText(context.Background(), GatewayConfig{BaseURL: server.URL, TimeoutSeconds: 2}, "test-model", .2, 200, koreanOnlyInstruction, "사용자 메모")
+	if err != nil {
+		t.Fatalf("usable response was rejected: %v", err)
+	}
+	if text != "A usable final answer." || calls.Load() != 2 {
+		t.Fatalf("unexpected fallback response: text=%q calls=%d", text, calls.Load())
 	}
 }

@@ -7,6 +7,7 @@ import { MantineProvider, createTheme } from '@mantine/core';
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from './auth-context';
 import App from './App';
+import AppNotifications from './components/AppNotifications';
 
 const theme = createTheme({
   fontFamily: '"Noto Sans KR Variable", "Noto Sans KR", sans-serif',
@@ -18,6 +19,7 @@ const theme = createTheme({
 
 createRoot(document.getElementById('root')!).render(
   <MantineProvider theme={theme} defaultColorScheme="light">
+    <AppNotifications />
     <BrowserRouter>
       <AuthProvider><App /></AuthProvider>
     </BrowserRouter>

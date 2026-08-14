@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -229,6 +230,28 @@ func (s *Server) listNotes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"notes": notes, "edges": edges})
 }
 
+func (s *Server) searchNotes(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		writeJSON(w, 200, map[string]any{"notes": []store.NoteSearchResult{}})
+		return
+	}
+	if utf8.RuneCountInString(query) > 200 {
+		writeError(w, 400, "검색어는 200자 이내로 입력해 주세요.")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	results, err := s.Store.SearchNotes(r.Context(), principal(r).User.ID, query, limit)
+	if err != nil {
+		writeError(w, 500, "메모 바로가기를 검색하지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"notes": results})
+}
+
 func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:write") {
 		return
@@ -401,7 +424,8 @@ func (s *Server) aiAssist(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	result, err := s.Dreams.Assist(r.Context(), p.User.ID, body.NoteIDs, body.Mode)
 	if err != nil {
-		writeError(w, 400, err.Error())
+		slog.Warn("AI assist failed", "user_id", p.User.ID, "mode", body.Mode, "error", err)
+		writeError(w, http.StatusBadGateway, "AI 응답을 받지 못했습니다. 잠시 후 다시 시도하거나 관리자에게 AI 연결 설정을 확인해 달라고 요청해 주세요.")
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "ai.assist", "notes", strings.Join(func() []string {
