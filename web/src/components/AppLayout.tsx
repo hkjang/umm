@@ -18,6 +18,9 @@ export default function AppLayout() {
   const { user, meta, logout } = useAuth();
   const location = useLocation(); const navigate = useNavigate();
   const isAdmin = location.pathname.startsWith('/admin');
+  const isLinkActive = (to: string) => to === '/'
+    ? location.pathname === '/' || location.pathname.startsWith('/space/')
+    : location.pathname === to;
   const [notifications,setNotifications]=useState<Array<{id:string;title:string;body:string;readAt?:string}>>([]);const [unread,setUnread]=useState(0);
   const loadNotifications=()=>api<{notifications:Array<{id:string;title:string;body:string;readAt?:string}>;unread:number}>('/notifications').then(v=>{setNotifications(v.notifications);setUnread(v.unread)}).catch(()=>undefined);
   useEffect(()=>{void loadNotifications();const timer=window.setInterval(loadNotifications,60000);return()=>window.clearInterval(timer)},[]);
@@ -31,13 +34,13 @@ export default function AppLayout() {
         <Menu.Item color="red" leftSection={<IconLogout size={16} />} onClick={async () => { await logout(); navigate('/'); }}>로그아웃</Menu.Item>
       </Menu.Dropdown></Menu></Group>
     </Group></AppShell.Header>}
-    <AppShell.Navbar className="app-navbar" p="md"><AppShell.Section grow component={ScrollArea} className="nav-scroll"><Stack gap={5}>
+    <AppShell.Navbar className="app-navbar" p="md" aria-label="주 메뉴"><AppShell.Section grow component={ScrollArea} className="nav-scroll"><Stack gap={5}>
       <Text size="xs" tt="uppercase" fw={700} c="dimmed" px="sm" pt="xs" pb={4}>Thought Space</Text>
-      {links.map(({ to, label, icon: Icon }) => <MantineNavLink key={to} component={NavLink} to={to} label={label} leftSection={<Icon size={19} />} active={location.pathname === to} onClick={close} />)}
+      {links.map(({ to, label, icon: Icon }) => <MantineNavLink key={to} component={NavLink} to={to} label={label} leftSection={<Icon size={19} />} active={isLinkActive(to)} aria-current={isLinkActive(to) ? 'page' : undefined} onClick={close} />)}
       {user?.role === 'admin' && <><Divider my="sm" /><Text size="xs" tt="uppercase" fw={700} c="dimmed" px="sm">Service</Text><MantineNavLink component={NavLink} to="/admin" label="서비스 관리자" leftSection={<IconLayoutDashboard size={19} />} onClick={close} /></>}
     </Stack></AppShell.Section><AppShell.Section><Text size="xs" c="dimmed" px="sm">정리는 나중에.<br />생각부터 붙입니다.</Text></AppShell.Section></AppShell.Navbar>
     <AppShell.Main h="100%"><Outlet /></AppShell.Main>
-    {!isAdmin && <nav className="mobile-tabs" aria-label="모바일 주 메뉴">{links.slice(0,3).map(({to,label,icon:Icon}) => <Button key={to} component={NavLink} to={to} variant="subtle" color={location.pathname===to?'grape':'gray'} px="xs" leftSection={<Icon size={19} />}>{label.split(' ')[0]}</Button>)}</nav>}
-    {isAdmin && <Button pos="fixed" top={16} left={16} style={{zIndex:80}} variant="white" color="dark" leftSection={<IconArrowLeft size={18}/>} onClick={() => navigate('/')}>내 공간</Button>}
+    {!isAdmin && <nav className="mobile-tabs" aria-label="모바일 주 메뉴">{links.slice(0,3).map(({to,label,icon:Icon}) => <Button key={to} component={NavLink} to={to} variant="subtle" color={isLinkActive(to)?'grape':'gray'} aria-current={isLinkActive(to) ? 'page' : undefined} px="xs" leftSection={<Icon size={19} />}>{label.split(' ')[0]}</Button>)}</nav>}
+    {isAdmin && <Button className="admin-back-button" pos="fixed" top={16} left={16} style={{zIndex:80}} variant="white" color="dark" leftSection={<IconArrowLeft size={18}/>} onClick={() => navigate('/')}>내 공간</Button>}
   </AppShell>;
 }

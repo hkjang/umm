@@ -49,7 +49,7 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
       placeholder="지금 떠오르는 생각을 적어보세요"
       autoFocus={note.content === ''}
     />
-    {!!data.relatedCount && <button className="related-chip nodrag" type="button" onClick={() => data.onGather(note.id)}>Related {data.relatedCount}</button>}
+    {!!data.relatedCount && <button className="related-chip nodrag" type="button" onClick={() => data.onGather(note.id)}>관련 {data.relatedCount}</button>}
     <div className="note-actions nodrag">
       <Menu shadow="sm" width={170} position="bottom-end"><Menu.Target><Tooltip label="메모 메뉴"><ActionIcon variant="subtle" color="dark" size="sm" aria-label="메모 메뉴"><IconDots size={17} /></ActionIcon></Tooltip></Menu.Target><Menu.Dropdown>
         {note.source !== 'dream' && <Menu.Sub><Menu.Sub.Target><Menu.Sub.Item leftSection={<IconPalette size={15} />}>색상</Menu.Sub.Item></Menu.Sub.Target><Menu.Sub.Dropdown>{colors.map((color) => <Menu.Item key={color} leftSection={<span style={{ width: 13, height: 13, borderRadius: 99, background: `var(--note-${color}, #ddd)` }} />} onClick={() => data.onPatch(note.id, { color })}>{color}</Menu.Item>)}</Menu.Sub.Dropdown></Menu.Sub>}

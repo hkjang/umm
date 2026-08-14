@@ -13,8 +13,8 @@
 ## 설치
 
 ```bash
-./scripts/load-offline.sh umm-v0.2.0.tar.gz
-docker image inspect umm:v0.2.0
+./scripts/load-offline.sh umm-v0.2.1.tar.gz
+docker image inspect umm:v0.2.1
 ```
 
 PostgreSQL user는 대상 database에 schema/table/extension을 생성할 권한이 필요합니다. 시작 시 embedded migration이 transaction으로 실행됩니다.
@@ -46,9 +46,9 @@ ENCRYPTION_KEY
 업그레이드 전에 PostgreSQL snapshot/backup을 만들고 현재 `ENCRYPTION_KEY`를 별도 비밀 저장소에서 확인합니다.
 
 ```bash
-gzip -dc umm-v0.2.0.tar.gz | docker load
+gzip -dc umm-v0.2.1.tar.gz | docker load
 docker stop umm
-# 동일한 네 환경변수와 DB로 umm:v0.2.0 실행
+# 동일한 네 환경변수와 DB로 umm:v0.2.1 실행
 ```
 
 Schema migration은 forward-only입니다. 새 버전 실행 후 schema가 변경되었다면 image만 이전 버전으로 되돌리는 것으로 충분하지 않을 수 있으므로, rollback은 DB snapshot 복원과 함께 수행합니다.
@@ -66,4 +66,4 @@ AI Gateway 오류는 retry 후 failed job과 `ai_calls`에 기록됩니다. 일�
 
 ## Release 규칙
 
-`VERSION`이 `0.2.0`이면 tag는 `v0.2.0`, image는 `umm:v0.2.0`, GitHub asset은 `umm-v0.2.0.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 서비스 Docker image tarball만 첨부합니다.
+`VERSION`이 `0.2.1`이면 tag는 `v0.2.1`, image는 `umm:v0.2.1`, GitHub asset은 `umm-v0.2.1.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 서비스 Docker image tarball만 첨부합니다.
