@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -12,6 +13,45 @@ import (
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
 )
+
+// noteWriteRequest contains only client-editable note fields. Server-managed
+// fields remain accepted as arbitrary JSON for compatibility with clients that
+// send a previously returned Note object, but they are never trusted or used.
+type noteWriteRequest struct {
+	ID           json.RawMessage `json:"id"`
+	SpaceID      json.RawMessage `json:"spaceId"`
+	AuthorID     json.RawMessage `json:"authorId"`
+	Content      string          `json:"content"`
+	Title        string          `json:"title"`
+	Color        string          `json:"color"`
+	Kind         string          `json:"kind"`
+	Source       string          `json:"source"`
+	X            float64         `json:"x"`
+	Y            float64         `json:"y"`
+	Width        float64         `json:"width"`
+	Height       float64         `json:"height"`
+	Rotation     float64         `json:"rotation"`
+	Version      int             `json:"version"`
+	CreatedAt    json.RawMessage `json:"createdAt"`
+	UpdatedAt    json.RawMessage `json:"updatedAt"`
+	RelatedCount int             `json:"relatedCount"`
+}
+
+func (v noteWriteRequest) note() store.Note {
+	return store.Note{
+		Content: v.Content, Title: v.Title, Color: v.Color, Kind: v.Kind,
+		X: v.X, Y: v.Y, Width: v.Width, Height: v.Height, Rotation: v.Rotation,
+		Version: v.Version,
+	}
+}
+
+type edgeWriteRequest struct {
+	ID       json.RawMessage `json:"id"`
+	SpaceID  json.RawMessage `json:"spaceId"`
+	SourceID uuid.UUID       `json:"source"`
+	TargetID uuid.UUID       `json:"target"`
+	Relation string          `json:"relation"`
+}
 
 func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 	var general struct {
@@ -141,11 +181,12 @@ func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var n store.Note
-	if decodeJSON(w, r, &n) != nil {
+	var body noteWriteRequest
+	if decodeJSON(w, r, &body) != nil {
 		writeError(w, 400, "메모 형식이 올바르지 않습니다.")
 		return
 	}
+	n := body.note()
 	n.ID = uuid.Nil
 	n.SpaceID = spaceID
 	n.Source = "user"
@@ -172,11 +213,12 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var n store.Note
-	if decodeJSON(w, r, &n) != nil {
+	var body noteWriteRequest
+	if decodeJSON(w, r, &body) != nil {
 		writeError(w, 400, "메모 형식이 올바르지 않습니다.")
 		return
 	}
+	n := body.note()
 	n.ID = noteID
 	p := principal(r)
 	updated, err := s.Store.UpdateNote(r.Context(), p.User.ID, n)
@@ -233,11 +275,12 @@ func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var e store.Edge
-	if decodeJSON(w, r, &e) != nil {
+	var body edgeWriteRequest
+	if decodeJSON(w, r, &body) != nil {
 		writeError(w, 400, "연결 정보가 올바르지 않습니다.")
 		return
 	}
+	e := store.Edge{SourceID: body.SourceID, TargetID: body.TargetID, Relation: body.Relation}
 	e.ID = uuid.Nil
 	e.SpaceID = spaceID
 	p := principal(r)

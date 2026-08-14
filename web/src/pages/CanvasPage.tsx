@@ -17,6 +17,13 @@ interface HistoryAction { id: string; before: { x: number; y: number }; after: {
 interface RelatedThought {note:ThoughtNote;score:number;reason:string}
 interface Cluster {id:string;label:string;noteIds:string[];cohesion:number}
 interface SpaceMember {id:string;username:string;displayName:string;email:string;permission:string}
+type NoteWritePayload = Pick<ThoughtNote, 'content'|'title'|'color'|'kind'|'x'|'y'|'width'|'height'|'rotation'|'version'>;
+
+const noteWritePayload = (note: ThoughtNote): NoteWritePayload => ({
+  content: note.content, title: note.title, color: note.color, kind: note.kind,
+  x: note.x, y: note.y, width: note.width, height: note.height,
+  rotation: note.rotation, version: note.version,
+});
 
 function CanvasInner() {
   const params = useParams(); const navigate = useNavigate(); const flow = useReactFlow();
@@ -45,7 +52,7 @@ function CanvasInner() {
     const previous = queues.current[id] || Promise.resolve();
     queues.current[id] = previous.catch(() => undefined).then(async () => {
       const base = notesRef.current[id]; if (!base) return;
-      const updated = await api<ThoughtNote>(`/notes/${id}`, json('PUT', base));
+      const updated = await api<ThoughtNote>(`/notes/${id}`, json('PUT', noteWritePayload(base)));
       notesRef.current[id] = { ...notesRef.current[id], version: updated.version, updatedAt: updated.updatedAt };
       setNotes((all) => all.map((n) => n.id === id ? { ...n, version: updated.version, updatedAt: updated.updatedAt } : n));
     }).catch((error) => console.error('autosave failed', error));
@@ -65,12 +72,12 @@ function CanvasInner() {
 
   const createAt = useCallback(async (content: string, x: number, y: number) => {
     if (!activeSpace) return; const trimmed = content.trim();
-    const created = await api<ThoughtNote>(`/spaces/${activeSpace}/notes`, json('POST', { spaceId: activeSpace, content: trimmed, title: '', color: 'yellow', kind: 'thought', source: 'user', x, y, width: 240, height: 160, rotation: Math.round((Math.random() - .5) * 2), version: 0, authorId: '', id: '', createdAt: '', updatedAt: '' }));
+    const created = await api<ThoughtNote>(`/spaces/${activeSpace}/notes`, json('POST', { content: trimmed, title: '', color: 'yellow', kind: 'thought', x, y, width: 240, height: 160, rotation: Math.round((Math.random() - .5) * 2) }));
     syncNotes([...Object.values(notesRef.current), created]); setCapture('');
   }, [activeSpace]);
 
   const onPaneDoubleClick = useCallback((event: React.MouseEvent) => { const point = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }); void createAt('', point.x, point.y); }, [flow, createAt]);
-  const connect = useCallback(async (connection: Connection) => { if (!connection.source || !connection.target) return; const created = await api<ThoughtEdge>(`/spaces/${activeSpace}/edges`, json('POST', { id: '', spaceId: activeSpace, source: connection.source, target: connection.target, relation: 'related' })); setRawEdges((all) => [...all, created]); setEdges((all) => addEdge({ ...connection, id: created.id, type: 'smoothstep' }, all)); }, [activeSpace]);
+  const connect = useCallback(async (connection: Connection) => { if (!connection.source || !connection.target) return; const created = await api<ThoughtEdge>(`/spaces/${activeSpace}/edges`, json('POST', { source: connection.source, target: connection.target, relation: 'related' })); setRawEdges((all) => [...all, created]); setEdges((all) => addEdge({ ...connection, id: created.id, type: 'smoothstep' }, all)); }, [activeSpace]);
   const onDragStart: OnNodeDrag<Node<PostItData>> = (_, node) => { dragStart.current[node.id] = { ...node.position }; };
   const onDragStop: OnNodeDrag<Node<PostItData>> = (_, node) => { const before = dragStart.current[node.id]; const after = { ...node.position }; if (before && (before.x !== after.x || before.y !== after.y)) { undo.current.push({ id: node.id, before, after }); redo.current = []; } persist(node.id, { x: after.x, y: after.y }); };
 

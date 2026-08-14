@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: umm API
-  version: 0.2.1
+  version: 0.2.2
   description: Spatial Thought Memory, key management, workflow and Dream Layer API.
 servers:
   - url: /api/v1
@@ -101,7 +101,7 @@ paths:
       summary: Autosave note content, appearance and position
       description: Uses optimistic concurrency. Send the last server version; a stale version returns 409.
       x-required-scope: notes:write
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NoteUpdate' } } } }
       responses:
         '200': { description: Updated note, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }
         '409': { $ref: '#/components/responses/Error' }
@@ -407,6 +407,13 @@ components:
             relatedCount: { type: integer, minimum: 0 }
             createdAt: { type: string, format: date-time }
             updatedAt: { type: string, format: date-time }
+    NoteUpdate:
+      allOf:
+        - { $ref: '#/components/schemas/NoteWrite' }
+        - type: object
+          required: [version]
+          properties:
+            version: { type: integer, minimum: 0 }
     RelatedNote:
       type: object
       required: [note, score, reason]

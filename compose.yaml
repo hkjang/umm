@@ -17,8 +17,8 @@ services:
     build:
       context: .
       args:
-        VERSION: 0.2.1
-    image: umm:v0.2.1
+        VERSION: 0.2.2
+    image: umm:v0.2.2
     environment:
       POSTGRES_DSN: postgres://umm:local-development-only@postgres:5432/umm?sslmode=disable
       BOOTSTRAP_ADMIN: admin

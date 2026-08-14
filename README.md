@@ -4,7 +4,7 @@
 
 > 정리는 나중에. 생각부터 붙인다.
 
-현재 버전은 `v0.2.1`입니다. 버전은 로그인 화면과 프로필 컨텍스트 메뉴에 함께 표시됩니다.
+현재 버전은 `v0.2.2`입니다. 버전은 로그인 화면과 프로필 컨텍스트 메뉴에 함께 표시됩니다.
 
 ## 핵심 경험
 
@@ -69,21 +69,21 @@ Go 서버는 `:8080`, Vite는 `:5173`에서 실행되며 Vite가 `/api`와 `/mcp
 릴리스 자산 이름과 이미지 태그는 고정 규칙을 따릅니다.
 
 ```text
-Docker image: umm:v0.2.1
-Release file: umm-v0.2.1.tar.gz
+Docker image: umm:v0.2.2
+Release file: umm-v0.2.2.tar.gz
 ```
 
 연결망에서 GitHub Release의 `umm-vX.Y.Z.tar.gz` 한 파일을 반입한 뒤:
 
 ```bash
-gzip -dc umm-v0.2.1.tar.gz | docker load
+gzip -dc umm-v0.2.2.tar.gz | docker load
 docker run -d --name umm --restart unless-stopped \
   -p 8080:8080 \
   -e POSTGRES_DSN='postgres://umm:...@postgres.internal:5432/umm?sslmode=require' \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='긴-초기-비밀번호' \
   -e ENCRYPTION_KEY='base64-32-byte-key' \
-  umm:v0.2.1
+  umm:v0.2.2
 ```
 
 PostgreSQL은 운영 조직이 관리하는 기존 인스턴스를 사용합니다. Dream을 켜려면 오프라인망 내부의 OpenAI 호환 LLM Gateway를 관리자 페이지에서 지정합니다. AI와 Keycloak이 없어도 로컬 로그인과 Canvas 기능은 동작합니다.
@@ -113,7 +113,7 @@ Discovery endpoint와 서명키는 Keycloak에서 자동으로 찾으며 Client 
 로컬 산출물:
 
 ```bash
-./scripts/release-image.sh 0.2.1
+./scripts/release-image.sh 0.2.2
 ```
 
-Git tag `v0.2.1`을 push하면 CI가 `VERSION` 일치 여부를 확인하고 `umm:v0.2.1`을 빌드한 뒤, Docker image만 담은 `umm-v0.2.1.tar.gz`를 GitHub Release에 첨부합니다.
+Git tag `v0.2.2`를 push하면 CI가 `VERSION` 일치 여부를 확인하고 `umm:v0.2.2`를 빌드한 뒤, Docker image만 담은 `umm-v0.2.2.tar.gz`를 GitHub Release에 첨부합니다.
