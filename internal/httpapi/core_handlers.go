@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -130,7 +131,7 @@ func (s *Server) createSpace(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name string `json:"name"`
 	}
-	if decodeJSON(w, r, &body) != nil {
+	if decodeJSON(w, r, &body) != nil || strings.TrimSpace(body.Name) == "" || utf8.RuneCountInString(strings.TrimSpace(body.Name)) > 200 {
 		writeError(w, 400, "올바른 이름을 입력해 주세요.")
 		return
 	}
@@ -142,6 +143,61 @@ func (s *Server) createSpace(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "space.create", "space", v.ID.String(), map[string]any{"name": v.Name})
 	writeJSON(w, 201, v)
+}
+
+func (s *Server) updateSpace(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:write") {
+		return
+	}
+	spaceID, ok := parseID(w, r, "spaceID")
+	if !ok {
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	name := ""
+	if decodeJSON(w, r, &body) == nil {
+		name = strings.TrimSpace(body.Name)
+	}
+	if name == "" || utf8.RuneCountInString(name) > 200 {
+		writeError(w, 400, "공간 이름은 1~200자로 입력해 주세요.")
+		return
+	}
+	p := principal(r)
+	updated, err := s.Store.UpdateSpace(r.Context(), p.User.ID, spaceID, name)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 404, "이름을 변경할 수 있는 공간을 찾지 못했습니다.")
+			return
+		}
+		writeError(w, 500, "공간 이름을 변경하지 못했습니다.")
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "space.update", "space", spaceID.String(), map[string]any{"name": name})
+	s.publishSpaceEvent(r, spaceID, "space.updated", spaceID, updated)
+	writeJSON(w, 200, updated)
+}
+
+func (s *Server) deleteSpace(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:write") {
+		return
+	}
+	spaceID, ok := parseID(w, r, "spaceID")
+	if !ok {
+		return
+	}
+	p := principal(r)
+	if err := s.Store.DeleteSpace(r.Context(), p.User.ID, spaceID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 403, "소유한 공간만 삭제할 수 있습니다.")
+			return
+		}
+		writeError(w, 500, "공간을 삭제하지 못했습니다.")
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "space.delete", "space", spaceID.String(), map[string]any{})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func parseID(w http.ResponseWriter, r *http.Request, param string) (uuid.UUID, bool) {

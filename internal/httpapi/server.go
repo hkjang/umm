@@ -56,6 +56,8 @@ func (s *Server) Handler() http.Handler {
 			protected.Get("/me", s.me)
 			protected.Get("/spaces", s.listSpaces)
 			protected.Post("/spaces", s.createSpace)
+			protected.Put("/spaces/{spaceID}", s.updateSpace)
+			protected.Delete("/spaces/{spaceID}", s.deleteSpace)
 			protected.Get("/spaces/{spaceID}/notes", s.listNotes)
 			protected.Get("/spaces/{spaceID}/events", s.spaceEvents)
 			protected.Get("/spaces/{spaceID}/members", s.listSpaceMembers)

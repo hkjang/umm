@@ -386,9 +386,41 @@ type chatResponse struct {
 	} `json:"usage"`
 }
 
-var secretPattern = regexp.MustCompile(`(?i)(password|passwd|secret|api[_ -]?key|token)\s*[:=]\s*\S+|umm_key_[a-zA-Z0-9_-]+`)
+var (
+	secretPattern       = regexp.MustCompile(`(?i)(password|passwd|secret|api[_ -]?key|token)\s*[:=]\s*\S+|umm_key_[a-zA-Z0-9_-]+`)
+	thoughtBlockPattern = regexp.MustCompile(`(?is)<(?:think|thinking|analysis)\b[^>]*>.*?</(?:think|thinking|analysis)\s*>`)
+	thoughtOpenPattern  = regexp.MustCompile(`(?is)<(?:think|thinking|analysis)\b[^>]*>`)
+	thoughtClosePattern = regexp.MustCompile(`(?is)</(?:think|thinking|analysis)\s*>`)
+	thoughtTagPattern   = regexp.MustCompile(`(?is)</?(?:think|thinking|analysis)\b[^>]*>`)
+)
+
+const koreanOnlyInstruction = "최종 답변은 반드시 자연스러운 한국어로만 작성하세요. 영어로 답하지 마세요. 내부 추론이나 분석 과정, <think> 태그는 절대 노출하지 말고 최종 답변 본문만 출력하세요."
 
 func redact(v string) string { return secretPattern.ReplaceAllString(v, "[민감정보 제거됨]") }
+
+func visibleModelResponse(v string) string {
+	cleaned := thoughtBlockPattern.ReplaceAllString(v, "")
+	// Some reasoning models omit the opening tag and emit only `</think>`
+	// before the final answer. Everything before the last closing tag is hidden.
+	if closes := thoughtClosePattern.FindAllStringIndex(cleaned, -1); len(closes) > 0 {
+		cleaned = cleaned[closes[len(closes)-1][1]:]
+	}
+	// A truncated reasoning block has no reliable user-visible answer. Keep any
+	// text before it and discard the unfinished block instead of exposing it.
+	if open := thoughtOpenPattern.FindStringIndex(cleaned); open != nil {
+		cleaned = cleaned[:open[0]]
+	}
+	return strings.TrimSpace(thoughtTagPattern.ReplaceAllString(cleaned, ""))
+}
+
+func containsHangul(v string) bool {
+	for _, r := range v {
+		if (r >= '\u1100' && r <= '\u11ff') || (r >= '\u3130' && r <= '\u318f') || (r >= '\uac00' && r <= '\ud7a3') {
+			return true
+		}
+	}
+	return false
+}
 
 func sourcePrompt(sources []sourceNote) string {
 	var b strings.Builder
@@ -445,7 +477,7 @@ func (s *Service) callGateway(ctx context.Context, cfg Config, g GatewayConfig, 
 	for i, n := range sources {
 		fmt.Fprintf(&b, "[%d] %s\n", i+1, redact(truncate(n.Content, 1200)))
 	}
-	system := "당신은 umm의 Dream Layer입니다. 사용자의 메모 중 최소 2개를 의미 있게 연결해 한 단계 발전한 새로운 생각 하나만 한국어로 만드세요. 단순 요약, 뻔한 조언, 사실의 창작을 금지합니다. 1~4문장, 320자 이내로 작성하고 머리말이나 따옴표를 붙이지 마세요."
+	system := "당신은 umm의 Dream Layer입니다. 사용자의 메모 중 최소 2개를 의미 있게 연결해 한 단계 발전한 새로운 생각 하나를 만드세요. 단순 요약, 뻔한 조언, 사실의 창작을 금지합니다. 1~4문장, 320자 이내로 작성하고 머리말이나 따옴표를 붙이지 마세요. " + koreanOnlyInstruction
 	stylePrompt := map[string]string{"connection": "서로 다른 생각을 연결하세요.", "question": "생각을 발전시키는 날카로운 질문을 만드세요.", "expansion": "기존 아이디어를 구체적으로 확장하세요.", "contrarian": "숨은 가정을 뒤집는 반대 관점을 제시하세요.", "rediscovery": "과거 생각과 지금 생각을 연결하세요.", "action": "가장 작은 다음 행동으로 바꾸세요.", "pattern": "반복되는 관심이나 문제의 패턴을 발견하세요.", "free": "연결, 질문, 확장, 반대 관점 중 가장 가치 있는 방식을 고르세요."}
 	if extra := stylePrompt[style]; extra != "" {
 		system += " " + extra
@@ -489,9 +521,13 @@ func (s *Service) callGateway(ctx context.Context, cfg Config, g GatewayConfig, 
 			lastErr = errors.New("invalid AI gateway response")
 			continue
 		}
-		text := strings.TrimSpace(result.Choices[0].Message.Content)
+		text := visibleModelResponse(result.Choices[0].Message.Content)
 		if text == "" {
 			lastErr = errors.New("empty Dream response")
+			continue
+		}
+		if !containsHangul(text) {
+			lastErr = errors.New("Dream 응답이 한국어가 아닙니다")
 			continue
 		}
 		return truncate(text, 500), result.Usage.PromptTokens, result.Usage.CompletionTokens, cfg.Model, time.Since(start), nil
@@ -603,7 +639,7 @@ func (s *Service) Assist(ctx context.Context, userID uuid.UUID, noteIDs []uuid.U
 	if cfg.Model == "" {
 		return AssistResult{}, errors.New("AI model is not configured")
 	}
-	system := "당신은 umm 안에서 사용자의 생각을 조용히 발전시키는 조력자입니다. 사용자가 제공하지 않은 사실을 만들지 말고, 한국어로 간결하게 답하세요. " + instruction
+	system := "당신은 umm 안에서 사용자의 생각을 조용히 발전시키는 조력자입니다. 사용자가 제공하지 않은 사실을 만들지 말고 간결하게 답하세요. " + instruction + " " + koreanOnlyInstruction
 	text, inTokens, outTokens, latency, err := s.callText(ctx, gateway, cfg.Model, .45, min(800, max(128, cfg.TokenLimit)), system, input.String())
 	status := "success"
 	errText := ""
@@ -674,9 +710,13 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 			lastErr = errors.New("invalid AI gateway response")
 			continue
 		}
-		text := strings.TrimSpace(result.Choices[0].Message.Content)
+		text := visibleModelResponse(result.Choices[0].Message.Content)
 		if text == "" {
 			lastErr = errors.New("empty AI response")
+			continue
+		}
+		if !containsHangul(text) {
+			lastErr = errors.New("AI 응답이 한국어가 아닙니다")
 			continue
 		}
 		return truncate(text, 2000), result.Usage.PromptTokens, result.Usage.CompletionTokens, time.Since(start), nil

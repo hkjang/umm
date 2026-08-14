@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: umm API
-  version: 0.2.2
+  version: 0.3.0
   description: Spatial Thought Memory, key management, workflow and Dream Layer API.
 servers:
   - url: /api/v1
@@ -93,6 +93,26 @@ paths:
       x-required-scope: notes:write
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NoteWrite' } } } }
       responses: { '201': { description: Note created, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } } }
+  /spaces/{spaceId}:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+    put:
+      tags: [Thoughts]
+      summary: Rename a space owned or managed by the current user
+      x-required-scope: notes:write
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 200 } } } } }
+      responses:
+        '200': { description: Space updated, content: { application/json: { schema: { $ref: '#/components/schemas/Space' } } } }
+    delete:
+      tags: [Thoughts]
+      summary: Permanently delete an owned space and its contents
+      description: Only the owner can delete a space. Notes, edges, Dream records and membership data in it are removed by cascade.
+      x-required-scope: notes:write
+      responses:
+        '204': { description: Space deleted }
+        '403': { $ref: '#/components/responses/Error' }
   /notes/{noteId}:
     parameters:
       - { $ref: '#/components/parameters/NoteID' }

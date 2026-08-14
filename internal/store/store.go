@@ -304,18 +304,47 @@ func (s *Store) CreateSpace(ctx context.Context, userID uuid.UUID, name string) 
 	return v, err
 }
 
+func (s *Store) UpdateSpace(ctx context.Context, userID, spaceID uuid.UUID, name string) (Space, error) {
+	name = strings.TrimSpace(name)
+	var v Space
+	err := s.Pool.QueryRow(ctx, `UPDATE spaces sp SET name=$3,updated_at=now() WHERE sp.id=$1 AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2 AND sm.permission='manage')) RETURNING id,owner_id,name,color`, spaceID, userID, name).
+		Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color)
+	return v, err
+}
+
+func (s *Store) DeleteSpace(ctx context.Context, userID, spaceID uuid.UUID) error {
+	cmd, err := s.Pool.Exec(ctx, `DELETE FROM spaces WHERE id=$1 AND owner_id=$2`, spaceID, userID)
+	if err != nil {
+		return err
+	}
+	if cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) CanEditSpace(ctx context.Context, userID, spaceID uuid.UUID) bool {
 	var ok bool
 	_ = s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$1 WHERE s.id=$2 AND (s.owner_id=$1 OR m.permission IN ('edit','manage')))`, userID, spaceID).Scan(&ok)
 	return ok
 }
 
+func noteSearchPatterns(query string) []string {
+	escape := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	terms := strings.Fields(strings.TrimSpace(query))
+	patterns := make([]string, 0, len(terms))
+	for _, term := range terms {
+		patterns = append(patterns, "%"+escape.Replace(term)+"%")
+	}
+	return patterns
+}
+
 func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query string) ([]Note, []Edge, error) {
 	if !s.CanViewSpace(ctx, userID, spaceID) {
 		return nil, nil, pgx.ErrNoRows
 	}
-	pattern := "%" + strings.ReplaceAll(query, "%", "\\%") + "%"
-	rows, err := s.Pool.Query(ctx, `SELECT id,space_id,author_id,content,title,color,kind,source,x,y,width,height,rotation,version,created_at,updated_at FROM notes WHERE space_id=$1 AND deleted_at IS NULL AND ($2='' OR content ILIKE $3 OR title ILIKE $3) ORDER BY created_at`, spaceID, query, pattern)
+	patterns := noteSearchPatterns(query)
+	rows, err := s.Pool.Query(ctx, `SELECT id,space_id,author_id,content,title,color,kind,source,x,y,width,height,rotation,version,created_at,updated_at FROM notes WHERE space_id=$1 AND deleted_at IS NULL AND (cardinality($2::text[])=0 OR NOT EXISTS(SELECT 1 FROM unnest($2::text[]) AS term(pattern) WHERE concat_ws(' ',content,title) NOT ILIKE term.pattern ESCAPE E'\\')) ORDER BY created_at`, spaceID, patterns)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -328,6 +357,10 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 		}
 		notes = append(notes, n)
 	}
+	noteIDs := make([]uuid.UUID, len(notes))
+	for i := range notes {
+		noteIDs[i] = notes[i].ID
+	}
 	s.ensureEmbeddings(ctx, notes)
 	vectors := s.loadEmbeddings(ctx, notes)
 	for i := range notes {
@@ -337,7 +370,7 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 			}
 		}
 	}
-	edgeRows, err := s.Pool.Query(ctx, `SELECT id,space_id,source_note_id,target_note_id,relation FROM note_edges WHERE space_id=$1`, spaceID)
+	edgeRows, err := s.Pool.Query(ctx, `SELECT id,space_id,source_note_id,target_note_id,relation FROM note_edges WHERE space_id=$1 AND source_note_id=ANY($2) AND target_note_id=ANY($2)`, spaceID, noteIDs)
 	if err != nil {
 		return nil, nil, err
 	}
