@@ -11,6 +11,7 @@
 
 ### 🌟 종합 완본
 - 📕 **[umm 종합 기술 매뉴얼 완본 (Complete Manual PDF)](umm_complete_manual.pdf)**: 아키텍처, 전체 기능, 사용자 실무, 관리자 운영, API & MCP 가이드가 통합된 종합 기술 완본 (A4 인쇄용)
+- 🎬 **[3분 서비스 소개 및 전체 기능 시연 영상 (MP4)](umm_overview.mp4)**: 3분 동안 전 메뉴 기능과 실무 동작을 설명하는 1080p FHD 시연 영상
 
 ### 1. 사용자 및 기능 가이드
 - 📄 **[기능 및 화면 가이드 (PDF)](umm_features_guide.pdf)** (`docs/umm_features_guide.pdf`) · [MD](features.md)

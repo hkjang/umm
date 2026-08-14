@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>umm Intro</title>
+  <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;800;900&display=swap" rel="stylesheet">
+  <style>
+    body {
+      margin: 0;
+      background: radial-gradient(circle at center, #35234a 0%, #1a1224 100%);
+      color: #fff;
+      font-family: 'Pretendard', sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      overflow: hidden;
+    }
+    .badge {
+      background: rgba(230, 145, 56, 0.15);
+      border: 1px solid #e69138;
+      color: #ffaa54;
+      padding: 8px 22px;
+      border-radius: 999px;
+      font-weight: 800;
+      font-size: 16px;
+      letter-spacing: 1px;
+      margin-bottom: 24px;
+      animation: pulse 2s infinite ease-in-out;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.04); }
+    }
+    .logo-wrap {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 20px;
+    }
+    .logo-icon {
+      width: 68px;
+      height: 68px;
+      background: #705391;
+      color: #ffffff;
+      font-size: 34px;
+      font-weight: 900;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(112, 83, 145, 0.5);
+    }
+    .logo-text {
+      font-size: 64px;
+      font-weight: 900;
+      letter-spacing: -2px;
+    }
+    .tagline {
+      font-size: 34px;
+      font-weight: 850;
+      color: #f7f3fb;
+      margin-bottom: 16px;
+    }
+    .desc {
+      font-size: 20px;
+      color: #d1c4e2;
+      max-width: 880px;
+      line-height: 1.6;
+    }
+    .pillars {
+      display: flex;
+      gap: 24px;
+      margin-top: 40px;
+    }
+    .pillar {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      padding: 16px 28px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 16px;
+      color: #f2ebfa;
+    }
+    .pillar span {
+      color: #ffaa54;
+      margin-right: 6px;
+    }
+  </style>
+</head>
+<body>
+  <div class="badge">✦ 정리는 나중에. 생각부터 붙인다.</div>
+  <div class="logo-wrap">
+    <div class="logo-icon">um</div>
+    <div class="logo-text">umm</div>
+  </div>
+  <div class="tagline">Spatial Thought Memory Platform</div>
+  <div class="desc">
+    생각을 문서나 폴더로 정리하기 전에 공간에 먼저 붙이고, 연결하고,<br>
+    밤사이 <b>Dream</b>으로 다시 발견하는 무한 캔버스 지식 플랫폼
+  </div>
+  <div class="pillars">
+    <div class="pillar"><span>🌌</span> Infinite Thought Canvas</div>
+    <div class="pillar"><span>🪐</span> Thought Gravity</div>
+    <div class="pillar"><span>🌙</span> 256K AI Dream Layer</div>
+    <div class="pillar"><span>🛡️</span> Zero-Downtime Key Rotation</div>
+  </div>
+</body>
+</html>

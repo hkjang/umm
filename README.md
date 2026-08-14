@@ -19,7 +19,7 @@
   밤사이 <b>Dream</b>으로 다시 발견하는 <b>Spatial Thought Memory</b> 서비스입니다.
 </p>
 
-[**📕 종합 기술 매뉴얼 완본 (PDF)**](docs/umm_complete_manual.pdf) · [**🌐 인터랙티브 웹 쇼케이스**](docs/index.html) · [**📚 문서 허브**](docs/README.md) · [**📸 기능 가이드**](docs/features.md)
+[**🎬 3분 서비스 소개 영상 (MP4)**](docs/umm_overview.mp4) · [**📕 종합 기술 매뉴얼 완본 (PDF)**](docs/umm_complete_manual.pdf) · [**🌐 인터랙티브 웹 쇼케이스**](docs/index.html) · [**📚 문서 허브**](docs/README.md)
 
 </div>
 
@@ -101,6 +101,7 @@
 | 문서명 | 설명 | PDF 다운로드 / 바로보기 |
 | :--- | :--- | :--- |
 | **📕 종합 기술 매뉴얼 완본** | 모든 아키텍처·기능·운영·API 통합 기술 완본 (A4 인쇄용) | [**docs/umm_complete_manual.pdf**](docs/umm_complete_manual.pdf) |
+| **🎬 3분 서비스 시연 영상** | 전 메뉴 기능 및 실무 동작 1080p 시연 영상 | [**docs/umm_overview.mp4**](docs/umm_overview.mp4) |
 | **📸 기능 및 화면 가이드** | 20여 개 전체 메뉴별 캡처 스크린샷과 CRU 동작 가이드 | [**PDF 바로보기**](docs/umm_features_guide.pdf) · [MD](docs/features.md) |
 | **👤 사용자 실무 가이드** | 무한 캔버스 조작, 포스트잇 단축키, 연관 생각, 내보내기 | [**PDF 바로보기**](docs/umm_user_guide.pdf) · [MD](docs/user-guide.md) |
 | **🛠️ 관리자 운영 가이드** | Keycloak OIDC SSO, 256K Dream Layer, AI Gateway, 감사 로그 | [**PDF 바로보기**](docs/umm_admin_guide.pdf) · [MD](docs/admin-guide.md) |
