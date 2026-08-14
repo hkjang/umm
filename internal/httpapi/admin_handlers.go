@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/dream"
 )
 
 const secretMask = "••••••••"
@@ -162,6 +164,10 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 				return errors.New("Dream N일 간격은 2~365일이어야 합니다")
 			}
 		}
+		tokenLimit, ok := v["token_limit"].(float64)
+		if !ok || math.Trunc(tokenLimit) != tokenLimit || tokenLimit < dream.MinTokenLimit || tokenLimit > dream.MaxTokenLimit {
+			return fmt.Errorf("AI 응답 Token Limit은 %d~%s 사이의 정수여야 합니다", dream.MinTokenLimit, "262,144")
+		}
 	case "ai_gateway":
 		raw := strings.TrimSpace(fmt.Sprint(v["base_url"]))
 		if raw != "" {
@@ -173,6 +179,10 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 		retention, ok := v["log_retention_days"].(float64)
 		if !ok || retention < 1 || retention > 3650 {
 			return errors.New("AI 로그 보존 기간은 1~3650일이어야 합니다")
+		}
+		timeout, ok := v["timeout_seconds"].(float64)
+		if !ok || math.Trunc(timeout) != timeout || timeout < 5 || timeout > 1800 {
+			return errors.New("AI Gateway Timeout은 5~1800초 사이의 정수여야 합니다")
 		}
 	}
 	return nil

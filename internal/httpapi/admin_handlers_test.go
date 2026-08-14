@@ -13,3 +13,34 @@ func TestValidateGeneralSettings(t *testing.T) {
 		t.Fatal("invalid public URL accepted")
 	}
 }
+
+func TestValidateDreamTokenLimit(t *testing.T) {
+	s := &Server{}
+	valid := map[string]any{
+		"quality_threshold": 0.7,
+		"schedule":          "02:00",
+		"frequency":         "daily",
+		"token_limit":       float64(262144),
+	}
+	if err := s.validateSetting("dream", valid); err != nil {
+		t.Fatalf("256K token limit rejected: %v", err)
+	}
+	for _, invalid := range []float64{63, 262145, 4096.5} {
+		valid["token_limit"] = invalid
+		if err := s.validateSetting("dream", valid); err == nil {
+			t.Fatalf("invalid token limit accepted: %v", invalid)
+		}
+	}
+}
+
+func TestValidateAIGatewayTimeout(t *testing.T) {
+	s := &Server{}
+	valid := map[string]any{"base_url": "https://ai.internal", "log_retention_days": float64(90), "timeout_seconds": float64(1800)}
+	if err := s.validateSetting("ai_gateway", valid); err != nil {
+		t.Fatalf("30 minute timeout rejected: %v", err)
+	}
+	valid["timeout_seconds"] = float64(1801)
+	if err := s.validateSetting("ai_gateway", valid); err == nil {
+		t.Fatal("timeout over 30 minutes accepted")
+	}
+}

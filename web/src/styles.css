@@ -170,10 +170,13 @@ button, a, input, textarea, [tabindex] { -webkit-tap-highlight-color: transparen
 }
 .admin-menu-item[data-active]:hover { color: #34243f; background: #f7f1fb; }
 .admin-menu-item:active { transform: translateY(1px); }
+.admin-dirty-dot { width: 8px; height: 8px; border-radius: 999px; background: #f3bd4c; box-shadow: 0 0 0 3px rgba(243,189,76,.16); }
 .admin-menu-note { color: #aba1b1; line-height: 1.55; }
 .admin-back-button { border: 1px solid rgba(255,255,255,.2); box-shadow: 0 4px 15px rgba(7,5,9,.2); }
 .admin-content { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 34px 34px 56px; scrollbar-gutter: stable; }
 .admin-mobile-menu { display: none; }
+.admin-setting-card { overflow: visible; }
+.admin-save-bar { position: sticky; z-index: 4; bottom: -1px; min-height: 58px; padding: 10px 12px; border: 1px solid rgba(125,111,89,.16); border-radius: 13px; background: rgba(255,253,248,.94); box-shadow: 0 -8px 24px rgba(54,48,38,.08); backdrop-filter: blur(10px); }
 .mobile-tabs { display: none; }
 
 @media (max-width: 48em) {

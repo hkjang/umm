@@ -64,6 +64,14 @@ test "$(printf '%s' "$preferences" | jq -r '.edge_style')" = "bezier"
 updated_preferences="$(printf '%s' "$preferences" | jq '.edge_style="smoothstep"' | curl -fsS -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary @- "$base/preferences")"
 test "$(printf '%s' "$updated_preferences" | jq -r '.edge_style')" = "smoothstep"
 
+admin_settings="$(curl -fsS -b "$cookie" "$base/admin/settings")"
+test "$(printf '%s' "$admin_settings" | jq -r '.ai_gateway.log_retention_days')" = "90"
+dream_settings="$(printf '%s' "$admin_settings" | jq '.dream.token_limit=262144 | .dream')"
+curl -fsS -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary "$dream_settings" "$base/admin/settings/dream" >/dev/null
+test "$(curl -fsS -b "$cookie" "$base/admin/settings" | jq -r '.dream.token_limit')" = "262144"
+invalid_status="$(printf '%s' "$dream_settings" | jq '.token_limit=262145' | curl -sS -o "$smoke_dir/invalid-token.json" -w '%{http_code}' -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary @- "$base/admin/settings/dream")"
+test "$invalid_status" = "400"
+
 created="$(curl -fsS -b "$cookie" -H 'Content-Type: application/json' \
   -d '{"name":"ci-mcp","scopes":["notes:read","spaces:read"],"expiresDays":1}' "$base/api-keys")"
 secret="$(printf '%s' "$created" | jq -r '.secret')"

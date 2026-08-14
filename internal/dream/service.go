@@ -69,6 +69,23 @@ type AssistResult struct {
 	InputTokens  int    `json:"inputTokens"`
 	OutputTokens int    `json:"outputTokens"`
 }
+
+const (
+	MinTokenLimit     = 64
+	MaxTokenLimit     = 256 * 1024
+	DefaultTokenLimit = 4096
+	maxAIResponseBody = 16 << 20
+)
+
+var ErrAIResponseTokenLimit = errors.New("AI response reached the configured token limit before a final answer")
+
+func NormalizeTokenLimit(limit int) int {
+	if limit < MinTokenLimit {
+		return DefaultTokenLimit
+	}
+	return min(limit, MaxTokenLimit)
+}
+
 type sourceNote struct {
 	ID        uuid.UUID
 	SpaceID   uuid.UUID
@@ -378,7 +395,8 @@ type chatMessage struct {
 }
 type chatResponse struct {
 	Choices []struct {
-		Message chatMessage `json:"message"`
+		Message      chatMessage `json:"message"`
+		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -441,9 +459,12 @@ func requestChat(ctx context.Context, client *http.Client, endpoint, key string,
 		return result, err
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxAIResponseBody+1))
 	if err != nil {
 		return result, err
+	}
+	if len(responseBody) > maxAIResponseBody {
+		return result, errors.New("AI gateway response is too large")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return result, fmt.Errorf("AI gateway status %d: %s", resp.StatusCode, truncate(string(responseBody), 300))
@@ -541,7 +562,8 @@ func (s *Service) callGateway(ctx context.Context, cfg Config, g GatewayConfig, 
 	if extra := stylePrompt[style]; extra != "" {
 		system += " " + extra
 	}
-	reqBody := chatRequest{Model: cfg.Model, Messages: []chatMessage{{Role: "system", Content: system}, {Role: "user", Content: b.String()}}, Temperature: cfg.Temperature, MaxTokens: cfg.TokenLimit}
+	tokenLimit := NormalizeTokenLimit(cfg.TokenLimit)
+	reqBody := chatRequest{Model: cfg.Model, Messages: []chatMessage{{Role: "system", Content: system}, {Role: "user", Content: b.String()}}, Temperature: cfg.Temperature, MaxTokens: tokenLimit}
 	timeout := g.TimeoutSeconds
 	if timeout <= 0 {
 		timeout = 45
@@ -553,10 +575,17 @@ func (s *Service) callGateway(ctx context.Context, cfg Config, g GatewayConfig, 
 	}
 	start := time.Now()
 	var lastErr error
+	var inputTokens, outputTokens int
 	for attempt := 0; attempt <= retries; attempt++ {
 		result, requestErr := requestChat(ctx, client, endpoint, key, reqBody)
 		if requestErr != nil {
 			lastErr = requestErr
+			continue
+		}
+		inputTokens += result.Usage.PromptTokens
+		outputTokens += result.Usage.CompletionTokens
+		if result.Choices[0].FinishReason == "length" {
+			lastErr = ErrAIResponseTokenLimit
 			continue
 		}
 		text := visibleModelResponse(result.Choices[0].Message.Content)
@@ -564,10 +593,10 @@ func (s *Service) callGateway(ctx context.Context, cfg Config, g GatewayConfig, 
 			lastErr = errors.New("empty Dream response")
 			continue
 		}
-		text, repairInput, repairOutput := preferKoreanResponse(ctx, client, endpoint, key, cfg.Model, cfg.TokenLimit, text)
-		return truncate(text, 500), result.Usage.PromptTokens + repairInput, result.Usage.CompletionTokens + repairOutput, cfg.Model, time.Since(start), nil
+		text, repairInput, repairOutput := preferKoreanResponse(ctx, client, endpoint, key, cfg.Model, tokenLimit, text)
+		return truncate(text, 500), inputTokens + repairInput, outputTokens + repairOutput, cfg.Model, time.Since(start), nil
 	}
-	return "", 0, 0, cfg.Model, time.Since(start), lastErr
+	return "", inputTokens, outputTokens, cfg.Model, time.Since(start), lastErr
 }
 
 func words(v string) map[string]bool {
@@ -675,7 +704,7 @@ func (s *Service) Assist(ctx context.Context, userID uuid.UUID, noteIDs []uuid.U
 		return AssistResult{}, errors.New("AI model is not configured")
 	}
 	system := "당신은 umm 안에서 사용자의 생각을 조용히 발전시키는 조력자입니다. 사용자가 제공하지 않은 사실을 만들지 말고 간결하게 답하세요. " + instruction + " " + koreanOnlyInstruction
-	text, inTokens, outTokens, latency, err := s.callText(ctx, gateway, cfg.Model, .45, min(800, max(128, cfg.TokenLimit)), system, input.String())
+	text, inTokens, outTokens, latency, err := s.callText(ctx, gateway, cfg.Model, .45, NormalizeTokenLimit(cfg.TokenLimit), system, input.String())
 	status := "success"
 	errText := ""
 	if err != nil {
@@ -707,6 +736,7 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 			return "", 0, 0, 0, err
 		}
 	}
+	maxTokens = NormalizeTokenLimit(maxTokens)
 	reqBody := chatRequest{Model: model, Messages: []chatMessage{{Role: "system", Content: system}, {Role: "user", Content: user}}, Temperature: temperature, MaxTokens: maxTokens}
 	timeout := g.TimeoutSeconds
 	if timeout <= 0 {
@@ -719,10 +749,17 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 	}
 	start := time.Now()
 	var lastErr error
+	var inputTokens, outputTokens int
 	for attempt := 0; attempt <= retries; attempt++ {
 		result, requestErr := requestChat(ctx, client, endpoint, key, reqBody)
 		if requestErr != nil {
 			lastErr = requestErr
+			continue
+		}
+		inputTokens += result.Usage.PromptTokens
+		outputTokens += result.Usage.CompletionTokens
+		if result.Choices[0].FinishReason == "length" {
+			lastErr = ErrAIResponseTokenLimit
 			continue
 		}
 		text := visibleModelResponse(result.Choices[0].Message.Content)
@@ -731,9 +768,9 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 			continue
 		}
 		text, repairInput, repairOutput := preferKoreanResponse(ctx, client, endpoint, key, model, maxTokens, text)
-		return truncate(text, 2000), result.Usage.PromptTokens + repairInput, result.Usage.CompletionTokens + repairOutput, time.Since(start), nil
+		return truncate(text, 2000), inputTokens + repairInput, outputTokens + repairOutput, time.Since(start), nil
 	}
-	return "", 0, 0, time.Since(start), lastErr
+	return "", inputTokens, outputTokens, time.Since(start), lastErr
 }
 
 func (s *Service) Feedback(ctx context.Context, userID, dreamID uuid.UUID, action string) error {

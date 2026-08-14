@@ -1,6 +1,6 @@
 import { Badge, Button, Group, Kbd, Loader, Modal, ScrollArea, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from '@mantine/core';
 import { IconAdjustments, IconCheckupList, IconFileText, IconHome, IconKeyboard, IconLayoutDashboard, IconMoonStars, IconSearch, IconSparkles } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, type NoteSearchResult, type Space } from '../api';
 import { useAuth } from '../auth-context';
@@ -29,10 +29,20 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
   const [notes, setNotes] = useState<NoteSearchResult[]>([]);
   const [searchingNotes, setSearchingNotes] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const mod = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
 
   useEffect(() => {
     if (opened) void api<{ spaces: Space[] }>('/spaces').then((value) => setSpaces(value.spaces)).catch(() => setSpaces([]));
+  }, [opened]);
+
+  useEffect(() => {
+    if (!opened) return;
+    const frame = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [opened]);
 
   useEffect(() => {
@@ -56,7 +66,7 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
       { id: 'approvals', label: '검토 · 승인', description: '요청과 승인 상태', to: '/approvals', icon: IconCheckupList },
       { id: 'settings', label: '개인 설정', description: '개인화와 API 키', to: '/settings', icon: IconAdjustments },
     ];
-    if (user?.role === 'admin') next.push({ id: 'admin', label: '서비스 관리자', description: '운영 및 서비스 설정', to: '/admin', icon: IconLayoutDashboard });
+    if (user?.role === 'admin') next.push({ id: 'admin', label: '서비스 관리자', description: '운영 및 서비스 설정', to: '/admin/overview', icon: IconLayoutDashboard });
     return next;
   }, [user?.role]);
 
@@ -117,7 +127,7 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
       빠른 이동 <Kbd ml="xs" size="xs">{mod} K</Kbd>
     </Button>
     <Modal opened={opened} onClose={() => { setOpened(false); setQuery(''); setNotes([]); }} title="빠른 이동" centered size="lg" classNames={{ content: 'quick-nav-modal' }}>
-      <TextInput autoFocus value={query} onChange={(event) => setQuery(event.currentTarget.value)} leftSection={<IconSearch size={18}/>} rightSection={searchingNotes?<Loader size={17}/>:undefined} placeholder="화면, 공간 또는 메모 검색" size="lg" onKeyDown={(event) => {
+      <TextInput ref={searchInputRef} data-autofocus value={query} onChange={(event) => setQuery(event.currentTarget.value)} leftSection={<IconSearch size={18}/>} rightSection={searchingNotes?<Loader size={17}/>:undefined} placeholder="화면, 공간 또는 메모 검색" size="lg" onKeyDown={(event) => {
         if (event.key === 'ArrowDown' && items.length > 0) { event.preventDefault(); setActiveIndex((value) => Math.min(items.length - 1, value + 1)); }
         if (event.key === 'ArrowUp') { event.preventDefault(); setActiveIndex((value) => Math.max(0, value - 1)); }
         if (event.key === 'Enter') { event.preventDefault(); select(items[activeIndex]); }

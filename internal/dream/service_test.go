@@ -3,12 +3,25 @@ package dream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestNormalizeTokenLimit(t *testing.T) {
+	if got := NormalizeTokenLimit(262144); got != 262144 {
+		t.Fatalf("256K token limit changed: %d", got)
+	}
+	if got := NormalizeTokenLimit(262145); got != 262144 {
+		t.Fatalf("token limit was not capped: %d", got)
+	}
+	if got := NormalizeTokenLimit(0); got != DefaultTokenLimit {
+		t.Fatalf("missing token limit did not use default: %d", got)
+	}
+}
 
 func TestRedactSecrets(t *testing.T) {
 	input := "password=hello API_KEY: sk-test umm_key_abc_secret"
@@ -134,5 +147,39 @@ func TestCallTextKeepsUsableResponseWhenKoreanRepairFails(t *testing.T) {
 	}
 	if text != "A usable final answer." || calls.Load() != 2 {
 		t.Fatalf("unexpected fallback response: text=%q calls=%d", text, calls.Load())
+	}
+}
+
+func TestCallTextReportsTokenLimitBeforeFinalAnswer(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var received chatRequest
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if received.MaxTokens != MaxTokenLimit {
+			t.Errorf("unexpected max_tokens: %d", received.MaxTokens)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{
+				"finish_reason": "length",
+				"message":       map[string]any{"role": "assistant", "content": "<think>아직 내부 추론 중"},
+			}},
+			"usage": map[string]any{"prompt_tokens": 5, "completion_tokens": 262144},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{}
+	_, inputTokens, outputTokens, _, err := service.callText(context.Background(), GatewayConfig{BaseURL: server.URL, TimeoutSeconds: 2, MaxRetries: 1}, "test-model", .2, MaxTokenLimit, koreanOnlyInstruction, "사용자 메모")
+	if !errors.Is(err, ErrAIResponseTokenLimit) {
+		t.Fatalf("unexpected token limit error: %v", err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("expected one retry, got %d calls", calls.Load())
+	}
+	if inputTokens != 10 || outputTokens != 524288 {
+		t.Fatalf("truncated usage was not accumulated: input=%d output=%d", inputTokens, outputTokens)
 	}
 }

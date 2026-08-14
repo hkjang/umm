@@ -217,6 +217,6 @@ INSERT INTO app_settings(key,value) VALUES
 ('oidc', '{"enabled":false,"issuer_url":"","client_id":"","client_secret":"","scopes":["openid","profile","email"],"admin_group":"umm-admin","team_lead_group":"umm-team-lead"}'::jsonb),
 ('security', '{"api_key_scopes":["notes:read","notes:write","spaces:read","dreams:read","approvals:write"],"default_key_days":90,"rotation_overlap_hours":24}'::jsonb),
 ('workflow', '{"enabled":false,"actions":["space_share","export"]}'::jsonb),
-('dream', '{"enabled":false,"automatic":false,"schedule":"02:00","frequency":"daily","count":1,"min_notes":3,"context_days":7,"max_context_notes":20,"model":"","temperature":0.7,"token_limit":320,"monthly_limit":30,"allow_user_disable":true,"notification":false,"quality_threshold":0.7,"quiet_mode":false}'::jsonb),
-('ai_gateway', '{"base_url":"","api_key":"","timeout_seconds":45,"max_retries":2,"prompt_version":"dream-v1","input_cost_per_million":0,"output_cost_per_million":0,"log_prompt":false}'::jsonb)
+('dream', '{"enabled":false,"automatic":false,"schedule":"02:00","frequency":"daily","count":1,"min_notes":3,"context_days":7,"max_context_notes":20,"model":"","temperature":0.7,"token_limit":4096,"monthly_limit":30,"allow_user_disable":true,"notification":false,"quality_threshold":0.7,"quiet_mode":false}'::jsonb),
+('ai_gateway', '{"base_url":"","api_key":"","timeout_seconds":45,"max_retries":2,"prompt_version":"dream-v1","input_cost_per_million":0,"output_cost_per_million":0,"log_prompt":false,"log_retention_days":90}'::jsonb)
 ON CONFLICT (key) DO NOTHING;

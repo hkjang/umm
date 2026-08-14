@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/auth"
+	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
 )
@@ -425,6 +426,10 @@ func (s *Server) aiAssist(w http.ResponseWriter, r *http.Request) {
 	result, err := s.Dreams.Assist(r.Context(), p.User.ID, body.NoteIDs, body.Mode)
 	if err != nil {
 		slog.Warn("AI assist failed", "user_id", p.User.ID, "mode", body.Mode, "error", err)
+		if errors.Is(err, dream.ErrAIResponseTokenLimit) {
+			writeError(w, http.StatusBadGateway, "AI 모델이 최종 답변을 만들기 전에 Token Limit에 도달했습니다. 관리자에게 Dream Layer의 응답 Token Limit을 높여 달라고 요청해 주세요.")
+			return
+		}
 		writeError(w, http.StatusBadGateway, "AI 응답을 받지 못했습니다. 잠시 후 다시 시도하거나 관리자에게 AI 연결 설정을 확인해 달라고 요청해 주세요.")
 		return
 	}
