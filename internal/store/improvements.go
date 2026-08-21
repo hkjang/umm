@@ -603,6 +603,7 @@ func (s *Store) DeleteComment(ctx context.Context, userID, commentID uuid.UUID) 
 		UPDATE note_comments c SET deleted_at=now(),updated_at=now()
 		FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
 		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL
+		  AND (sp.owner_id=$2 OR sm.user_id=$2)
 		  AND (c.author_id=$2 OR sp.owner_id=$2 OR sm.permission='manage')
 		RETURNING n.space_id`, commentID, userID).Scan(&spaceID)
 	if err != nil {

@@ -591,6 +591,75 @@ func TestViewCommentAuthorCannotResolveThreadIntegration(t *testing.T) {
 	}
 }
 
+func TestRemovedCommentAuthorCannotDeleteIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	ownerID, memberID, spaceID, noteID, subscriptionID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	ownerName, memberName := "delete_comment_owner_"+ownerID.String(), "delete_comment_member_"+memberID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, memberID, memberName); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, memberID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'comment delete access')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'view')`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'shared comment target')`, noteID, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO webhook_subscriptions(id,owner_id,name,url,secret_ciphertext,events) VALUES($1,$2,'comment delete boundary','https://example.com/webhook','test-ciphertext',ARRAY['comment.deleted'])`, subscriptionID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+
+	currentComment, _, err := db.CreateComment(ctx, memberID, noteID, nil, "delete while a member", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.DeleteComment(ctx, memberID, currentComment.ID); err != nil {
+		t.Fatalf("current comment author could not delete: %v", err)
+	}
+	revokedComment, _, err := db.CreateComment(ctx, memberID, noteID, nil, "cannot delete after removal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.DeleteComment(ctx, memberID, revokedComment.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("removed comment author retained delete access: %v", err)
+	}
+
+	var currentDeleted, revokedDeleted bool
+	var currentEvents, revokedEvents, currentDeliveries, revokedDeliveries int
+	if err = db.Pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT deleted_at IS NOT NULL FROM note_comments WHERE id=$1),
+		  (SELECT deleted_at IS NOT NULL FROM note_comments WHERE id=$2),
+		  (SELECT count(*) FROM space_events WHERE event_type='comment.deleted' AND resource_id=$1),
+		  (SELECT count(*) FROM space_events WHERE event_type='comment.deleted' AND resource_id=$2),
+		  (SELECT count(*) FROM webhook_deliveries WHERE subscription_id=$3 AND payload->>'resourceId'=$1::text),
+		  (SELECT count(*) FROM webhook_deliveries WHERE subscription_id=$3 AND payload->>'resourceId'=$2::text)`,
+		currentComment.ID, revokedComment.ID, subscriptionID).Scan(
+		&currentDeleted, &revokedDeleted, &currentEvents, &revokedEvents, &currentDeliveries, &revokedDeliveries); err != nil {
+		t.Fatal(err)
+	}
+	if !currentDeleted || revokedDeleted || currentEvents != 1 || revokedEvents != 0 || currentDeliveries != 1 || revokedDeliveries != 0 {
+		t.Fatalf("comment deletion boundary mismatch: deleted=%v/%v events=%d/%d deliveries=%d/%d",
+			currentDeleted, revokedDeleted, currentEvents, revokedEvents, currentDeliveries, revokedDeliveries)
+	}
+}
+
 func TestNoteMutationAndWebhookOutboxCommitTogetherIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {

@@ -56,6 +56,23 @@ func randomToken(bytes int) (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
+
+func newAPIKeyMaterial(generate func(int) (string, error)) (string, string, error) {
+	secret, err := generate(32)
+	if err != nil {
+		return "", "", err
+	}
+	prefixRaw, err := generate(6)
+	if err != nil {
+		return "", "", err
+	}
+	if len(prefixRaw) < 8 {
+		return "", "", errors.New("generated API key prefix is too short")
+	}
+	prefix := strings.ToLower(prefixRaw[:8])
+	return prefix, "umm_key_" + prefix + "_" + secret, nil
+}
+
 func digest(v string) []byte { s := sha256.Sum256([]byte(v)); return s[:] }
 
 // SessionOrigin records where a session was created so a user can recognise it
@@ -264,16 +281,10 @@ func (s *Service) ListKeys(ctx context.Context, userID uuid.UUID) ([]APIKey, err
 }
 
 func (s *Service) CreateKey(ctx context.Context, userID uuid.UUID, name string, scopes []string, days int) (APIKey, string, error) {
-	secret, err := randomToken(32)
+	prefix, raw, err := newAPIKeyMaterial(randomToken)
 	if err != nil {
 		return APIKey{}, "", err
 	}
-	prefixRaw, err := randomToken(6)
-	if err != nil {
-		return APIKey{}, "", err
-	}
-	prefix := strings.ToLower(prefixRaw[:8])
-	raw := "umm_key_" + prefix + "_" + secret
 	var expires *time.Time
 	if days > 0 {
 		t := time.Now().Add(time.Duration(days) * 24 * time.Hour)
@@ -296,10 +307,10 @@ func (s *Service) RotateKey(ctx context.Context, userID, keyID uuid.UUID, overla
 	if err = tx.QueryRow(ctx, `SELECT name,scopes,expires_at FROM api_keys WHERE id=$1 AND user_id=$2 AND status='active' FOR UPDATE`, keyID, userID).Scan(&name, &scopes, &expires); err != nil {
 		return APIKey{}, "", err
 	}
-	secret, _ := randomToken(32)
-	prefixRaw, _ := randomToken(6)
-	prefix := strings.ToLower(prefixRaw[:8])
-	raw := "umm_key_" + prefix + "_" + secret
+	prefix, raw, err := newAPIKeyMaterial(randomToken)
+	if err != nil {
+		return APIKey{}, "", err
+	}
 	var k APIKey
 	err = tx.QueryRow(ctx, `INSERT INTO api_keys(user_id,name,prefix,secret_hash,scopes,expires_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING id,name,prefix,scopes,status,expires_at,overlap_until,last_used_at,created_at`, userID, name+" (rotated)", prefix, digest(raw), scopes, expires).Scan(&k.ID, &k.Name, &k.Prefix, &k.Scopes, &k.Status, &k.ExpiresAt, &k.OverlapUntil, &k.LastUsedAt, &k.CreatedAt)
 	if err != nil {
