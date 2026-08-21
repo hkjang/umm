@@ -80,6 +80,8 @@ type NoteSearchResult struct {
 	Content   string    `json:"content"`
 	Kind      string    `json:"kind"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	Score     float64   `json:"score"`
+	Reason    string    `json:"reason"`
 }
 type ThoughtCluster struct {
 	ID       string      `json:"id"`

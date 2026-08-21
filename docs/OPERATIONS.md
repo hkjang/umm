@@ -13,8 +13,9 @@
 ## 설치
 
 ```bash
-./scripts/load-offline.sh umm-v0.2.1.tar.gz
-docker image inspect umm:v0.2.1
+sha256sum -c SHA256SUMS
+./scripts/load-offline.sh umm-v0.7.0.tar.gz
+docker image inspect umm:v0.7.0
 ```
 
 PostgreSQL user는 대상 database에 schema/table/extension을 생성할 권한이 필요합니다. 시작 시 embedded migration이 transaction으로 실행됩니다.
@@ -30,7 +31,16 @@ BOOTSTRAP_ADMIN_PASSWORD
 ENCRYPTION_KEY
 ```
 
-컨테이너는 non-root `umm` 사용자, 고정 포트 `8080`으로 실행됩니다. `/healthz`는 프로세스, `/readyz`는 PostgreSQL 연결을 검사합니다.
+컨테이너는 non-root `umm` 사용자로 실행되고 기본 주소는 `:8080`입니다. 선택 환경변수 `UMM_HTTP_ADDR`로 `127.0.0.1:18081` 같은 바인드 주소를 지정할 수 있습니다. `/healthz`는 프로세스, `/readyz`는 PostgreSQL 연결을 검사합니다.
+
+선택 운영 환경변수는 다음과 같습니다.
+
+```text
+ENCRYPTION_KEY_PREVIOUS       # 쉼표로 구분한 이전 32-byte 키; 회전 기간에만 사용
+UMM_HTTP_ADDR                 # 기본 :8080
+OTEL_EXPORTER_OTLP_ENDPOINT   # 설정할 때만 OTLP trace exporter 활성화
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+```
 
 ## 최초 설정 순서
 
@@ -46,9 +56,9 @@ ENCRYPTION_KEY
 업그레이드 전에 PostgreSQL snapshot/backup을 만들고 현재 `ENCRYPTION_KEY`를 별도 비밀 저장소에서 확인합니다.
 
 ```bash
-gzip -dc umm-v0.2.1.tar.gz | docker load
+gzip -dc umm-v0.7.0.tar.gz | docker load
 docker stop umm
-# 동일한 네 환경변수와 DB로 umm:v0.2.1 실행
+# 동일한 네 필수 환경변수와 DB로 umm:v0.7.0 실행
 ```
 
 Schema migration은 forward-only입니다. 새 버전 실행 후 schema가 변경되었다면 image만 이전 버전으로 되돌리는 것으로 충분하지 않을 수 있으므로, rollback은 DB snapshot 복원과 함께 수행합니다.
@@ -60,6 +70,24 @@ Schema migration은 forward-only입니다. 새 버전 실행 후 schema가 변�
 - 복구 훈련에서 로그인, note 수, OIDC secret decrypt, API key digest 인증을 확인
 - API/MCP secret은 복호화할 수 없으므로 복구 후 문제가 있으면 회전
 
+CI는 `scripts/restore-smoke.sh`로 PostgreSQL custom-format dump를 별도 `umm_restore_*` DB에 복원하고 migration ledger와 사용자 수를 원본과 비교합니다. 운영에서도 분기별로 격리된 복구 환경에서 같은 검증과 로그인·캔버스 조회를 수행하세요. 복구 시험 DB 이름은 실제 운영 DB와 겹치지 않도록 고정 규칙으로 관리합니다.
+
+## Master encryption key 회전
+
+1. 새 32-byte 값을 `ENCRYPTION_KEY`에, 현재 값을 `ENCRYPTION_KEY_PREVIOUS`에 넣고 재시작합니다.
+2. 관리자 → 보안에서 fallback key 수, 회전 대기 값, 읽기 실패 값이 예상과 일치하는지 확인합니다.
+3. **현재 키로 회전**을 실행합니다. OIDC/AI 설정 비밀, AI prompt 로그, 웹훅 HMAC 비밀이 한 트랜잭션에서 다시 암호화됩니다.
+4. `pendingRotation=0`, `unreadable=0`을 확인하고 백업을 새로 만든 뒤 `ENCRYPTION_KEY_PREVIOUS`를 제거해 재시작합니다.
+
+암호문은 `v2.<key-id>.<payload>` 형식이며 기존 v1 암호문도 fallback key로 읽어 회전할 수 있습니다. 이전 키를 먼저 제거하면 해당 값은 복구할 수 없습니다.
+
+## 관측성과 자동화
+
+- `/api/v1/metrics`는 `metrics:read` scope 또는 관리자 세션으로 Prometheus request count, latency histogram, in-flight, build 정보를 제공합니다.
+- 표준 `OTEL_EXPORTER_OTLP_ENDPOINT` 또는 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`가 있을 때만 OTLP HTTP trace exporter가 활성화됩니다.
+- 웹훅은 HTTPS 기본 포트만 허용하며 DNS 확인과 연결 시점 모두 사설·loopback·link-local·reserved IP를 거부합니다. 실패는 세 번 재시도하고 연속 10회 실패 시 subscription을 자동 중지합니다.
+- 수신 측은 `X-Umm-Timestamp + "." + raw_body`에 대한 `X-Umm-Signature-256: sha256=<hex>` HMAC을 검증하고 오래된 timestamp와 중복 `X-Umm-Delivery`를 거부해야 합니다.
+
 ## Dream 장애
 
 AI Gateway 오류는 retry 후 failed job과 `ai_calls`에 기록됩니다. 일반 Canvas는 계속 동작합니다. 장애가 길어지면 관리자에서 자동 생성을 OFF하고, 복구 후 “지금 큐 생성”을 실행합니다. 품질 기준 미달은 failure가 아니라 skip이며 사용자에게 빈 Dream을 억지로 노출하지 않습니다.
@@ -68,4 +96,4 @@ vLLM이 최종 본문 없이 추론만 반환한다면 모델에 맞는 `--reaso
 
 ## Release 규칙
 
-`VERSION`이 `0.2.1`이면 tag는 `v0.2.1`, image는 `umm:v0.2.1`, GitHub asset은 `umm-v0.2.1.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 서비스 Docker image tarball만 첨부합니다.
+`VERSION`이 `0.7.0`이면 tag는 `v0.7.0`, image는 `umm:v0.7.0`, GitHub asset은 `umm-v0.7.0.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 image tarball, SPDX JSON SBOM, `SHA256SUMS`가 첨부되며 GitHub artifact provenance와 SBOM attestation을 함께 발급합니다.

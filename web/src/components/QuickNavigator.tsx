@@ -1,5 +1,5 @@
 import { Badge, Button, Group, Kbd, Loader, Modal, ScrollArea, Stack, Text, TextInput, ThemeIcon, UnstyledButton } from '@mantine/core';
-import { IconAdjustments, IconCheckupList, IconFileText, IconHome, IconKeyboard, IconLayoutDashboard, IconMoonStars, IconSearch, IconSparkles } from '@tabler/icons-react';
+import { IconAdjustments, IconCalendarCheck, IconCheckupList, IconFileText, IconHome, IconKeyboard, IconLayoutDashboard, IconMoonStars, IconSearch, IconSparkles } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, type NoteSearchResult, type Space } from '../api';
@@ -61,7 +61,8 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
 
   const destinations = useMemo<QuickItem[]>(() => {
     const next: QuickItem[] = [
-      { id: 'home', label: '내 생각 공간', description: '캔버스로 이동', to: '/', icon: IconHome },
+      { id: 'today', label: '오늘의 리뷰', description: '다시 볼 생각과 새 활동', to: '/today', icon: IconCalendarCheck },
+      { id: 'home', label: '내 생각 공간', description: '캔버스로 이동', to: '/canvas', icon: IconHome },
       { id: 'dreams', label: 'Dreams', description: '새롭게 발견된 생각', to: '/dreams', icon: IconMoonStars },
       { id: 'approvals', label: '검토 · 승인', description: '요청과 승인 상태', to: '/approvals', icon: IconCheckupList },
       { id: 'settings', label: '개인 설정', description: '개인화와 API 키', to: '/settings', icon: IconAdjustments },
@@ -82,7 +83,7 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
     const noteMatches: QuickItem[] = notes.map((note) => {
       const content = note.content.replace(/\s+/g, ' ').trim();
       const title = note.title.trim() || content.slice(0, 52) || '내용 없는 메모';
-      return { id: `note:${note.id}`, label: title, description: `${note.spaceName} · ${content.slice(0, 90)}`, to: `/space/${note.spaceId}?note=${note.id}`, icon: IconFileText, badge: '메모' };
+      return { id: `note:${note.id}`, label: title, description: `${note.spaceName} · ${note.reason || content.slice(0, 90)}`, to: `/space/${note.spaceId}?note=${note.id}`, icon: IconFileText, badge: `${Math.round((note.score||0)*100)}%` };
     });
     return [...localMatches, ...noteMatches];
   }, [destinations, notes, query, spaces]);

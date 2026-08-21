@@ -36,6 +36,8 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: go test ./...
+      - name: Go vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - name: PostgreSQL integration smoke
         env:
           POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
@@ -45,11 +47,25 @@ jobs:
         run: |
           go build -ldflags '-X main.version=ci' -o /tmp/umm-ci ./cmd/umm
           ./scripts/integration-smoke.sh
+      - name: Per-user review state integration
+        env:
+          POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
+        run: go test ./internal/store -run TestTodayReviewStateIsIsolatedPerUserIntegration -count=1
+      - name: Backup and restore drill
+        env:
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+          POSTGRES_USER: postgres
+          POSTGRES_SOURCE_DB: umm
+          RESTORE_TEST_DB: umm_restore_ci
+        run: ./scripts/restore-smoke.sh
       - name: Dream inbox database integration
         env:
           POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
         run: go test ./internal/dream -run TestDreamInboxAcceptanceIntegration -count=1
       - run: npm ci
+        working-directory: web
+      - name: Frontend dependency audit
+        run: npm audit --audit-level=high
         working-directory: web
       - run: npm run build
         working-directory: web

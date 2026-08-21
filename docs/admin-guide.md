@@ -18,6 +18,8 @@
 > [!NOTE]
 > DB에 이미 bootstrap 관리자가 존재할 경우, 서버를 재시작해도 비밀번호가 임의로 덮어써지지 않습니다.
 
+선택 환경변수 `ENCRYPTION_KEY_PREVIOUS`는 master-key 회전 기간, `UMM_HTTP_ADDR`는 listen 주소 변경, 표준 `OTEL_EXPORTER_OTLP_*`는 trace 전송에만 사용합니다. 필수 입력은 네 개로 유지됩니다.
+
 ---
 
 ## 2. Keycloak OIDC SSO 연동
@@ -96,4 +98,21 @@ Dream Layer는 사용자가 밤사이 휴식하는 동안 캔버스에 쌓인 �
 | :--- | :--- | :--- | :--- |
 | `/healthz` | GET | Liveness Probe | 프로세스 생존 상태 및 버전 반환 |
 | `/readyz` | GET | Readiness Probe | PostgreSQL 연결 및 쿼리 가능 상태 확인 |
+| `/api/v1/metrics` | GET | Prometheus | route별 request count, latency histogram, in-flight, build 정보 (`metrics:read`) |
 | `/mcp` | POST | Model Context Protocol | AI 에이전트 도구 연동 엔드포인트 |
+
+표준 OTLP endpoint 환경변수가 설정된 경우에만 OpenTelemetry HTTP trace exporter가 활성화됩니다. 관리자 운영 현황에는 댓글 수, 온보딩 완료율, 최근 웹훅 실패와 AI 평가 통계도 표시됩니다.
+
+---
+
+## 7. Dream AI 평가 회귀
+
+관리자 → AI 평가에서 최소 두 개의 입력 생각, 기대 단어와 금지 단어, Dream 유형을 저장합니다. 실행은 현재 AI Gateway와 prompt version을 그대로 사용하며 grounding, 기대/금지 단어, 구체성, 모델 응답 상태를 0~1 점수와 세부 항목으로 보존합니다. 모델·prompt·Gateway 설정을 바꾸기 전후에 같은 active case를 실행해 회귀를 확인하세요. Gateway 장애도 `error` run으로 남아 평가 이력이 사라지지 않습니다.
+
+## 8. Master-key 회전
+
+새 키를 `ENCRYPTION_KEY`, 현재 키를 `ENCRYPTION_KEY_PREVIOUS`에 배치한 뒤 재시작합니다. 보안 화면에서 fallback 1개 이상, unreadable 0을 확인하고 **현재 키로 회전**을 실행합니다. 이 작업은 OIDC/AI secret, 웹훅 secret, 암호화 AI prompt를 한 트랜잭션으로 다시 암호화합니다. pending 0을 확인하고 새 백업을 만든 후에만 이전 키 환경변수를 제거합니다.
+
+## 9. 서명 웹훅 운영
+
+사용자는 개인 설정에서 허용된 `webhooks:write` scope로 subscription을 관리합니다. 대상은 공개 HTTPS 443만 허용합니다. 수신 시스템은 timestamp와 raw body의 HMAC-SHA256, delivery UUID 중복, 허용 시간 창을 검증해야 합니다. 일시 실패는 세 번 재시도하고 연속 10회 실패 subscription은 자동 중지되므로 운영 지표와 개인 설정의 마지막 오류를 함께 확인하세요.

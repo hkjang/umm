@@ -8,32 +8,56 @@ import (
 )
 
 func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
 	p := principal(r)
-	rows, err := s.Store.Pool.Query(r.Context(), `SELECT id,kind,title,body,resource_type,resource_id,read_at,created_at FROM notifications WHERE user_id=$1 ORDER BY created_at DESC LIMIT 100`, p.User.ID)
+	offset, ok := decodeOffsetCursor(r.URL.Query().Get("cursor"))
+	if !ok {
+		writeError(w, 400, "알림 커서가 올바르지 않습니다.")
+		return
+	}
+	limit := parsePageLimit(r, 30, 100)
+	rows, err := s.Store.Pool.Query(r.Context(), `SELECT id,kind,title,body,resource_type,resource_id,resource_space_id,metadata,read_at,created_at FROM notifications WHERE user_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, p.User.ID, limit+1, offset)
 	if err != nil {
 		writeError(w, 500, "알림을 불러오지 못했습니다.")
 		return
 	}
 	defer rows.Close()
 	items := []map[string]any{}
-	unread := 0
+	var unread int64
+	if err := s.Store.Pool.QueryRow(r.Context(), `SELECT count(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL`, p.User.ID).Scan(&unread); err != nil {
+		writeError(w, 500, "읽지 않은 알림 수를 불러오지 못했습니다.")
+		return
+	}
 	for rows.Next() {
 		var id uuid.UUID
 		var kind, title, body, resourceType string
-		var resourceID *uuid.UUID
+		var resourceID, resourceSpaceID *uuid.UUID
+		var metadata map[string]any
 		var readAt *time.Time
 		var created time.Time
-		if rows.Scan(&id, &kind, &title, &body, &resourceType, &resourceID, &readAt, &created) != nil {
-			continue
+		if err := rows.Scan(&id, &kind, &title, &body, &resourceType, &resourceID, &resourceSpaceID, &metadata, &readAt, &created); err != nil {
+			writeError(w, 500, "알림을 읽지 못했습니다.")
+			return
 		}
-		if readAt == nil {
-			unread++
-		}
-		items = append(items, map[string]any{"id": id, "kind": kind, "title": title, "body": body, "resourceType": resourceType, "resourceId": resourceID, "readAt": readAt, "createdAt": created})
+		items = append(items, map[string]any{"id": id, "kind": kind, "title": title, "body": body, "resourceType": resourceType, "resourceId": resourceID, "resourceSpaceId": resourceSpaceID, "metadata": metadata, "readAt": readAt, "createdAt": created})
 	}
-	writeJSON(w, 200, map[string]any{"notifications": items, "unread": unread})
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "알림을 불러오지 못했습니다.")
+		return
+	}
+	next := ""
+	if len(items) > limit {
+		items = items[:limit]
+		next = encodeOffsetCursor(offset + limit)
+	}
+	writeJSON(w, 200, map[string]any{"notifications": items, "unread": unread, "nextCursor": next})
 }
 func (s *Server) readNotification(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
 	id, ok := parseID(w, r, "notificationID")
 	if !ok {
 		return

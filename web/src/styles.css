@@ -212,6 +212,41 @@ button, a, input, textarea, [tabindex] { -webkit-tap-highlight-color: transparen
   .admin-back-button:hover { background: #393140; color: #fff; }
 }
 
+/* v0.7 review, resilient collaboration and accessible navigation */
+.today-page { min-height: 100%; overflow: auto; padding: clamp(24px, 4vw, 56px); background: linear-gradient(155deg, #f8f5ee 0%, #f3f0e9 55%, #f7f2fb 100%); }
+.onboarding-card { background: linear-gradient(130deg, rgba(255,255,255,.96), rgba(245,239,252,.92)); border-color: rgba(118,92,150,.2); }
+.onboarding-step, .activity-row { border: 1px solid #e5e0d8; border-radius: 14px; background: rgba(255,255,255,.76); padding: 13px; display: flex; align-items: center; gap: 12px; color: inherit; cursor: pointer; transition: border-color .18s ease, transform .18s ease, background .18s ease; }
+.onboarding-step:hover, .activity-row:hover { border-color: #a993bd; background: #fff; transform: translateY(-1px); }
+.onboarding-step[data-done] { background: #f2faf3; border-color: #b9dbbf; }
+.today-note-card { width: 100%; color: inherit; text-align: left; background: #fff; cursor: pointer; transition: transform .18s ease, box-shadow .18s ease; }
+.today-note-card:hover { transform: translateY(-2px); box-shadow: 0 9px 25px rgba(53,45,34,.08); }
+.today-dream-card { background: linear-gradient(145deg,#fff,#faf7fd); border-color: #ddd1e9; }
+.today-main-grid { display: grid; grid-template-columns: minmax(0,7fr) minmax(0,5fr); gap: 32px; }
+.activity-row { width: 100%; text-align: left; }
+.network-status { position: fixed; z-index: 120; left: 50%; bottom: 18px; transform: translateX(-50%); background: rgba(38,34,31,.94); color: #fff; max-width: calc(100vw - 28px); }
+.spin { animation: umm-spin 1s linear infinite; }
+@keyframes umm-spin { to { transform: rotate(360deg); } }
+.canvas-linear-view { position: absolute; inset: 0; z-index: 5; background: #f8f5ee; padding: clamp(88px, 10vw, 112px) clamp(18px, 7vw, 90px) 120px; }
+.canvas-linear-view main { max-width: 920px; margin: 0 auto; }
+.postit:focus-visible { outline: 4px solid rgba(78,106,189,.55); outline-offset: 5px; }
+
+:where(button, a, input, textarea, select, [tabindex]):focus-visible { outline: 3px solid rgba(74,102,186,.65); outline-offset: 2px; }
+
+@media (pointer: coarse) {
+  .mantine-ActionIcon-root, .mantine-Button-root, .related-chip { min-width: 44px; min-height: 44px; }
+}
+
+@media (max-width: 48em) {
+  .today-page { padding: 22px 14px 96px; }
+  .network-status { bottom: 76px; width: calc(100vw - 28px); }
+  .canvas-linear-view { padding: 82px 12px 105px; }
+  .today-main-grid { grid-template-columns: minmax(0,1fr); gap: 28px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
 @media (hover: none), (pointer: coarse) {
   .note-actions { opacity: 1; }
   .note-actions .mantine-ActionIcon-root { background: rgba(255,255,255,.5); }

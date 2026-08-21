@@ -75,6 +75,20 @@ func qualityLabel(score float64) string {
 }
 
 func (s *Service) History(ctx context.Context, userID uuid.UUID) ([]DreamView, error) {
+	views, _, err := s.HistoryPage(ctx, userID, 100, 0)
+	return views, err
+}
+
+func (s *Service) HistoryPage(ctx context.Context, userID uuid.UUID, limit, offset int) ([]DreamView, bool, error) {
+	if limit < 1 {
+		limit = 30
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	rows, err := s.Store.Pool.Query(ctx, `
 		SELECT d.dream_id,d.dream_type,d.generated_at,d.exposed_at,d.accepted_at,
 		       d.quality_score,d.status,d.note_id,d.space_id,sp.name,
@@ -82,23 +96,28 @@ func (s *Service) History(ctx context.Context, userID uuid.UUID) ([]DreamView, e
 		       d.suggested_action,d.generation,d.dismissed_reason
 		FROM dream_notes d
 		JOIN spaces sp ON sp.id=d.space_id
-		LEFT JOIN notes n ON n.id=d.note_id
-		WHERE d.user_id=$1
-		ORDER BY d.generated_at DESC
-		LIMIT 100`, userID)
+			LEFT JOIN notes n ON n.id=d.note_id
+			WHERE d.user_id=$1
+			ORDER BY d.generated_at DESC,d.dream_id DESC
+			LIMIT $2 OFFSET $3`, userID, limit+1, offset)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	views := []DreamView{}
 	ids := []uuid.UUID{}
 	byID := map[uuid.UUID]int{}
+	hasMore := false
 	for rows.Next() {
 		var view DreamView
 		if err := rows.Scan(&view.DreamID, &view.Type, &view.GeneratedAt, &view.ExposedAt, &view.AcceptedAt,
 			&view.QualityScore, &view.Status, &view.NoteID, &view.SpaceID, &view.SpaceName,
 			&view.Content, &view.Rationale, &view.SuggestedAction, &view.Generation, &view.DismissedReason); err != nil {
-			return nil, err
+			return nil, false, err
+		}
+		if len(views) == limit {
+			hasMore = true
+			continue
 		}
 		view.QualityLabel = qualityLabel(view.QualityScore)
 		view.Sources = []DreamSourceView{}
@@ -107,7 +126,7 @@ func (s *Service) History(ctx context.Context, userID uuid.UUID) ([]DreamView, e
 		views = append(views, view)
 	}
 	if err := rows.Err(); err != nil || len(ids) == 0 {
-		return views, err
+		return views, hasMore, err
 	}
 	sourceRows, err := s.Store.Pool.Query(ctx, `
 		SELECT ds.dream_id,n.id,n.title,left(n.content,240),ds.rank,ds.similarity_score,ds.cited
@@ -116,20 +135,20 @@ func (s *Service) History(ctx context.Context, userID uuid.UUID) ([]DreamView, e
 		WHERE ds.dream_id=ANY($1)
 		ORDER BY ds.dream_id,ds.cited DESC,ds.rank`, ids)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer sourceRows.Close()
 	for sourceRows.Next() {
 		var dreamID uuid.UUID
 		var source DreamSourceView
 		if err := sourceRows.Scan(&dreamID, &source.NoteID, &source.Title, &source.Excerpt, &source.Rank, &source.SimilarityScore, &source.Cited); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if index, ok := byID[dreamID]; ok {
 			views[index].Sources = append(views[index].Sources, source)
 		}
 	}
-	return views, sourceRows.Err()
+	return views, hasMore, sourceRows.Err()
 }
 
 func (s *Service) Dream(ctx context.Context, userID, dreamID uuid.UUID) (DreamView, error) {

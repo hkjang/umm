@@ -263,14 +263,27 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminMetrics(w http.ResponseWriter, r *http.Request) {
-	var users, active, notes, spaces, pending int64
-	err := s.Store.Pool.QueryRow(r.Context(), `SELECT (SELECT count(*) FROM users),(SELECT count(*) FROM users WHERE active),(SELECT count(*) FROM notes WHERE deleted_at IS NULL),(SELECT count(*) FROM spaces),(SELECT count(*) FROM approval_requests WHERE status='pending')`).Scan(&users, &active, &notes, &spaces, &pending)
+	var users, active, notes, spaces, pending, comments, onboarded, webhookFailures int64
+	err := s.Store.Pool.QueryRow(r.Context(), `SELECT (SELECT count(*) FROM users),(SELECT count(*) FROM users WHERE active),(SELECT count(*) FROM notes WHERE deleted_at IS NULL),(SELECT count(*) FROM spaces),(SELECT count(*) FROM approval_requests WHERE status='pending'),(SELECT count(*) FROM note_comments WHERE deleted_at IS NULL),(SELECT count(*) FROM user_preferences WHERE onboarding_completed_at IS NOT NULL),(SELECT count(*) FROM webhook_deliveries WHERE status='failed' AND attempted_at>=now()-interval '24 hours')`).Scan(&users, &active, &notes, &spaces, &pending, &comments, &onboarded, &webhookFailures)
 	if err != nil {
 		writeError(w, 500, "운영 지표를 불러오지 못했습니다.")
 		return
 	}
-	dreamMetrics, _ := s.Dreams.Metrics(r.Context())
-	writeJSON(w, 200, map[string]any{"users": users, "activeUsers": active, "notes": notes, "spaces": spaces, "pendingApprovals": pending, "dream": dreamMetrics})
+	dreamMetrics, err := s.Dreams.Metrics(r.Context())
+	if err != nil {
+		writeError(w, 500, "Dream 운영 지표를 불러오지 못했습니다.")
+		return
+	}
+	var evalRuns, evalPassed int64
+	if err := s.Store.Pool.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER (WHERE status='passed') FROM ai_eval_runs WHERE created_at>=now()-interval '30 days'`).Scan(&evalRuns, &evalPassed); err != nil {
+		writeError(w, 500, "AI 평가 지표를 불러오지 못했습니다.")
+		return
+	}
+	out := map[string]any{"users": users, "activeUsers": active, "notes": notes, "spaces": spaces, "pendingApprovals": pending, "comments": comments, "onboardedUsers": onboarded, "webhookFailures24h": webhookFailures, "aiEvalRuns30d": evalRuns, "aiEvalPassed30d": evalPassed, "dream": dreamMetrics}
+	if s.Metrics != nil {
+		out["http"] = s.Metrics.Snapshot()
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) runDreams(w http.ResponseWriter, r *http.Request) {
@@ -284,7 +297,13 @@ func (s *Server) runDreams(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Store.Pool.Query(r.Context(), `SELECT a.id,a.action,a.resource_type,a.resource_id,a.metadata,a.created_at,COALESCE(u.username,'system') FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.created_at DESC LIMIT 300`)
+	offset, ok := decodeOffsetCursor(r.URL.Query().Get("cursor"))
+	if !ok {
+		writeError(w, 400, "감사 로그 커서가 올바르지 않습니다.")
+		return
+	}
+	limit := parsePageLimit(r, 100, 300)
+	rows, err := s.Store.Pool.Query(r.Context(), `SELECT a.id,a.action,a.resource_type,a.resource_id,a.metadata,a.created_at,COALESCE(u.username,'system') FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.created_at DESC,a.id DESC LIMIT $1 OFFSET $2`, limit+1, offset)
 	if err != nil {
 		writeError(w, 500, "감사 로그를 불러오지 못했습니다.")
 		return
@@ -296,10 +315,20 @@ func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
 		var action, resourceType, resourceID, actor string
 		var metadata json.RawMessage
 		var at time.Time
-		if rows.Scan(&id, &action, &resourceType, &resourceID, &metadata, &at, &actor) != nil {
-			continue
+		if err := rows.Scan(&id, &action, &resourceType, &resourceID, &metadata, &at, &actor); err != nil {
+			writeError(w, 500, "감사 로그를 읽지 못했습니다.")
+			return
 		}
 		out = append(out, map[string]any{"id": id, "action": action, "resourceType": resourceType, "resourceId": resourceID, "metadata": metadata, "createdAt": at, "actor": actor})
 	}
-	writeJSON(w, 200, map[string]any{"audit": out})
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "감사 로그를 불러오지 못했습니다.")
+		return
+	}
+	next := ""
+	if len(out) > limit {
+		out = out[:limit]
+		next = encodeOffsetCursor(offset + limit)
+	}
+	writeJSON(w, 200, map[string]any{"audit": out, "nextCursor": next})
 }

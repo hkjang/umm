@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/webhook"
 )
 
 func (s *Server) publishSpaceEvent(r *http.Request, spaceID uuid.UUID, eventType string, resourceID uuid.UUID, payload any) {
@@ -25,6 +26,10 @@ func (s *Server) publishSpaceEvent(r *http.Request, spaceID uuid.UUID, eventType
 		slog.Warn("space event publish failed", "space_id", spaceID, "event_type", eventType, "error", err)
 	} else if tag.RowsAffected() != 1 {
 		slog.Warn("space event was not stored", "space_id", spaceID, "event_type", eventType)
+	} else if s.Webhooks != nil {
+		if queued := s.Webhooks.Enqueue(webhook.Event{Type: eventType, SpaceID: spaceID, ResourceID: resourceID, ActorID: p.User.ID, Data: payload}); !queued {
+			slog.Warn("webhook queue full", "space_id", spaceID, "event_type", eventType)
+		}
 	}
 }
 

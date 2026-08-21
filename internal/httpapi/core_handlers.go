@@ -241,20 +241,46 @@ func (s *Server) searchNotes(w http.ResponseWriter, r *http.Request) {
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
-		writeJSON(w, 200, map[string]any{"notes": []store.NoteSearchResult{}})
+		writeJSON(w, 200, map[string]any{"notes": []store.NoteSearchResult{}, "nextCursor": ""})
 		return
 	}
 	if utf8.RuneCountInString(query) > 200 {
 		writeError(w, 400, "검색어는 200자 이내로 입력해 주세요.")
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	results, err := s.Store.SearchNotes(r.Context(), principal(r).User.ID, query, limit)
+	offset, ok := decodeOffsetCursor(r.URL.Query().Get("cursor"))
+	if !ok {
+		writeError(w, 400, "검색 커서가 올바르지 않습니다.")
+		return
+	}
+	spaceID, ok := parseOptionalUUID(r.URL.Query().Get("spaceId"))
+	if !ok {
+		writeError(w, 400, "검색 공간 ID가 올바르지 않습니다.")
+		return
+	}
+	updatedFrom, ok := parseOptionalTime(r.URL.Query().Get("updatedFrom"))
+	if !ok {
+		writeError(w, 400, "검색 시작 시각은 RFC 3339 형식이어야 합니다.")
+		return
+	}
+	updatedTo, ok := parseOptionalTime(r.URL.Query().Get("updatedTo"))
+	if !ok {
+		writeError(w, 400, "검색 종료 시각은 RFC 3339 형식이어야 합니다.")
+		return
+	}
+	page, err := s.Store.SearchNotesHybrid(r.Context(), principal(r).User.ID, store.SearchOptions{
+		Query: query, SpaceID: spaceID, Kind: strings.TrimSpace(r.URL.Query().Get("kind")),
+		UpdatedFrom: updatedFrom, UpdatedTo: updatedTo, Offset: offset, Limit: parsePageLimit(r, 20, 50),
+	})
 	if err != nil {
 		writeError(w, 500, "메모 바로가기를 검색하지 못했습니다.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"notes": results})
+	next := ""
+	if page.HasMore {
+		next = encodeOffsetCursor(page.NextOffset)
+	}
+	writeJSON(w, 200, map[string]any{"notes": page.Notes, "nextCursor": next})
 }
 
 func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
@@ -308,7 +334,12 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 	updated, err := s.Store.UpdateNote(r.Context(), p.User.ID, n, body.AIExcluded)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, 409, "다른 위치에서 메모가 변경되었습니다. 새로고침 후 다시 시도해 주세요.")
+			latest, latestErr := s.Store.NoteByID(r.Context(), p.User.ID, noteID)
+			extra := map[string]any{"clientVersion": n.Version}
+			if latestErr == nil {
+				extra["latest"] = latest
+			}
+			writeProblem(w, r, 409, "note-version-conflict", "메모 버전 충돌", "다른 위치에서 메모가 변경되었습니다. 두 버전을 비교해 선택해 주세요.", extra)
 			return
 		}
 		writeError(w, 500, "생각을 저장하지 못했습니다.")

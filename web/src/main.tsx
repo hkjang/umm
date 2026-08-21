@@ -25,3 +25,7 @@ createRoot(document.getElementById('root')!).render(
     </BrowserRouter>
   </MantineProvider>,
 );
+
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/umm-sw.js').catch(() => undefined));
+}

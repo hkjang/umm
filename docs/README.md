@@ -2,6 +2,8 @@
 
 `umm`은 생각을 문서나 폴더로 정리하기 전에 공간에 먼저 붙이고, 연결하고, 밤사이 **Dream**으로 다시 발견하는 **Spatial Thought Memory** 플랫폼입니다.
 
+현재 문서 기준은 **v0.7.0**입니다. Today 리뷰, 하이브리드 검색·백링크, 댓글·멘션, 오프라인 동기화와 충돌 병합, 서명 웹훅, AI 평가, Prometheus/OpenTelemetry, master-key 회전과 공급망 증명을 포함합니다.
+
 ---
 
 ## 📚 공식 기술 문서 (PDF 다운로드 & 바로보기)
@@ -20,7 +22,7 @@
   - 무한 캔버스 조작, 포스트잇 단축키, 연관 생각, 인력(Gravity), 내보내기 가이드
 
 ### 2. 아키텍처 및 시스템 설계
-- 📄 **[실행 아키텍처 및 불변 조건 (PDF)](umm_architecture.pdf)** (`docs/umm_architecture.pdf`) · [MD](architecture.md)
+- 📄 **[실행 아키텍처 및 불변 조건 (PDF)](umm_architecture.pdf)** (`docs/umm_architecture.pdf`) · [MD](ARCHITECTURE.md)
   - 단일 이미지 오프라인 구조, PostgreSQL 이벤트 스트림, n-gram 의미 분석, Dream 파이프라인
 - 📄 **[보안 및 키 체계 (Markdown)](SECURITY.md)**
   - AES-256-GCM 봉투 암호화 및 Scoped Key 권한 모델
@@ -43,7 +45,7 @@
 
 ```bash
 # 1. 패키지 이미지 로드
-gzip -dc umm-v0.6.1.tar.gz | docker load
+gzip -dc umm-v0.7.0.tar.gz | docker load
 
 # 2. 필수 환경변수 4개로 컨테이너 실행
 docker run -d --name umm --restart unless-stopped \
@@ -52,7 +54,8 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-admin-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.6.1
+  umm:v0.7.0
 ```
 
 - **접속 주소**: `http://localhost:8080` (초기 관리자 계정: `admin`)
+- 선택 환경변수는 `ENCRYPTION_KEY_PREVIOUS`, `UMM_HTTP_ADDR`, 표준 `OTEL_EXPORTER_OTLP_*`입니다. 필수 환경변수는 네 개로 유지됩니다.

@@ -1,29 +1,36 @@
 import { Center, Loader } from '@mantine/core';
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './auth-context';
 import LoginPage from './pages/LoginPage';
 import AppLayout from './components/AppLayout';
-import CanvasPage from './pages/CanvasPage';
-import PersonalSettingsPage from './pages/PersonalSettingsPage';
-import DreamsPage from './pages/DreamsPage';
-import ApprovalsPage from './pages/ApprovalsPage';
-import AdminPage from './pages/AdminPage';
+
+const TodayPage = lazy(() => import('./pages/TodayPage'));
+const CanvasPage = lazy(() => import('./pages/CanvasPage'));
+const PersonalSettingsPage = lazy(() => import('./pages/PersonalSettingsPage'));
+const DreamsPage = lazy(() => import('./pages/DreamsPage'));
+const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
+
+const PageLoader = () => <Center h="100%" bg="#f5f2ea" role="status" aria-label="화면 불러오는 중"><Loader color="grape" /></Center>;
 
 export default function App() {
   const { user, loading } = useAuth();
   if (loading) return <Center h="100%" bg="#f5f2ea"><Loader color="grape" /></Center>;
   if (!user) return <LoginPage />;
   return (
-    <Routes>
+    <Suspense fallback={<PageLoader/>}><Routes>
       <Route element={<AppLayout />}>
-        <Route path="/" element={<CanvasPage />} />
+        <Route path="/" element={<Navigate to="/today" replace />} />
+        <Route path="/today" element={<TodayPage />} />
+        <Route path="/canvas" element={<CanvasPage />} />
         <Route path="/space/:spaceId" element={<CanvasPage />} />
         <Route path="/dreams" element={<DreamsPage />} />
         <Route path="/settings" element={<PersonalSettingsPage />} />
         <Route path="/approvals" element={<ApprovalsPage />} />
-        <Route path="/admin/*" element={user.role === 'admin' ? <AdminPage /> : <Navigate to="/" replace />} />
+        <Route path="/admin/*" element={user.role === 'admin' ? <AdminPage /> : <Navigate to="/today" replace />} />
       </Route>
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      <Route path="*" element={<Navigate to="/today" replace />} />
+    </Routes></Suspense>
   );
 }

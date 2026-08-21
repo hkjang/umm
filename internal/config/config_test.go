@@ -22,3 +22,29 @@ func TestParseKeyRejectsWeakLength(t *testing.T) {
 		t.Fatal("expected invalid key error")
 	}
 }
+
+func TestLoadUsesOptionalHTTPAddress(t *testing.T) {
+	t.Setenv("POSTGRES_DSN", "postgres://example/umm")
+	t.Setenv("BOOTSTRAP_ADMIN", "admin")
+	t.Setenv("BOOTSTRAP_ADMIN_PASSWORD", "test-password")
+	t.Setenv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef")
+	t.Setenv("UMM_HTTP_ADDR", "127.0.0.1:18081")
+	config, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.HTTPAddr != "127.0.0.1:18081" {
+		t.Fatalf("HTTPAddr = %q", config.HTTPAddr)
+	}
+}
+
+func TestLoadRejectsInvalidHTTPAddress(t *testing.T) {
+	t.Setenv("POSTGRES_DSN", "postgres://example/umm")
+	t.Setenv("BOOTSTRAP_ADMIN", "admin")
+	t.Setenv("BOOTSTRAP_ADMIN_PASSWORD", "test-password")
+	t.Setenv("ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef")
+	t.Setenv("UMM_HTTP_ADDR", "127.0.0.1")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid UMM_HTTP_ADDR was accepted")
+	}
+}

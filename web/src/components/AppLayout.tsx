@@ -1,14 +1,15 @@
-import { AppShell, Avatar, Burger, Button, Divider, Group, Indicator, Menu, NavLink as MantineNavLink, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
+import { AppShell, Avatar, Burger, Button, Divider, Group, Indicator, Menu, NavLink as MantineNavLink, Paper, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconAdjustments, IconArrowLeft, IconBell, IconCheckupList, IconLayoutDashboard, IconLogout, IconMoonStars, IconSettings, IconSparkles, IconUser } from '@tabler/icons-react';
+import { IconAdjustments, IconArrowLeft, IconBell, IconCalendarCheck, IconCheckupList, IconCloudOff, IconLayoutDashboard, IconLogout, IconMoonStars, IconRefresh, IconSettings, IconSparkles, IconUser } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth-context';
-import { api } from '../api';
+import { api, flushOfflineQueue, offlineQueueCount } from '../api';
 import QuickNavigator from './QuickNavigator';
 
 const links = [
-  { to: '/', label: 'My Space', icon: IconSparkles },
+  { to: '/today', label: '오늘의 리뷰', icon: IconCalendarCheck },
+  { to: '/canvas', label: 'My Space', icon: IconSparkles },
   { to: '/dreams', label: 'Dreams', icon: IconMoonStars },
   { to: '/approvals', label: '검토 · 승인', icon: IconCheckupList },
   { to: '/settings', label: '개인 설정', icon: IconAdjustments },
@@ -20,6 +21,7 @@ interface AppNotification {
   body: string;
   resourceType?: string;
   resourceId?: string;
+  resourceSpaceId?: string;
   readAt?: string;
 }
 
@@ -27,6 +29,7 @@ function notificationTarget(item: AppNotification) {
   if (!item.resourceId) return '';
   if (item.resourceType === 'dream') return `/dreams?focus=${encodeURIComponent(item.resourceId)}`;
   if (item.resourceType === 'space') return `/space/${encodeURIComponent(item.resourceId)}`;
+  if (item.resourceType === 'note' && item.resourceSpaceId) return `/space/${encodeURIComponent(item.resourceSpaceId)}?note=${encodeURIComponent(item.resourceId)}`;
   return '';
 }
 
@@ -36,9 +39,11 @@ export default function AppLayout() {
   const location = useLocation(); const navigate = useNavigate();
   const isAdmin = location.pathname.startsWith('/admin');
   const isLinkActive = (to: string) => to === '/'
-    ? location.pathname === '/' || location.pathname.startsWith('/space/')
+    ? location.pathname === '/'
+    : to === '/canvas' ? location.pathname === '/canvas' || location.pathname.startsWith('/space/')
     : location.pathname === to;
   const [notifications,setNotifications]=useState<AppNotification[]>([]);const [unread,setUnread]=useState(0);
+  const [online,setOnline]=useState(navigator.onLine);const [queued,setQueued]=useState(offlineQueueCount());const [syncing,setSyncing]=useState(false);
   const loadNotifications=()=>api<{notifications:AppNotification[];unread:number}>('/notifications',{silent:true}).then(v=>{setNotifications(v.notifications);setUnread(v.unread)}).catch(()=>undefined);
   const openNotification=async(item:AppNotification)=>{
     if(!item.readAt)await api(`/notifications/${item.id}/read`,{method:'POST',silent:true}).catch(()=>undefined);
@@ -47,6 +52,7 @@ export default function AppLayout() {
     if(target)navigate(target);
   };
   useEffect(()=>{void loadNotifications();const timer=window.setInterval(loadNotifications,60000);return()=>window.clearInterval(timer)},[]);
+  useEffect(()=>{const update=()=>{setOnline(navigator.onLine);setQueued(offlineQueueCount())};const sync=async()=>{update();if(!navigator.onLine)return;setSyncing(true);try{const result=await flushOfflineQueue();setQueued(result.remaining)}finally{setSyncing(false)}};const queuedEvent=()=>setQueued(offlineQueueCount());window.addEventListener('online',sync);window.addEventListener('offline',update);window.addEventListener('umm:offline-queue',queuedEvent);if(navigator.onLine&&offlineQueueCount()>0)void sync();return()=>{window.removeEventListener('online',sync);window.removeEventListener('offline',update);window.removeEventListener('umm:offline-queue',queuedEvent)}},[]);
   return <AppShell className="warm-shell" header={{ height: isAdmin ? 0 : 66 }} navbar={{ width: 238, breakpoint: 'sm', collapsed: { mobile: !opened, desktop: isAdmin } }} padding={0}>
     {!isAdmin && <AppShell.Header className="app-header"><Group h="100%" px={{ base: 'md', sm: 'lg' }} justify="space-between">
       <Group><Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="메뉴 열기" /><UnstyledButton onClick={() => navigate('/')}><Group gap="sm"><div className="brand-mark">um</div><Text fw={720} fz="lg" visibleFrom="xs">{meta?.serviceName || 'umm'}</Text></Group></UnstyledButton></Group>
@@ -63,6 +69,7 @@ export default function AppLayout() {
       {user?.role === 'admin' && <><Divider my="sm" /><Text size="xs" tt="uppercase" fw={700} c="dimmed" px="sm">Service</Text><MantineNavLink component={NavLink} to="/admin/overview" label="서비스 관리자" leftSection={<IconLayoutDashboard size={19} />} onClick={close} /></>}
     </Stack></AppShell.Section><AppShell.Section><Text size="xs" c="dimmed" px="sm">정리는 나중에.<br />생각부터 붙입니다.</Text></AppShell.Section></AppShell.Navbar>
     <AppShell.Main h="100%"><Outlet /></AppShell.Main>
+    {(!online||queued>0)&&<Paper className="network-status" role="status" aria-live="polite" shadow="md" radius="xl" px="md" py="xs"><Group gap="xs" wrap="nowrap">{online?<IconRefresh className={syncing?'spin':''} size={17}/>:<IconCloudOff size={17}/>}<Text size="sm" fw={650}>{online?(syncing?'오프라인 변경 동기화 중':`${queued}개 변경이 연결을 기다리는 중`):`오프라인 · ${queued}개 변경을 안전하게 보관 중`}</Text>{online&&queued>0&&!syncing&&<Button size="compact-xs" variant="subtle" onClick={async()=>{setSyncing(true);try{const result=await flushOfflineQueue();setQueued(result.remaining)}finally{setSyncing(false)}}}>지금 동기화</Button>}</Group></Paper>}
     {!isAdmin && <nav className="mobile-tabs" aria-label="모바일 주 메뉴">{links.slice(0,3).map(({to,label,icon:Icon}) => <Button key={to} component={NavLink} to={to} variant="subtle" color={isLinkActive(to)?'grape':'gray'} aria-current={isLinkActive(to) ? 'page' : undefined} px="xs" leftSection={<Icon size={19} />}>{label.split(' ')[0]}</Button>)}</nav>}
     {isAdmin && <Button className="admin-back-button" pos="fixed" top={16} left={16} style={{zIndex:80}} variant="white" color="dark" leftSection={<IconArrowLeft size={18}/>} onClick={() => navigate('/')}>내 공간</Button>}
     {isAdmin && <QuickNavigator admin/>}

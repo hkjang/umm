@@ -18,12 +18,13 @@ type preferences struct {
 	Theme              string     `json:"theme"`
 	Locale             string     `json:"locale"`
 	EdgeStyle          string     `json:"edge_style"`
+	ReviewDigest       bool       `json:"review_digest"`
 }
 
 func (s *Server) getPreferences(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	var v preferences
-	err := s.Store.Pool.QueryRow(r.Context(), `SELECT dream_enabled,dream_frequency,dream_style,dream_notifications,include_old_notes,dream_pause_until,theme,locale,edge_style FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.DreamEnabled, &v.DreamFrequency, &v.DreamStyle, &v.DreamNotifications, &v.IncludeOldNotes, &v.DreamPauseUntil, &v.Theme, &v.Locale, &v.EdgeStyle)
+	err := s.Store.Pool.QueryRow(r.Context(), `SELECT dream_enabled,dream_frequency,dream_style,dream_notifications,include_old_notes,dream_pause_until,theme,locale,edge_style,review_digest FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.DreamEnabled, &v.DreamFrequency, &v.DreamStyle, &v.DreamNotifications, &v.IncludeOldNotes, &v.DreamPauseUntil, &v.Theme, &v.Locale, &v.EdgeStyle, &v.ReviewDigest)
 	if err != nil {
 		writeError(w, 500, "개인 설정을 불러오지 못했습니다.")
 		return
@@ -34,6 +35,7 @@ func (s *Server) getPreferences(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	var v preferences
+	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT review_digest FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.ReviewDigest)
 	if decodeJSON(w, r, &v) != nil {
 		writeError(w, 400, "개인 설정 형식이 올바르지 않습니다.")
 		return
@@ -67,7 +69,7 @@ func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
 	if !dreamCfg.AllowUserDisable {
 		v.DreamEnabled = true
 	}
-	_, err := s.Store.Pool.Exec(r.Context(), `UPDATE user_preferences SET dream_enabled=$2,dream_frequency=$3,dream_style=$4,dream_notifications=$5,include_old_notes=$6,dream_pause_until=$7,theme=$8,locale=$9,edge_style=$10,updated_at=now() WHERE user_id=$1`, p.User.ID, v.DreamEnabled, v.DreamFrequency, v.DreamStyle, v.DreamNotifications, v.IncludeOldNotes, v.DreamPauseUntil, v.Theme, v.Locale, v.EdgeStyle)
+	_, err := s.Store.Pool.Exec(r.Context(), `UPDATE user_preferences SET dream_enabled=$2,dream_frequency=$3,dream_style=$4,dream_notifications=$5,include_old_notes=$6,dream_pause_until=$7,theme=$8,locale=$9,edge_style=$10,review_digest=$11,updated_at=now() WHERE user_id=$1`, p.User.ID, v.DreamEnabled, v.DreamFrequency, v.DreamStyle, v.DreamNotifications, v.IncludeOldNotes, v.DreamPauseUntil, v.Theme, v.Locale, v.EdgeStyle, v.ReviewDigest)
 	if err != nil {
 		writeError(w, 500, "개인 설정을 저장하지 못했습니다.")
 		return
@@ -204,12 +206,22 @@ func (s *Server) dreamHistory(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "dreams:read") {
 		return
 	}
-	v, err := s.Dreams.History(r.Context(), principal(r).User.ID)
+	offset, ok := decodeOffsetCursor(r.URL.Query().Get("cursor"))
+	if !ok {
+		writeError(w, 400, "Dream 커서가 올바르지 않습니다.")
+		return
+	}
+	limit := parsePageLimit(r, 30, 100)
+	v, hasMore, err := s.Dreams.HistoryPage(r.Context(), principal(r).User.ID, limit, offset)
 	if err != nil {
 		writeError(w, 500, "Dream 기록을 불러오지 못했습니다.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"dreams": v})
+	next := ""
+	if hasMore {
+		next = encodeOffsetCursor(offset + limit)
+	}
+	writeJSON(w, 200, map[string]any{"dreams": v, "nextCursor": next})
 }
 func (s *Server) dreamFeedback(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "dreams:read") {
@@ -256,6 +268,7 @@ func (s *Server) acceptDream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "dream.accept", "dream", id.String(), map[string]any{"noteId": note.ID, "spaceId": note.SpaceID})
+	s.publishSpaceEvent(r, note.SpaceID, "dream.accepted", id, map[string]any{"dreamId": id, "note": note})
 	s.publishSpaceEvent(r, note.SpaceID, "note.created", note.ID, note)
 	writeJSON(w, http.StatusCreated, note)
 }

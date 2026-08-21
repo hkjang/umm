@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, type Meta, type User } from './api';
+import { api, setOfflineQueueOwner, type Meta, type User } from './api';
 
 interface AuthContextValue {
   meta?: Meta;
@@ -21,12 +21,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       api<Meta>('/meta'),
       api<User>('/me', { silent: true }).catch(() => undefined),
     ]);
+    setOfflineQueueOwner(userResult?.id);
     setMeta(metaResult);
     setUser(userResult);
   };
 
   useEffect(() => { refresh().finally(() => setLoading(false)); }, []);
-  const logout = async () => { await api('/auth/logout', { method: 'POST' }); setUser(undefined); };
+  const logout = async () => { await api('/auth/logout', { method: 'POST' }); setOfflineQueueOwner(undefined); setUser(undefined); };
   const value = useMemo(() => ({ meta, user, loading, refresh, logout }), [meta, user, loading]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

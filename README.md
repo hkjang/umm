@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.6.1-success?style=flat-square" alt="v0.6.1" />
+  <img src="https://img.shields.io/badge/Release-v0.7.0-success?style=flat-square" alt="v0.7.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -22,6 +22,16 @@
 [**🎬 3분 서비스 소개 영상 (MP4)**](docs/umm_overview.mp4) · [**📕 종합 기술 매뉴얼 완본 (PDF)**](docs/umm_complete_manual.pdf) · [**🌐 인터랙티브 웹 쇼케이스**](docs/index.html) · [**📚 문서 허브**](docs/README.md)
 
 </div>
+
+---
+
+## v0.7.0 — 생각을 다시 만나고, 안전하게 협업하기
+
+- **오늘의 리뷰**: 다시 볼 생각, 연결되지 않은 생각, 대기 중인 Dream, 최근 댓글을 한 화면에서 검토합니다.
+- **찾기와 맥락**: 로컬 의미 벡터와 키워드를 결합한 하이브리드 검색, 필터, 백링크, 연관 생각으로 탐색합니다.
+- **협업 신뢰성**: 댓글·멘션·딥링크 알림, SSE, 오프라인 변경 큐, 멱등 재전송, 시각적 버전 충돌 병합을 지원합니다.
+- **자동화와 운영**: SSRF 방어와 HMAC-SHA256 서명을 갖춘 웹훅, Prometheus 지표, 선택적 OpenTelemetry OTLP trace, AI 평가 세트를 제공합니다.
+- **보안과 복구**: 무중단 master-key keyring 회전, RFC 9457 오류, 공급망 SBOM·provenance attestation, CI 백업 복구 리허설을 포함합니다.
 
 ---
 
@@ -65,8 +75,8 @@
 ```
       ┌─────────────────────────────────────────────────────────────┐
       │               Browser (React 19 + Mantine 9)                │
-      │        - Spatial Infinite Canvas (React Flow)               │
-      │        - Optimistic Concurrency & Drag/Resize Undo/Redo     │
+      │        - Today Review + Spatial Canvas + PWA Offline Queue  │
+      │        - Comments, Mentions & Visual Conflict Resolution    │
       │        - Real-time Space SSE Event Synchronization          │
       └──────────────┬──────────────────────────────▲───────────────┘
                      │ REST API (/api/v1)           │ Server-Sent Events
@@ -74,9 +84,9 @@
       ┌──────────────▼──────────────────────────────┴───────────────┐
       │                    Go Application Daemon                    │
       │  - HTTP Router (chi) & Embedded Static Bundle               │
-      │  - Optimistic Concurrency & N-gram Semantic Clustering      │
+      │  - Hybrid Search, Backlinks & N-gram Semantic Clustering    │
       │  - Dream Scheduler & Distributed Worker (SKIP LOCKED)       │
-      │  - AES-256-GCM Envelope Encryption (Key Rotation)          │
+      │  - Signed Webhooks, Metrics, Traces & AES-GCM Keyring       │
       └──────────────┬──────────────────────────────┬───────────────┘
                      │                              │ OpenAI Compatible
                      │                              ▼
@@ -88,9 +98,9 @@
       │                     PostgreSQL Database                     │
       │  - spaces / notes / note_edges (캔버스 데이터)              │
       │  - note_revisions / note_embeddings (버전 & 연관 분석)       │
-      │  - space_members / space_events (실시간 협업)               │
-      │  - dream_jobs / dream_notes (야간 비동기 큐 & 피드백)        │
-      │  - approval_requests / audit_logs (불변 거버넌스)           │
+      │  - comments / mentions / events (실시간 협업)               │
+      │  - dream_jobs / ai_eval_runs (생성·평가·피드백)             │
+      │  - webhooks / audit_logs (자동화·불변 거버넌스)             │
       └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -106,7 +116,7 @@
 | **👤 사용자 실무 가이드** | 무한 캔버스 조작, 포스트잇 단축키, 연관 생각, 내보내기 | [**PDF 바로보기**](docs/umm_user_guide.pdf) · [MD](docs/user-guide.md) |
 | **🛠️ 관리자 운영 가이드** | Keycloak OIDC SSO, 256K Dream Layer, AI Gateway, 감사 로그 | [**PDF 바로보기**](docs/umm_admin_guide.pdf) · [MD](docs/admin-guide.md) |
 | **🔌 API & MCP 가이드** | REST API 명세, SSE 실시간 스트림, AI MCP JSON-RPC | [**PDF 바로보기**](docs/umm_api_guide.pdf) · [MD](docs/api-guide.md) |
-| **🏗️ 실행 아키텍처** | 단일 이미지 오프라인 구조, PostgreSQL 이벤트 스트림 | [**PDF 바로보기**](docs/umm_architecture.pdf) · [MD](docs/architecture.md) |
+| **🏗️ 실행 아키텍처** | 단일 이미지 오프라인 구조, PostgreSQL 이벤트 스트림 | [**PDF 바로보기**](docs/umm_architecture.pdf) · [MD](docs/ARCHITECTURE.md) |
 | **🌐 웹 쇼케이스** | 인터랙티브 깃허브 홍보 및 기능 둘러보기 웹페이지 | [**쇼케이스 열기**](docs/index.html) |
 | **📚 문서 허브** | 전체 공식 기술 문서 목차 및 시작 가이드 | [**문서 허브 열기**](docs/README.md) |
 
@@ -123,7 +133,8 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.6.1
+  umm:v0.7.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)
+- 선택 환경변수: `ENCRYPTION_KEY_PREVIOUS`(키 회전), `UMM_HTTP_ADDR`(바인드 주소), 표준 `OTEL_EXPORTER_OTLP_*`(trace 전송). 필수 입력은 위 네 개로 유지됩니다.
