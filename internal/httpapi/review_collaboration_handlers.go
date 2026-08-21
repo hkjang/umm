@@ -2,12 +2,13 @@ package httpapi
 
 import (
 	"encoding/base64"
+	"errors"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
@@ -15,8 +16,6 @@ import (
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
 )
-
-var mentionPattern = regexp.MustCompile(`(?:^|[[:space:]([{])@([[:alnum:]_.-]{1,64})`)
 
 func encodeOffsetCursor(offset int) string {
 	if offset <= 0 {
@@ -156,20 +155,39 @@ func (s *Server) noteBacklinks(w http.ResponseWriter, r *http.Request) {
 }
 
 func mentionedUsernames(body string) []string {
-	matches := mentionPattern.FindAllStringSubmatch(body, -1)
+	runes := []rune(body)
 	seen := map[string]bool{}
 	out := []string{}
-	for _, match := range matches {
-		if len(match) < 2 {
+	for index := 0; index < len(runes); index++ {
+		if runes[index] != '@' || (index > 0 && !unicode.IsSpace(runes[index-1]) && !strings.ContainsRune("([{", runes[index-1])) {
 			continue
 		}
-		name := strings.ToLower(match[1])
+		end := index + 1
+		for end < len(runes) && !unicode.IsSpace(runes[end]) && !strings.ContainsRune("()[]{}<>", runes[end]) {
+			end++
+		}
+		name := strings.ToLower(strings.TrimRight(string(runes[index+1:end]), ".,;:!?…，。！？；："))
+		if name == "" {
+			continue
+		}
 		if !seen[name] {
 			seen[name] = true
 			out = append(out, name)
 		}
+		index = end - 1
 	}
 	return out
+}
+
+func commentCreateError(err error) (int, string) {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return http.StatusNotFound, "댓글을 남길 수 있는 생각을 찾지 못했습니다."
+	case errors.Is(err, store.ErrInvalidParentComment):
+		return http.StatusBadRequest, "답글을 연결할 댓글을 찾지 못했습니다."
+	default:
+		return http.StatusInternalServerError, "댓글을 저장하지 못했습니다."
+	}
 }
 
 func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
@@ -212,12 +230,11 @@ func (s *Server) createComment(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	comment, _, err := s.Store.CreateComment(r.Context(), p.User.ID, noteID, body.ParentID, body.Body, mentionedUsernames(body.Body))
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			writeError(w, http.StatusNotFound, "댓글을 남길 수 있는 생각을 찾지 못했습니다.")
-			return
+		status, message := commentCreateError(err)
+		if status >= http.StatusInternalServerError {
+			slog.Warn("comment create failed", "note_id", noteID, "user_id", p.User.ID, "error", err)
 		}
-		slog.Warn("comment create failed", "note_id", noteID, "user_id", p.User.ID, "error", err)
-		writeError(w, http.StatusBadRequest, "댓글을 저장하지 못했습니다.")
+		writeError(w, status, message)
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "comment.create", "comment", comment.ID.String(), map[string]any{"noteId": noteID})

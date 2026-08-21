@@ -111,6 +111,8 @@ type Comment struct {
 // allowing an old or deep-body match to compete on relevance.
 const hybridLexicalCandidateLimit = 500
 
+var ErrInvalidParentComment = errors.New("invalid parent comment")
+
 func normalized(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
@@ -524,8 +526,11 @@ func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, par
 	}
 	if parentID != nil {
 		var valid bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM note_comments WHERE id=$1 AND note_id=$2 AND deleted_at IS NULL)`, parentID, noteID).Scan(&valid); err != nil || !valid {
-			return Comment{}, uuid.Nil, errors.New("invalid parent comment")
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM note_comments WHERE id=$1 AND note_id=$2 AND deleted_at IS NULL)`, parentID, noteID).Scan(&valid); err != nil {
+			return Comment{}, uuid.Nil, err
+		}
+		if !valid {
+			return Comment{}, uuid.Nil, ErrInvalidParentComment
 		}
 	}
 	var commentID uuid.UUID

@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"errors"
+	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"strings"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/store"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestOpaqueOffsetCursorRoundTripAndValidation(t *testing.T) {
@@ -30,6 +33,34 @@ func TestMentionParsingDeduplicatesCaseInsensitively(t *testing.T) {
 	want := []string{"alice", "bob"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("mentions = %#v, want %#v", got, want)
+	}
+}
+
+func TestMentionParsingSupportsOIDCAndUnicodeUsernames(t *testing.T) {
+	got := mentionedUsernames("@alice@example.com, 확인해 주세요. (@김민수) @δοκιμή+team")
+	want := []string{"alice@example.com", "김민수", "δοκιμή+team"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("mentions = %#v, want %#v", got, want)
+	}
+}
+
+func TestCommentCreateErrorsPreserveRetryableFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "missing note", err: pgx.ErrNoRows, want: http.StatusNotFound},
+		{name: "invalid parent", err: store.ErrInvalidParentComment, want: http.StatusBadRequest},
+		{name: "database failure", err: errors.New("database unavailable"), want: http.StatusInternalServerError},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			status, _ := commentCreateError(test.err)
+			if status != test.want {
+				t.Fatalf("status = %d, want %d", status, test.want)
+			}
+		})
 	}
 }
 
