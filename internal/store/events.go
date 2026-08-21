@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,28 @@ type SpaceEvent struct {
 	ActorID    *uuid.UUID      `json:"actorId"`
 	Payload    json.RawMessage `json:"payload"`
 	CreatedAt  time.Time       `json:"createdAt"`
+}
+
+// IdempotencyReservation identifies the pending HTTP response that must be
+// completed in the same transaction as its domain mutation.
+type IdempotencyReservation struct {
+	UserID    uuid.UUID
+	Key       string
+	Method    string
+	Path      string
+	CreatedAt time.Time
+	Status    int
+}
+
+type idempotencyReservationContextKey struct{}
+
+func WithIdempotencyReservation(ctx context.Context, reservation IdempotencyReservation) context.Context {
+	return context.WithValue(ctx, idempotencyReservationContextKey{}, reservation)
+}
+
+func idempotencyReservationFrom(ctx context.Context) (IdempotencyReservation, bool) {
+	reservation, ok := ctx.Value(idempotencyReservationContextKey{}).(IdempotencyReservation)
+	return reservation, ok
 }
 
 // SpaceEvents reads one bounded event batch and checks membership in the same
@@ -71,9 +94,10 @@ func (s *Store) SpaceEvents(ctx context.Context, userID, spaceID uuid.UUID, afte
 	return events, allowed, nil
 }
 
-// AppendSpaceEvent writes the collaboration log and every currently eligible
-// webhook delivery into the caller's mutation transaction. Callers must not
-// commit their domain change when this returns an error.
+// AppendSpaceEvent writes the collaboration log, every currently eligible
+// webhook delivery and any HTTP idempotency result into the caller's mutation
+// transaction. Callers must not commit their domain change when this returns an
+// error. Supported idempotent routes return this same payload to the client.
 func (s *Store) AppendSpaceEvent(ctx context.Context, tx pgx.Tx, actorID, spaceID uuid.UUID, eventType string, resourceID uuid.UUID, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -103,5 +127,29 @@ func (s *Store) AppendSpaceEvent(ctx context.Context, tx pgx.Tx, actorID, spaceI
 		    SELECT 1 FROM spaces sp LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=ws.owner_id
 		    WHERE sp.id=$1 AND (sp.owner_id=ws.owner_id OR sm.user_id=ws.owner_id))
 		ON CONFLICT(subscription_id,event_id) DO NOTHING`, spaceID, event.ID, eventType, json.RawMessage(eventRaw))
-	return err
+	if err != nil {
+		return err
+	}
+	reservation, ok := idempotencyReservationFrom(ctx)
+	if !ok {
+		return nil
+	}
+	var responseBody any
+	if reservation.Status != 204 {
+		responseBody = json.RawMessage(raw)
+	}
+	command, err := tx.Exec(ctx, `
+		UPDATE idempotency_records
+		SET state='completed',response_status=$6,response_body=$7,expires_at=now()+interval '24 hours'
+		WHERE user_id=$1 AND idempotency_key=$2 AND method=$3 AND path=$4
+		  AND state='pending' AND created_at=$5`,
+		reservation.UserID, reservation.Key, reservation.Method, reservation.Path,
+		reservation.CreatedAt, reservation.Status, responseBody)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf("idempotency reservation is no longer active")
+	}
+	return nil
 }

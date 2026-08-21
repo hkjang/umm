@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,9 +15,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hkjang/umm/internal/auth"
+	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -24,6 +27,35 @@ var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{8,128}$`)
 var sensitiveCredentialPathPattern = regexp.MustCompile(`^/api/v1/(?:api-keys(?:/[^/]+/rotate)?|webhooks(?:/[^/]+/rotate-secret)?)$`)
 
 const idempotencyPendingLease = 2 * time.Minute
+const idempotencyLeaseRefresh = 30 * time.Second
+
+func idempotencySupported(method, path string) bool {
+	if !strings.HasPrefix(path, "/api/v1/") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(path, "/api/v1/"), "/")
+	switch method {
+	case http.MethodPost:
+		return len(parts) == 3 && parts[1] != "" && ((parts[0] == "spaces" && (parts[2] == "notes" || parts[2] == "edges")) || (parts[0] == "notes" && parts[2] == "comments"))
+	case http.MethodPut:
+		return (len(parts) == 2 && parts[0] == "notes" && parts[1] != "") || (len(parts) == 3 && parts[0] == "comments" && parts[1] != "" && parts[2] == "resolve")
+	case http.MethodDelete:
+		return len(parts) == 2 && parts[1] != "" && (parts[0] == "notes" || parts[0] == "comments")
+	default:
+		return false
+	}
+}
+
+func idempotencySuccessStatus(method string) int {
+	switch method {
+	case http.MethodPost:
+		return http.StatusCreated
+	case http.MethodDelete:
+		return http.StatusNoContent
+	default:
+		return http.StatusOK
+	}
+}
 
 func idempotencyRequestIdentity(r *http.Request, body []byte) string {
 	digest := sha256.New()
@@ -87,10 +119,10 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 	})
 }
 
-// idempotency serializes reservations with a per-user advisory lock, then
-// records the exact successful JSON response for 24 hours. Pending reservations
-// use a short lease: this blocks concurrent duplicates while allowing a retry
-// to recover automatically when the process stops before the handler runs.
+// idempotency serializes supported Canvas mutations with a per-user advisory
+// lock. The store completes each successful response in the domain transaction;
+// a renewable pending lease blocks concurrent duplicates while allowing a retry
+// to recover automatically when the process stops before the mutation begins.
 func (s *Server) idempotency(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
@@ -100,6 +132,10 @@ func (s *Server) idempotency(next http.Handler) http.Handler {
 		}
 		if r.Method == http.MethodPost && sensitiveCredentialPathPattern.MatchString(r.URL.EscapedPath()) {
 			writeProblem(w, r, http.StatusBadRequest, "idempotency-not-supported", "재시도 키 사용 불가", "한 번만 공개되는 자격 증명 응답에는 Idempotency-Key를 사용할 수 없습니다.", nil)
+			return
+		}
+		if !idempotencySupported(r.Method, r.URL.EscapedPath()) {
+			writeProblem(w, r, http.StatusBadRequest, "idempotency-not-supported", "재시도 키 사용 불가", "Idempotency-Key는 오프라인 Canvas 변경 endpoint에서만 사용할 수 있습니다.", nil)
 			return
 		}
 		if !idempotencyKeyPattern.MatchString(key) {
@@ -185,27 +221,43 @@ func (s *Server) idempotency(next http.Handler) http.Handler {
 			writeError(w, http.StatusServiceUnavailable, "재시도 요청을 확정하지 못했습니다.")
 			return
 		}
+		reservation := store.IdempotencyReservation{
+			UserID: p.User.ID, Key: key, Method: r.Method, Path: requestIdentity,
+			CreatedAt: reservationCreatedAt, Status: idempotencySuccessStatus(r.Method),
+		}
+		r = r.WithContext(store.WithIdempotencyReservation(r.Context(), reservation))
+		stopLease := s.maintainIdempotencyLease(reservation)
+		defer stopLease()
 
 		recorder := httptest.NewRecorder()
 		next.ServeHTTP(recorder, r)
+		stopLease()
 		result := recorder.Result()
 		responseBody := bytes.Clone(recorder.Body.Bytes())
 		recordable := result.StatusCode >= 200 && result.StatusCode < 300 && len(responseBody) <= 1<<20
-		var raw any
 		if recordable && len(responseBody) > 0 {
 			var body any
 			recordable = json.Unmarshal(responseBody, &body) == nil
-			if recordable {
-				raw = json.RawMessage(responseBody)
-			}
 		}
 		if recordable {
-			command, recordErr := s.Store.Pool.Exec(r.Context(), `UPDATE idempotency_records SET state='completed',response_status=$5,response_body=$6,expires_at=now()+interval '24 hours' WHERE user_id=$1 AND idempotency_key=$2 AND method=$3 AND path=$4 AND state='pending' AND created_at=$7`, p.User.ID, key, r.Method, requestIdentity, result.StatusCode, raw, reservationCreatedAt)
-			if recordErr != nil || command.RowsAffected() != 1 {
-				slog.Warn("idempotency result remained pending", "user_id", p.User.ID, "path", r.URL.EscapedPath(), "error", recordErr)
+			verifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			var persistedStatus int
+			var persistedBody []byte
+			verifyErr := s.Store.Pool.QueryRow(verifyCtx, `SELECT response_status,response_body FROM idempotency_records WHERE user_id=$1 AND idempotency_key=$2 AND method=$3 AND path=$4 AND state='completed' AND created_at=$5 AND expires_at>now()`, p.User.ID, key, r.Method, requestIdentity, reservationCreatedAt).Scan(&persistedStatus, &persistedBody)
+			cancel()
+			if verifyErr != nil || persistedStatus != result.StatusCode {
+				slog.Error("atomic idempotency completion unavailable", "user_id", p.User.ID, "path", r.URL.EscapedPath(), "error", verifyErr)
+				writeError(w, http.StatusServiceUnavailable, "변경은 처리되었지만 안전한 재시도 결과를 확인하지 못했습니다. 같은 키로 다시 시도해 주세요.")
+				return
 			}
-		} else if _, cleanupErr := s.Store.Pool.Exec(r.Context(), `DELETE FROM idempotency_records WHERE user_id=$1 AND idempotency_key=$2 AND method=$3 AND path=$4 AND state='pending' AND created_at=$5`, p.User.ID, key, r.Method, requestIdentity, reservationCreatedAt); cleanupErr != nil {
-			slog.Warn("idempotency pending reservation cleanup failed", "user_id", p.User.ID, "path", r.URL.EscapedPath(), "error", cleanupErr)
+			responseBody = persistedBody
+		} else {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, cleanupErr := s.Store.Pool.Exec(cleanupCtx, `DELETE FROM idempotency_records WHERE user_id=$1 AND idempotency_key=$2 AND method=$3 AND path=$4 AND state='pending' AND created_at=$5`, p.User.ID, key, r.Method, requestIdentity, reservationCreatedAt)
+			cancel()
+			if cleanupErr != nil {
+				slog.Warn("idempotency pending reservation cleanup failed", "user_id", p.User.ID, "path", r.URL.EscapedPath(), "error", cleanupErr)
+			}
 		}
 		for header, values := range result.Header {
 			for _, value := range values {
@@ -215,4 +267,42 @@ func (s *Server) idempotency(next http.Handler) http.Handler {
 		w.WriteHeader(result.StatusCode)
 		_, _ = w.Write(responseBody)
 	})
+}
+
+func (s *Server) maintainIdempotencyLease(reservation store.IdempotencyReservation) func() {
+	return s.maintainIdempotencyLeaseEvery(reservation, idempotencyLeaseRefresh)
+}
+
+func (s *Server) maintainIdempotencyLeaseEvery(reservation store.IdempotencyReservation, refreshInterval time.Duration) func() {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(refreshInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				command, err := s.Store.Pool.Exec(ctx, `UPDATE idempotency_records SET expires_at=now()+$6*interval '1 second' WHERE user_id=$1 AND idempotency_key=$2 AND method=$3 AND path=$4 AND state='pending' AND created_at=$5`, reservation.UserID, reservation.Key, reservation.Method, reservation.Path, reservation.CreatedAt, idempotencyPendingLease.Seconds())
+				cancel()
+				if err != nil {
+					slog.Warn("idempotency lease refresh failed", "user_id", reservation.UserID, "path", reservation.Path, "error", err)
+					continue
+				}
+				if command.RowsAffected() == 0 {
+					return
+				}
+			}
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(stop)
+			<-done
+		})
+	}
 }

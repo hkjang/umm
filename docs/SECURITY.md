@@ -34,7 +34,7 @@ User API/MCP key (one-time plaintext display)
 - Export: 관리자가 `export` 검토를 켠 경우 승인 후 24시간 동안만 허용
 - Admin secret: API 응답에서 항상 마스킹, 감사 로그에 원문 미기록
 - Browser write: `Origin`과 `Sec-Fetch-Site`를 확인해 로그인과 인증된 변경 요청의 cross-site 전송 차단
-- Offline retry: 사용자·키별 PostgreSQL advisory lock, 요청 fingerprint 기반 2분 pending lease와 24시간 성공 응답 기록으로 `Idempotency-Key` 동시 중복 및 crash 고착 방지
+- Offline retry: atomic Canvas mutation에 한정한 `Idempotency-Key`, 사용자·키별 advisory lock, 실행 중 갱신되는 2분 pending lease, 도메인/SSE/outbox/응답 원자 커밋과 24시간 성공 replay로 동시 중복·post-commit 기록 유실·crash 고착 방지
 - Aggregate scope: `notes:read`만 가진 API key의 Today 응답에서는 `dreams:read` 데이터와 개수를 제거해 집계 endpoint를 통한 scope 우회를 차단
 - One-time secrets: API key와 webhook signing key 생성·회전 응답은 멱등 캐시 대상에서 제외해 평문 자격 증명을 PostgreSQL에 남기지 않음
 

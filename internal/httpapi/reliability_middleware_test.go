@@ -96,6 +96,32 @@ func TestIdempotencyKeyPattern(t *testing.T) {
 	}
 }
 
+func TestIdempotencyIsLimitedToAtomicCanvasMutations(t *testing.T) {
+	for _, request := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/spaces/space-id/notes"},
+		{http.MethodPost, "/api/v1/spaces/space-id/edges"},
+		{http.MethodPost, "/api/v1/notes/note-id/comments"},
+		{http.MethodPut, "/api/v1/notes/note-id"},
+		{http.MethodPut, "/api/v1/comments/comment-id/resolve"},
+		{http.MethodDelete, "/api/v1/notes/note-id"},
+		{http.MethodDelete, "/api/v1/comments/comment-id"},
+	} {
+		if !idempotencySupported(request.method, request.path) {
+			t.Errorf("supported mutation rejected: %s %s", request.method, request.path)
+		}
+	}
+	for _, request := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/ai/assist"},
+		{http.MethodPost, "/api/v1/dreams/id/regenerate"},
+		{http.MethodPost, "/api/v1/admin/ai-evals/id/run"},
+		{http.MethodPost, "/api/v1/api-keys"},
+	} {
+		if idempotencySupported(request.method, request.path) {
+			t.Errorf("non-atomic or long mutation accepted: %s %s", request.method, request.path)
+		}
+	}
+}
+
 func TestSensitiveCredentialPathsCannotBeResponseCached(t *testing.T) {
 	for _, path := range []string{
 		"/api/v1/api-keys",

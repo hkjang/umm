@@ -83,7 +83,7 @@ X-Umm-Signature-256 = "sha256=" + hex(HMAC-SHA256(secret, signed))
 
 ### 안전한 재시도와 오류
 
-생성·변경 요청에 8~128자의 `Idempotency-Key`를 보내면 같은 사용자와 키의 성공 응답을 24시간 재생합니다. 서버는 method·경로·query·본문 fingerprint가 같은 요청만 재생하며, 다른 요청에 키를 재사용하면 409입니다. 처리 중 예약은 2분 lease로 동시 실행을 막고, 아직 처리 중이면 `Retry-After`가 포함된 425를 반환합니다. 프로세스가 handler 실행 전에 중단되면 lease 만료 후 같은 요청이 예약을 자동 재획득하므로 24시간 고착되지 않습니다. 오프라인 클라이언트는 한 논리 작업에 같은 키를 유지하고 `Retry-After` 이후 다시 시도해야 합니다. API key와 웹훅 서명 key의 생성·회전처럼 비밀을 한 번만 공개하는 요청은 평문 응답을 멱등 캐시에 남기지 않도록 `Idempotency-Key`를 거부합니다.
+Canvas의 메모·연결·댓글 생성/수정/삭제 요청에 8~128자의 `Idempotency-Key`를 보내면 같은 사용자와 키의 성공 응답을 24시간 재생합니다. 서버는 method·경로·query·본문 fingerprint가 같은 요청만 재생하며, 다른 요청에 키를 재사용하면 409입니다. 처리 중 2분 lease는 handler가 살아 있는 동안 갱신되고, 아직 처리 중이면 `Retry-After`가 포함된 425를 반환합니다. 도메인 변경·SSE·webhook outbox·멱등 성공 응답은 같은 PostgreSQL 트랜잭션으로 확정되므로 성공 응답 기록 실패가 mutation 중복을 만들지 않습니다. handler 실행 전 프로세스가 중단되면 lease 만료 후 같은 요청이 예약을 자동 재획득합니다. 오프라인 클라이언트는 한 논리 작업에 같은 키를 유지하고 `Retry-After` 이후 다시 시도해야 합니다. 장시간 AI 요청과 API key·웹훅 서명 key처럼 비밀을 한 번만 공개하는 요청은 `Idempotency-Key`를 거부합니다.
 
 오류 본문은 `application/problem+json`이며 `type`, `title`, `status`, `detail`을 제공합니다. 기존 클라이언트를 위해 `error`도 같은 설명을 유지합니다. 메모 version 충돌의 409 응답에는 `clientVersion`과 최신 서버 `latest` 메모가 포함됩니다.
 

@@ -4,7 +4,7 @@ info:
   version: 0.7.0
   description: |
     Spatial Thought Memory, collaboration, automation and Dream Layer API.
-    Successful mutation requests can include an `Idempotency-Key` header (8-128 safe characters) for replay-safe offline synchronization.
+    Supported Canvas mutation requests can include an `Idempotency-Key` header (8-128 safe characters) for replay-safe offline synchronization.
     Personal preferences, API-key lifecycle operations and all administrator operations require an interactive browser session; bearer API keys cannot call them.
     Errors use RFC 9457 Problem Details and note version conflicts include the latest server note.
 servers:
@@ -156,6 +156,8 @@ paths:
       tags: [Thoughts]
       summary: Drop a post-it onto the canvas
       x-required-scope: notes:write
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NoteWrite' } } } }
       responses: { '201': { description: Note created, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } } }
   /spaces/{spaceId}:
@@ -189,6 +191,8 @@ paths:
       summary: Autosave note content, appearance and position
       description: Uses optimistic concurrency. Send the last server version; a stale version returns 409.
       x-required-scope: notes:write
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NoteUpdate' } } } }
       responses:
         '200': { description: Updated note, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }
@@ -198,6 +202,8 @@ paths:
       tags: [Thoughts]
       summary: Soft-delete a note
       x-required-scope: notes:write
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
       responses: { '204': { description: Deleted } }
   /notes/{noteId}/related:
     parameters:
@@ -264,6 +270,8 @@ paths:
       tags: [Collaboration]
       summary: Resolve or reopen a comment thread
       x-required-scope: notes:write
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody:
         required: true
         content: { application/json: { schema: { type: object, required: [resolved], properties: { resolved: { type: boolean } } } } }
@@ -277,6 +285,8 @@ paths:
       tags: [Collaboration]
       summary: Soft-delete an authored or managed comment
       x-required-scope: notes:write
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
       responses: { '204': { description: Comment deleted } }
   /notes/{noteId}/history:
     parameters:
@@ -367,6 +377,8 @@ paths:
       tags: [Thoughts]
       summary: Connect two notes
       x-required-scope: notes:write
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/EdgeWrite' } } } }
       responses: { '201': { description: Edge created, content: { application/json: { schema: { $ref: '#/components/schemas/Edge' } } } } }
   /ai/assist:
@@ -725,7 +737,7 @@ components:
     WebhookID: { in: path, name: webhookId, required: true, schema: { type: string, format: uuid } }
     CaseID: { in: path, name: caseId, required: true, schema: { type: string, format: uuid } }
     Cursor: { in: query, name: cursor, description: Opaque cursor returned as nextCursor, schema: { type: string } }
-    IdempotencyKey: { in: header, name: Idempotency-Key, description: Replay-safe mutation key; pending requests use a 2-minute recoverable lease and successful responses are retained for 24 hours, schema: { type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' } }
+    IdempotencyKey: { in: header, name: Idempotency-Key, description: 'Replay-safe Canvas mutation key; the live-renewed 2-minute lease and response complete atomically with the mutation, and successful responses are retained for 24 hours', schema: { type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' } }
   responses:
     Error: { description: RFC 9457 Problem Details, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   schemas:
