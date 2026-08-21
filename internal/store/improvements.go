@@ -584,14 +584,33 @@ func (s *Store) ResolveComment(ctx context.Context, userID, commentID uuid.UUID,
 		return Comment{}, uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
-	var noteID, spaceID uuid.UUID
+	var noteID, spaceID, spaceOwner uuid.UUID
 	err = tx.QueryRow(ctx, `
-		UPDATE note_comments c SET resolved_at=CASE WHEN $3 THEN now() ELSE NULL END,resolved_by=CASE WHEN $3 THEN $2 ELSE NULL END,updated_at=now()
-		FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
-		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL AND n.deleted_at IS NULL
-		  AND (sp.owner_id=$2 OR sm.permission IN ('edit','manage'))
-		RETURNING c.note_id,n.space_id`, commentID, userID, resolved).Scan(&noteID, &spaceID)
+		SELECT c.note_id,n.space_id,sp.owner_id
+		FROM note_comments c
+		JOIN notes n ON n.id=c.note_id
+		JOIN spaces sp ON sp.id=n.space_id
+		WHERE c.id=$1 AND c.deleted_at IS NULL AND n.deleted_at IS NULL
+		FOR UPDATE OF c
+		FOR SHARE OF n,sp`, commentID).Scan(&noteID, &spaceID, &spaceOwner)
 	if err != nil {
+		return Comment{}, uuid.Nil, err
+	}
+	if spaceOwner != userID {
+		var permission string
+		if err = tx.QueryRow(ctx, `
+			SELECT permission FROM space_members
+			WHERE space_id=$1 AND user_id=$2 AND permission IN ('edit','manage')
+			FOR SHARE`, spaceID, userID).Scan(&permission); err != nil {
+			return Comment{}, uuid.Nil, err
+		}
+	}
+	if _, err = tx.Exec(ctx, `
+		UPDATE note_comments
+		SET resolved_at=CASE WHEN $3 THEN now() ELSE NULL END,
+		    resolved_by=CASE WHEN $3 THEN $2::uuid ELSE NULL END,
+		    updated_at=now()
+		WHERE id=$1`, commentID, userID, resolved); err != nil {
 		return Comment{}, uuid.Nil, err
 	}
 	comment, err := scanComment(tx.QueryRow(ctx, commentSelect+` FROM note_comments c JOIN users u ON u.id=c.author_id WHERE c.id=$1`, commentID))
@@ -613,15 +632,31 @@ func (s *Store) DeleteComment(ctx context.Context, userID, commentID uuid.UUID) 
 		return uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
-	var spaceID uuid.UUID
+	var spaceID, spaceOwner, commentAuthor uuid.UUID
 	err = tx.QueryRow(ctx, `
-		UPDATE note_comments c SET deleted_at=now(),updated_at=now()
-		FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
-		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL AND n.deleted_at IS NULL
-		  AND (sp.owner_id=$2 OR sm.user_id=$2)
-		  AND (c.author_id=$2 OR sp.owner_id=$2 OR sm.permission='manage')
-		RETURNING n.space_id`, commentID, userID).Scan(&spaceID)
+		SELECT n.space_id,sp.owner_id,c.author_id
+		FROM note_comments c
+		JOIN notes n ON n.id=c.note_id
+		JOIN spaces sp ON sp.id=n.space_id
+		WHERE c.id=$1 AND c.deleted_at IS NULL AND n.deleted_at IS NULL
+		FOR UPDATE OF c
+		FOR SHARE OF n,sp`, commentID).Scan(&spaceID, &spaceOwner, &commentAuthor)
 	if err != nil {
+		return uuid.Nil, err
+	}
+	if spaceOwner != userID {
+		var permission string
+		if err = tx.QueryRow(ctx, `
+			SELECT permission FROM space_members
+			WHERE space_id=$1 AND user_id=$2
+			FOR SHARE`, spaceID, userID).Scan(&permission); err != nil {
+			return uuid.Nil, err
+		}
+		if commentAuthor != userID && permission != "manage" {
+			return uuid.Nil, pgx.ErrNoRows
+		}
+	}
+	if _, err = tx.Exec(ctx, `UPDATE note_comments SET deleted_at=now(),updated_at=now() WHERE id=$1`, commentID); err != nil {
 		return uuid.Nil, err
 	}
 	if err = s.AppendSpaceEvent(ctx, tx, userID, spaceID, "comment.deleted", commentID, map[string]any{}); err != nil {

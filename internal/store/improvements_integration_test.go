@@ -580,6 +580,227 @@ func TestCreateCommentSerializesMembershipRemovalIntegration(t *testing.T) {
 	}
 }
 
+func TestCommentMutationsSerializeAuthorizationRevocationIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	tests := []struct {
+		name       string
+		mutation   string
+		revocation string
+		permission string
+	}{
+		{name: "resolve membership removal", mutation: "resolve", revocation: "remove", permission: "edit"},
+		{name: "resolve permission downgrade", mutation: "resolve", revocation: "downgrade", permission: "edit"},
+		{name: "delete membership removal", mutation: "delete", revocation: "remove", permission: "manage"},
+		{name: "delete permission downgrade", mutation: "delete", revocation: "downgrade", permission: "manage"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			db := isolatedStore(t, dsn)
+
+			ownerID, memberID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+			subscriptionID := uuid.New()
+			targetID, deniedID := uuid.New(), uuid.New()
+			ownerName := "comment_mutation_owner_" + strings.ReplaceAll(ownerID.String(), "-", "")
+			memberName := "comment_mutation_member_" + strings.ReplaceAll(memberID.String(), "-", "")
+			if _, err := db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, memberID, memberName); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'comment mutation authorization')`, spaceID, ownerID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,$3)`, spaceID, memberID, tc.permission); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Pool.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'comment mutation target')`, noteID, spaceID, ownerID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Pool.Exec(ctx, `INSERT INTO note_comments(id,note_id,author_id,body) VALUES($1,$3,$4,'serialized mutation'),($2,$3,$4,'post-revocation mutation')`, targetID, deniedID, noteID, ownerID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Pool.Exec(ctx, `INSERT INTO webhook_subscriptions(id,owner_id,name,url,secret_ciphertext,events) VALUES($1,$2,'comment mutation boundary','https://example.com/webhook','test-ciphertext',ARRAY['comment.resolved','comment.deleted'])`, subscriptionID, ownerID); err != nil {
+				t.Fatal(err)
+			}
+
+			var gateKey int64
+			if err := db.Pool.QueryRow(ctx, `SELECT (random()*2147483646)::bigint+1`).Scan(&gateKey); err != nil {
+				t.Fatal(err)
+			}
+			functionSQL := fmt.Sprintf(`
+				CREATE FUNCTION pause_comment_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+				BEGIN
+				  IF NEW.id = '%s'::uuid THEN
+				    PERFORM pg_advisory_xact_lock(%d::bigint);
+				  END IF;
+				  RETURN NEW;
+				END $$`, targetID, gateKey)
+			if _, err := db.Pool.Exec(ctx, functionSQL); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Pool.Exec(ctx, `
+				CREATE TRIGGER pause_comment_mutation_trigger
+				BEFORE UPDATE ON note_comments
+				FOR EACH ROW EXECUTE FUNCTION pause_comment_mutation()`); err != nil {
+				t.Fatal(err)
+			}
+
+			gateConn, err := db.Pool.Acquire(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer gateConn.Release()
+			if _, err = gateConn.Exec(ctx, `SELECT pg_advisory_lock($1)`, gateKey); err != nil {
+				t.Fatal(err)
+			}
+			gateLocked := true
+			defer func() {
+				if gateLocked {
+					_, _ = gateConn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, gateKey)
+				}
+			}()
+
+			mutate := func(id uuid.UUID) error {
+				if tc.mutation == "resolve" {
+					_, _, mutationErr := db.ResolveComment(ctx, memberID, id, true)
+					return mutationErr
+				}
+				_, mutationErr := db.DeleteComment(ctx, memberID, id)
+				return mutationErr
+			}
+			mutationDone := make(chan error, 1)
+			go func() { mutationDone <- mutate(targetID) }()
+
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				var waiting int
+				if err = db.Pool.QueryRow(ctx, `
+					SELECT count(*) FROM pg_locks
+					WHERE locktype='advisory' AND classid=0::oid AND objid=$1::oid AND NOT granted`, gateKey).Scan(&waiting); err != nil {
+					t.Fatal(err)
+				}
+				if waiting > 0 {
+					break
+				}
+				select {
+				case mutationErr := <-mutationDone:
+					t.Fatalf("comment mutation did not reach the concurrency gate: %v", mutationErr)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("timed out waiting for the comment mutation gate")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			revocationMarker := "comment-authorization-revocation-" + uuid.NewString()
+			revocationDone := make(chan error, 1)
+			go func() {
+				if tc.revocation == "remove" {
+					query := fmt.Sprintf(`DELETE FROM space_members WHERE space_id=$1 AND user_id=$2 /* %s */`, revocationMarker)
+					_, revokeErr := db.Pool.Exec(ctx, query, spaceID, memberID)
+					revocationDone <- revokeErr
+					return
+				}
+				query := fmt.Sprintf(`UPDATE space_members SET permission='view' WHERE space_id=$1 AND user_id=$2 /* %s */`, revocationMarker)
+				_, revokeErr := db.Pool.Exec(ctx, query, spaceID, memberID)
+				revocationDone <- revokeErr
+			}()
+
+			revocationSerialized := false
+			var earlyRevocation error
+			revocationFinishedEarly := false
+			deadline = time.Now().Add(10 * time.Second)
+			for !revocationSerialized && !revocationFinishedEarly {
+				select {
+				case earlyRevocation = <-revocationDone:
+					revocationFinishedEarly = true
+				default:
+				}
+				if revocationFinishedEarly {
+					break
+				}
+				if err = db.Pool.QueryRow(ctx, `
+					SELECT EXISTS(
+					  SELECT 1 FROM pg_stat_activity
+					  WHERE query LIKE '%'||$1||'%' AND wait_event_type='Lock')`, revocationMarker).Scan(&revocationSerialized); err != nil {
+					t.Fatal(err)
+				}
+				if time.Now().After(deadline) {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			if _, err = gateConn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, gateKey); err != nil {
+				t.Fatal(err)
+			}
+			gateLocked = false
+			select {
+			case err = <-mutationDone:
+				if err != nil {
+					t.Fatalf("authorized comment mutation failed: %v", err)
+				}
+			case <-ctx.Done():
+				t.Fatal("timed out waiting for comment mutation")
+			}
+			if !revocationFinishedEarly {
+				select {
+				case err = <-revocationDone:
+				case <-ctx.Done():
+					t.Fatal("timed out waiting for authorization revocation")
+				}
+			} else {
+				err = earlyRevocation
+			}
+			if err != nil {
+				t.Fatalf("authorization revocation failed: %v", err)
+			}
+			if !revocationSerialized {
+				t.Fatal("authorization revocation committed while a comment mutation still used its earlier access check")
+			}
+
+			if err = mutate(deniedID); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("revoked member retained %s access: %v", tc.mutation, err)
+			}
+			eventType := "comment." + tc.mutation + "d"
+			if tc.mutation == "resolve" {
+				eventType = "comment.resolved"
+			}
+			var targetResolved, targetDeleted, deniedResolved, deniedDeleted bool
+			var targetEvents, deniedEvents, targetDeliveries, deniedDeliveries int
+			if err = db.Pool.QueryRow(ctx, `
+				SELECT
+				  (SELECT resolved_at IS NOT NULL FROM note_comments WHERE id=$1),
+				  (SELECT deleted_at IS NOT NULL FROM note_comments WHERE id=$1),
+				  (SELECT resolved_at IS NOT NULL FROM note_comments WHERE id=$2),
+				  (SELECT deleted_at IS NOT NULL FROM note_comments WHERE id=$2),
+				  (SELECT count(*) FROM space_events WHERE event_type=$3 AND resource_id=$1),
+				  (SELECT count(*) FROM space_events WHERE event_type=$3 AND resource_id=$2),
+				  (SELECT count(*) FROM webhook_deliveries WHERE subscription_id=$4 AND event_type=$3 AND payload->>'resourceId'=$1::text),
+				  (SELECT count(*) FROM webhook_deliveries WHERE subscription_id=$4 AND event_type=$3 AND payload->>'resourceId'=$2::text)`,
+				targetID, deniedID, eventType, subscriptionID).Scan(
+				&targetResolved, &targetDeleted, &deniedResolved, &deniedDeleted,
+				&targetEvents, &deniedEvents, &targetDeliveries, &deniedDeliveries); err != nil {
+				t.Fatal(err)
+			}
+			if tc.mutation == "resolve" && (!targetResolved || targetDeleted) {
+				t.Fatalf("serialized resolve state mismatch: resolved=%v deleted=%v", targetResolved, targetDeleted)
+			}
+			if tc.mutation == "delete" && (targetResolved || !targetDeleted) {
+				t.Fatalf("serialized delete state mismatch: resolved=%v deleted=%v", targetResolved, targetDeleted)
+			}
+			if deniedResolved || deniedDeleted || targetEvents != 1 || deniedEvents != 0 || targetDeliveries != 1 || deniedDeliveries != 0 {
+				t.Fatalf("post-revocation side effects mismatch: denied=%v/%v events=%d/%d deliveries=%d/%d",
+					deniedResolved, deniedDeleted, targetEvents, deniedEvents, targetDeliveries, deniedDeliveries)
+			}
+		})
+	}
+}
+
 func TestContentQueriesRejectRevokedMemberIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {

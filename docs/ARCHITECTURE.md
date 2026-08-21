@@ -77,6 +77,7 @@
 ### 2. 낙관적 동시성 제어 (Optimistic Concurrency Control)
 - 각 생각 노드는 단조 증가하는 `version` 번호를 가집니다.
 - 다중 사용자가 동시에 작업하더라도 버전 충돌을 감지하고 409 Problem Details에 최신 서버 메모를 포함합니다. 브라우저는 내 변경과 서버 변경을 나란히 보여 주고 선택·병합한 뒤 새 버전으로 저장합니다.
+- 댓글 해결·재개·삭제 transaction은 대상 댓글을 update lock으로, 활성 생각·공간과 비소유자의 현재 membership 권한을 shared lock으로 고정한 다음 mutation과 `space_events`·webhook outbox를 함께 commit합니다. 멤버 제거와 `edit/manage → view` 강등은 이 transaction 뒤에서 직렬화되므로 point-in-time 권한 확인으로 협업 상태를 뒤늦게 바꾸지 못합니다.
 - 오프라인 변경은 PWA local queue에 멱등 키와 함께 보관됩니다. 재연결 시 안전한 순서로 replay하고 같은 메모의 연속 PUT은 마지막 상태로 합칩니다. 모든 browser storage 읽기·쓰기·삭제는 공용 예외 경계 안에서 수행하며, quota 또는 권한 오류가 나면 mutation을 저장했다고 보고하지 않습니다. Canvas는 메모별 마지막 서버 응답 또는 성공적으로 기록된 queue 상태를 별도로 유지하고, 비내구성 autosave가 실패했으며 그 뒤 새 편집도 없다면 그 상태로 즉시 복원합니다. 요청 중 시작한 더 최신 편집은 객체 세대로 구분해 먼저 되돌리지 않고 자신의 직렬화된 저장 결과로 확정합니다. 인증된 queue owner는 메모리에도 유지해 저장소 접근이 차단되어도 앱 초기화와 상태 조회를 계속하고, 읽을 수 없거나 손상된 기존 queue는 빈 배열로 덮어쓰지 않습니다. 인증 복구 가능성이 있는 일반 401/403은 queue를 멈추지만, 공간에서 제거되었거나 생각이 삭제되어 댓글 해결·삭제를 더는 적용할 수 없는 경우 서버가 `comment-mutation-forbidden` 403을 반환하므로 그 항목만 사유를 알리고 제거한 뒤 이후의 독립 변경을 계속 처리합니다. 서비스 워커의 `/` 앱 셸 캐시는 성공한 `text/html` 탐색 응답만 갱신하므로 manifest·asset JSON·SVG를 주소창에서 직접 열어도 오프라인 셸이 비-HTML 응답으로 바뀌지 않습니다. 8자 content hash가 붙은 `assets/` bundle만 1년 immutable이고, manifest·service worker·아이콘·asset manifest 같은 고정 URL은 `no-cache`로 매 배포 재검증합니다.
 
 ### 3. 분산 큐 & DB 트랜잭션 (SKIP LOCKED)
