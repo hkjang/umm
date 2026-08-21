@@ -3,6 +3,7 @@ package intelligence
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,12 +37,19 @@ type Provider struct {
 	Client *http.Client
 }
 
-// Algorithm names the vectors this provider would produce. Vectors are only
-// ever compared with others carrying the same algorithm, so switching models
-// re-embeds instead of silently mixing incompatible vector spaces.
+// Algorithm names the vectors this provider would produce. The endpoint
+// fingerprint distinguishes gateways that expose the same model label but do
+// not necessarily implement the same vector space. API keys and timeouts are
+// deliberately excluded because changing transport policy does not change a
+// model's vectors.
 func (p Provider) Algorithm() string {
 	if model := p.model(); model != "" {
-		return "gateway:" + model
+		endpoint := strings.TrimSpace(p.Remote.BaseURL)
+		if canonical, err := EmbeddingsEndpoint(endpoint); err == nil {
+			endpoint = canonical
+		}
+		identity := sha256.Sum256([]byte(endpoint))
+		return fmt.Sprintf("gateway:%s:%x", model, identity)
 	}
 	return LocalAlgorithm
 }

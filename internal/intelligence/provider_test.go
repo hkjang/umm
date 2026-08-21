@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -41,15 +42,32 @@ func TestProviderUsesTheGatewayAndNormalises(t *testing.T) {
 	defer server.Close()
 
 	provider := Provider{Remote: &RemoteConfig{BaseURL: server.URL, APIKey: "secret", Model: "text-embed", Timeout: 5 * time.Second}}
-	if got := provider.Algorithm(); got != "gateway:text-embed" {
-		t.Fatalf("expected the gateway algorithm label, got %q", got)
+	algorithm := provider.Algorithm()
+	if !strings.HasPrefix(algorithm, "gateway:text-embed:") {
+		t.Fatalf("expected the gateway algorithm label, got %q", algorithm)
 	}
-	vectors, algorithm := provider.Embed(context.Background(), []string{"생각"})
-	if algorithm != "gateway:text-embed" {
-		t.Fatalf("expected the gateway label, got %q", algorithm)
+	vectors, actualAlgorithm := provider.Embed(context.Background(), []string{"생각"})
+	if actualAlgorithm != algorithm {
+		t.Fatalf("expected the gateway label %q, got %q", algorithm, actualAlgorithm)
 	}
 	if math.Abs(float64(vectors[0][0])-0.6) > 1e-6 || math.Abs(float64(vectors[0][1])-0.8) > 1e-6 {
 		t.Fatalf("gateway vectors must be normalised for Cosine, got %v", vectors[0])
+	}
+}
+
+func TestProviderAlgorithmIncludesCanonicalGatewayIdentity(t *testing.T) {
+	first := Provider{Remote: &RemoteConfig{BaseURL: "https://gateway-a.internal/v1", APIKey: "first", Model: "shared-model", Timeout: time.Second}}
+	equivalent := Provider{Remote: &RemoteConfig{BaseURL: "https://gateway-a.internal/v1/embeddings", APIKey: "second", Model: "shared-model", Timeout: 2 * time.Second}}
+	second := Provider{Remote: &RemoteConfig{BaseURL: "https://gateway-b.internal/v1", APIKey: "first", Model: "shared-model", Timeout: time.Second}}
+
+	if first.Algorithm() != equivalent.Algorithm() {
+		t.Fatalf("equivalent embedding endpoints must share a vector space: %q != %q", first.Algorithm(), equivalent.Algorithm())
+	}
+	if first.Algorithm() == second.Algorithm() {
+		t.Fatalf("different gateways with the same model label shared an algorithm: %q", first.Algorithm())
+	}
+	if strings.Contains(first.Algorithm(), "gateway-a.internal") {
+		t.Fatalf("the persisted algorithm must fingerprint, not disclose, the endpoint: %q", first.Algorithm())
 	}
 }
 

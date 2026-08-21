@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -788,7 +789,7 @@ func TestHybridSearchUsesTheActualFallbackVectorSpaceIntegration(t *testing.T) {
 	// unusable. A local fallback query must ignore it and locally embed the row.
 	if _, err = db.Pool.Exec(ctx, `
 		INSERT INTO note_embeddings(note_id,algorithm,model,dimensions,vector,content_version)
-		VALUES($1,'gateway:remote-model','remote-model',2,$2,1)`, noteID, []float32{0, 0}); err != nil {
+		VALUES($1,$2,'remote-model',2,$3,1)`, noteID, db.embeddings.provider.Algorithm(), []float32{0, 0}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -801,6 +802,84 @@ func TestHybridSearchUsesTheActualFallbackVectorSpaceIntegration(t *testing.T) {
 	}
 	if !strings.Contains(page.Notes[0].Reason, "의미상 유사") {
 		t.Fatalf("search compared the fallback query in the wrong vector space: %#v", page.Notes[0])
+	}
+}
+
+func TestGatewayChangeWithSameModelReembedsIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	newGateway := func(calls *atomic.Int64, vector []float32) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "embedding": vector}}})
+		}))
+	}
+	var firstCalls, secondCalls atomic.Int64
+	firstGateway := newGateway(&firstCalls, []float32{1, 0})
+	defer firstGateway.Close()
+	secondGateway := newGateway(&secondCalls, []float32{0, 2, 0})
+	defer secondGateway.Close()
+	firstProvider := intelligence.Provider{Remote: &intelligence.RemoteConfig{BaseURL: firstGateway.URL, Model: "shared-model", Timeout: time.Second}}
+	secondProvider := intelligence.Provider{Remote: &intelligence.RemoteConfig{BaseURL: secondGateway.URL, Model: "shared-model", Timeout: time.Second}}
+	if firstProvider.Algorithm() == secondProvider.Algorithm() {
+		t.Fatal("different gateways with the same model label shared a vector-space identifier")
+	}
+
+	userID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New()
+	username := "embedding_gateway_change_" + userID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'gateway identity')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'same content version')`, noteID, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	notes := []Note{{ID: noteID, SpaceID: spaceID, Content: "same content version", Version: 1}}
+
+	db.embeddings.mu.Lock()
+	db.embeddings.provider = firstProvider
+	db.embeddings.loadedAt = time.Now()
+	db.embeddings.mu.Unlock()
+	db.ensureEmbeddings(ctx, notes)
+	var algorithm, model string
+	var dimensions int
+	if err = db.Pool.QueryRow(ctx, `SELECT algorithm,model,dimensions FROM note_embeddings WHERE note_id=$1`, noteID).Scan(&algorithm, &model, &dimensions); err != nil {
+		t.Fatal(err)
+	}
+	if algorithm != firstProvider.Algorithm() || model != "shared-model" || dimensions != 2 || firstCalls.Load() != 1 {
+		t.Fatalf("first gateway embedding mismatch: algorithm=%q model=%q dimensions=%d calls=%d", algorithm, model, dimensions, firstCalls.Load())
+	}
+
+	db.embeddings.mu.Lock()
+	db.embeddings.provider = secondProvider
+	db.embeddings.loadedAt = time.Now()
+	db.embeddings.remoteRetryAt = time.Time{}
+	db.embeddings.mu.Unlock()
+	db.ensureEmbeddings(ctx, notes)
+	if err = db.Pool.QueryRow(ctx, `SELECT algorithm,model,dimensions FROM note_embeddings WHERE note_id=$1`, noteID).Scan(&algorithm, &model, &dimensions); err != nil {
+		t.Fatal(err)
+	}
+	if algorithm != secondProvider.Algorithm() || model != "shared-model" || dimensions != 3 || firstCalls.Load() != 1 || secondCalls.Load() != 1 {
+		t.Fatalf("gateway change did not re-embed: algorithm=%q model=%q dimensions=%d calls=%d/%d", algorithm, model, dimensions, firstCalls.Load(), secondCalls.Load())
+	}
+	loaded := db.loadEmbeddings(ctx, notes)
+	if len(loaded[noteID]) != 3 || loaded[noteID][1] != 1 {
+		t.Fatalf("new gateway vector space was not loaded: %#v", loaded)
 	}
 }
 
@@ -862,7 +941,7 @@ func TestLoadEmbeddingsUsesOneFallbackVectorSpaceIntegration(t *testing.T) {
 	}
 	if _, err = db.Pool.Exec(ctx, `
 		INSERT INTO note_embeddings(note_id,algorithm,model,dimensions,vector,content_version)
-		VALUES($1,'gateway:remote-model','remote-model',2,$2,1)`, noteIDs[0], []float32{1, 0}); err != nil {
+		VALUES($1,$2,'remote-model',2,$3,1)`, noteIDs[0], db.embeddings.provider.Algorithm(), []float32{1, 0}); err != nil {
 		t.Fatal(err)
 	}
 
