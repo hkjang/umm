@@ -20,6 +20,14 @@ import (
 
 // Store owns the database pool. Cipher is optional and only needed for the
 // settings that hold encrypted credentials.
+// The similarity cutoffs umm used before thresholds became relative to the
+// active embedding backend. They remain the fallback for a workspace too small
+// to produce a meaningful distribution, so behaviour there is unchanged.
+const (
+	legacyRelatedCutoff = .22
+	legacyClusterCutoff = .34
+)
+
 type Store struct {
 	Pool   *pgxpool.Pool
 	Cipher Decrypter
@@ -626,9 +634,19 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 	}
 	s.ensureEmbeddings(ctx, notes)
 	vectors := s.loadEmbeddings(ctx, notes)
+	// The cutoff is derived from this space's own score distribution rather than
+	// fixed, so the count means the same thing whether the vectors came from the
+	// offline algorithm or a configured embedding model. See intelligence.SimilarityScale.
+	pairScores := make([]float64, 0, len(notes)*len(notes))
+	for i := range notes {
+		for j := i + 1; j < len(notes); j++ {
+			pairScores = append(pairScores, intelligence.Cosine(vectors[notes[i].ID], vectors[notes[j].ID]))
+		}
+	}
+	relatedCutoff := intelligence.NewSimilarityScale(pairScores).ThresholdOr(intelligence.BandCluster, legacyClusterCutoff)
 	for i := range notes {
 		for j := range notes {
-			if i != j && intelligence.Cosine(vectors[notes[i].ID], vectors[notes[j].ID]) >= .34 {
+			if i != j && intelligence.Cosine(vectors[notes[i].ID], vectors[notes[j].ID]) >= relatedCutoff {
 				notes[i].RelatedCount++
 			}
 		}
@@ -800,13 +818,26 @@ func (s *Store) RelatedNotes(ctx context.Context, userID, noteID uuid.UUID, limi
 	}
 	vectors := s.loadEmbeddings(ctx, notes)
 	baseVector := vectors[noteID]
-	related := []RelatedNote{}
+	// Score everything first so the bar can be placed against the distribution
+	// this note actually sits in; a constant would admit the whole workspace
+	// under a sentence embedding model and almost nothing under the offline one.
+	scores := make(map[uuid.UUID]float64, len(notes))
+	observed := make([]float64, 0, len(notes))
 	for _, n := range notes {
 		if n.ID == noteID {
 			continue
 		}
 		score := intelligence.Cosine(baseVector, vectors[n.ID])
-		if score >= .22 {
+		scores[n.ID] = score
+		observed = append(observed, score)
+	}
+	cutoff := intelligence.NewSimilarityScale(observed).ThresholdOr(intelligence.BandRelated, legacyRelatedCutoff)
+	related := []RelatedNote{}
+	for _, n := range notes {
+		if n.ID == noteID {
+			continue
+		}
+		if score := scores[n.ID]; score >= cutoff {
 			keywords := intelligence.Keywords(base.Content+" "+n.Content, 2)
 			related = append(related, RelatedNote{Note: n, Score: score, Reason: strings.Join(keywords, " · ")})
 		}
@@ -824,6 +855,16 @@ func (s *Store) Clusters(ctx context.Context, userID, spaceID uuid.UUID) ([]Thou
 		return nil, err
 	}
 	vectors := s.loadEmbeddings(ctx, notes)
+	// One cutoff for the whole space, taken from every pair in it. Deriving it
+	// per seed would let a note with no strong neighbours drag its own bar down
+	// until anything joined it.
+	pairScores := make([]float64, 0, len(notes)*len(notes)/2)
+	for i := range notes {
+		for j := i + 1; j < len(notes); j++ {
+			pairScores = append(pairScores, intelligence.Cosine(vectors[notes[i].ID], vectors[notes[j].ID]))
+		}
+	}
+	cutoff := intelligence.NewSimilarityScale(pairScores).ThresholdOr(intelligence.BandCluster, legacyClusterCutoff)
 	used := map[uuid.UUID]bool{}
 	clusters := []ThoughtCluster{}
 	for _, seed := range notes {
@@ -839,7 +880,7 @@ func (s *Store) Clusters(ctx context.Context, userID, spaceID uuid.UUID) ([]Thou
 				continue
 			}
 			score := intelligence.Cosine(vectors[seed.ID], vectors[candidate.ID])
-			if score >= .34 {
+			if score >= cutoff {
 				ids = append(ids, candidate.ID)
 				used[candidate.ID] = true
 				cohesion += score

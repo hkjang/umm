@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.8.1-success?style=flat-square" alt="v0.8.1" />
+  <img src="https://img.shields.io/badge/Release-v0.9.0-success?style=flat-square" alt="v0.9.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,33 +25,13 @@
 
 ---
 
-## v0.8.1 — 권한 경계를 끝까지 지키는 패치
+## v0.9.0 — 임베딩을 측정하고, 어떤 백엔드에서도 맞게
 
-- **원자적 콘텐츠 권한 확인**: Canvas 목록·수정 이력·댓글·백링크는 콘텐츠를 읽는 PostgreSQL statement 안에서 현재 owner/member 조건을 함께 확인합니다.
-- **공유·변경 재검증**: 멤버 목록·공간 내보내기뿐 아니라 댓글과 Dream도 현재 멤버십을 다시 확인합니다. 댓글 해결·삭제는 댓글·생각·공간과 현재 membership 권한을 transaction 종료까지 잠가 멤버 제거나 `edit/manage → view` 강등과 엇갈리지 않습니다. AI Assist·자동 Dream 생성·재생성·발전은 선택한 원본 메모와 모든 관련 공간의 접근권한을 외부 AI 호출이 끝날 때까지 잠가, 공유 회수 뒤 캡처한 본문이 Gateway로 전달되지 않습니다. 이 긴 access lease는 요청 pool 밖의 인스턴스당 최대 2개 전용 연결만 사용해 느린 Gateway가 readiness·로그인·Canvas 요청을 고갈시키지 않습니다. 권한 회수 뒤에는 Today 카드·이력·본문·출처와 모든 Dream mutation을 닫고, 댓글 해결·삭제는 terminal Problem Details로 종료해 오프라인 큐의 뒤 작업을 막지 않습니다.
-- **외부 임베딩까지 유지되는 AI 제외 경계**: 메모·공간과 현재 Gateway 설정을 외부 임베딩 응답 및 vector 저장이 끝날 때까지 잠급니다. 제외 설정이 먼저 확정되면 본문과 범위 검색어는 로컬에서만 처리하고, 임베딩 lease가 먼저 시작되면 설정 변경이 호출 종료까지 기다립니다. 메모 단위 제외가 하나라도 섞인 공간의 검색도 Canvas와 같은 완전한 로컬 벡터 공간을 사용합니다.
-- **전송 끝까지 고정되는 웹훅 권한**: 워커가 구독·사용자·공간·멤버십과 정확한 delivery claim을 실제 HTTP 응답이 끝날 때까지 하나의 lease로 잠급니다. 권한 회수·사용자 비활성화·구독 중지가 먼저 확정되면 캡처한 payload를 보내지 않으며, 전달이 먼저 시작되면 정책 변경이 terminal 상태와 payload 삭제가 확정될 때까지 기다립니다.
-- **AI Assist 최소 권한 분리**: 선택한 생각을 외부 Gateway로 보내고 AI 쿼터를 쓰는 `/ai/assist`는 전용 `ai:assist` scope만 허용합니다. 일반 `notes:read` 자동화 키는 더 이상 유료 AI 호출 권한을 암묵적으로 얻지 않습니다.
-- **운영 지표 최소 권한 분리**: `/api/v1/metrics`는 관리자 브라우저 세션 또는 `metrics:read` API 키만 허용합니다. 일반 사용자 세션의 내부 wildcard와 관리자가 소유한 일반 API 키는 지표 권한으로 승격되지 않습니다.
-- **거짓 성공 없는 오프라인 저장**: 브라우저 저장 용량이 가득 찼거나 사이트 저장 권한이 차단되면 변경을 저장했다고 표시하지 않고 즉시 복구 안내를 보여 줍니다. 저장되지 않은 Canvas 편집은 마지막 서버·오프라인 큐 보존 상태로 되돌려 화면에만 남은 내용을 저장 완료로 오인하지 않게 합니다. 저장소 읽기 자체가 거부되어도 로그인 초기화와 오프라인 상태 표시는 계속 동작하며, 읽을 수 없는 기존 큐를 빈 큐로 덮어쓰지 않습니다.
-- **검토 신호 보존**: “리뷰 요약에 활동 포함”을 꺼도 협업 활동만 숨기고 고정·기한·오래된 생각의 기본 검토 목록은 유지합니다.
-- **관리 설정 업그레이드·키 회전 호환성**: 구버전 관리자 화면이 새 남용 방지 필드를 생략해도 저장된 로그인·API·AI 한도를 최신 PostgreSQL 값에서 원자적으로 병합합니다. OIDC·AI Gateway의 마스킹 secret 저장도 master-key 회전과 같은 설정 lock 뒤 최신 암호문을 유지해 이전 화면이 회전 결과를 되돌리지 않습니다.
-- **병렬 남용·AI 설정 전환 차단**: 같은 주소·계정의 비밀번호 검증을 인스턴스 공용 PostgreSQL 잠금으로 직렬화해 병렬 요청도 로그인 실패 상한을 넘지 않습니다. Gateway 장애 뒤 전체 로컬 벡터를 맞추는 후속 pass도 시작 시점의 설정 세대를 유지해, 중간에 바뀐 새 Gateway 벡터를 덮지 않습니다.
-- **작은 pool·실시간 failover·PWA 업그레이드 안전성**: 상한 1~2에서는 전용 LISTEN 대신 안전 폴링으로 모든 연결을 request에 보존합니다. 실행 중 LISTEN 상태가 바뀌면 열린 SSE를 즉시 깨워 단절 시 1초 폴링으로 전환하고, 알림 목록은 한 연결만 순차 사용하며 고정 manifest·service worker·아이콘은 매 릴리스 재검증합니다.
-- **회귀 검증**: PostgreSQL 17 통합 테스트가 같은 세션에서 멤버 제거 전후를 재현하고, 제거 뒤 모든 본문 조회가 `404`로 닫히는지 검사합니다.
+- **측정**: 한/영 22쌍 라벨 데이터셋으로 임베딩이 실제로 무엇을 재는지 CI에서 매번 보고합니다. 기본 로컬 알고리즘의 쌍별 정확도는 **4.2%**, bge-m3는 **83.3%** 입니다.
+- **수정**: 하드코딩된 유사도 임계값 5곳을 **분포 상대 기준**으로 바꿨습니다. 이전에는 제대로 된 임베딩 모델을 붙이는 순간 연관 생각·군집·검색 라벨·Dream 페어 선택이 조용히 무너졌습니다.
+- **검증**: 실제 임베딩 백엔드를 붙인 통합 테스트가 군집 분리와 연관 생각 축소를 확인하며, 로컬로 폴백되면 실패합니다.
 
-v0.8.0의 규모·보안·접근성 개선도 모두 포함합니다.
-
-자세한 변경과 업그레이드 안내: [v0.8.1 릴리스 노트](docs/releases/v0.8.1.md)
-
-- **푸시 협업**: PostgreSQL `LISTEN/NOTIFY` 기반 실시간 스트림으로 바꿔, 공간을 열어 둔 사람이 늘어도 유휴 데이터베이스 비용이 0입니다.
-- **인덱스 검색**: 키워드 조건을 `pg_trgm` GIN 인덱스가 타는 형태로 재작성하고, 선택적으로 게이트웨이 임베딩 모델을 붙일 수 있습니다.
-- **남용 방지**: 인스턴스 간에 공유되는 로그인 잠금, 호출자별 API 요청 한도, AI 생성의 분당·일일 한도를 관리자 화면에서 조정합니다.
-- **조여진 CSP**: 응답마다 새로 만드는 nonce와 `strict-dynamic`, HSTS, 로그인한 기기 목록과 원격 로그아웃을 제공합니다.
-- **English · 다크 모드 · 가져오기**: 화면 전체 번역 계층, 첫 페인트 전 테마 결정, 마크다운 가져오기와 모바일 공유 타깃을 지원합니다.
-- **검증**: Playwright E2E, Vitest, 다중 인스턴스 스모크, 마이그레이션 dry-run, OpenAPI 드리프트 검사를 CI에서 실행합니다.
-
-이전 릴리스의 협업·자동화·복구 기능은 그대로 유지됩니다: [v0.7.0 릴리스 노트](docs/releases/v0.7.0.md)
+이전 릴리스의 협업·보안·복구 기능은 그대로 유지됩니다: [v0.8.1](docs/releases/v0.8.1.md) · [v0.8.0](docs/releases/v0.8.0.md)
 
 ---
 
@@ -157,7 +137,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.8.1
+  umm:v0.9.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)
