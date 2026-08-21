@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
-import { isTerminalOfflineRejection, noteReadOnlyProblem, reconcileOfflineQueue } from '../src/offline-queue.ts';
+import {
+  isTerminalOfflineRejection,
+  mergeOfflineQueues,
+  noteReadOnlyProblem,
+  reconcileOfflineQueue,
+} from '../src/offline-queue.ts';
 
 const mutation = (id, path = `/notes/${id}`) => ({
   id,
@@ -35,6 +40,22 @@ assert.deepEqual(
   reconcileOfflineQueue([original], [original], [addedDuringFlush]).map((item) => item.id),
   ['new-comment'],
   'another tab that already removed an item must not have it resurrected',
+);
+
+const lateLegacyMutation = mutation('late-legacy', '/notes/legacy');
+lateLegacyMutation.createdAt = '2026-08-21T00:00:01Z';
+assert.deepEqual(
+  mergeOfflineQueues([original], [lateLegacyMutation]).map((item) => item.id),
+  ['original', 'late-legacy'],
+  'a legacy mutation appended after the account queue was created must survive migration',
+);
+
+const newerCoalescedUpdate = mutation('newer-update', original.path);
+newerCoalescedUpdate.createdAt = '2026-08-21T00:00:02Z';
+assert.deepEqual(
+  mergeOfflineQueues([original], [newerCoalescedUpdate]).map((item) => item.id),
+  ['newer-update'],
+  'migration must retain the newest coalesced update across queue generations',
 );
 
 assert.equal(isTerminalOfflineRejection(403, noteReadOnlyProblem), true, 'a typed read-only response must remove an impossible mutation');

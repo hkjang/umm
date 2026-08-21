@@ -46,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       api<Meta>('/meta'),
       api<User>('/me', { silent: true }).catch(() => undefined),
     ]);
-    setOfflineQueueOwner(userResult?.id);
+    await setOfflineQueueOwner(userResult?.id);
     setMeta(metaResult);
     setUser(userResult);
     if (userResult) {
@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await api('/auth/logout', { method: 'POST' });
-    setOfflineQueueOwner(undefined);
+    await setOfflineQueueOwner(undefined);
     setUser(undefined);
   }, []);
 

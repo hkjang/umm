@@ -26,3 +26,32 @@ export function reconcileOfflineQueue(
   const retainedIDs = new Set(retained.map((item) => item.id));
   return latest.filter((item) => !snapshotIDs.has(item.id) || retainedIDs.has(item.id));
 }
+
+/**
+ * Merge queues written by different app generations without replaying the
+ * same idempotent mutation twice. Updates use the same last-write-wins rule as
+ * the live queue, while unrelated mutations retain their creation order.
+ */
+export function mergeOfflineQueues(...queues: OfflineMutation[][]): OfflineMutation[] {
+  const ordered = queues.flatMap((queue, queueIndex) =>
+    queue.map((item, itemIndex) => ({ item, queueIndex, itemIndex })),
+  );
+  // This is a fresh migration snapshot, so sorting it in place cannot mutate a
+  // caller's queue. ES2022 is still a supported build target and lacks toSorted.
+  ordered.sort((left, right) => {
+    const byCreatedAt = left.item.createdAt.localeCompare(right.item.createdAt);
+    return byCreatedAt || left.queueIndex - right.queueIndex || left.itemIndex - right.itemIndex;
+  }); // oxlint-disable-line unicorn/no-array-sort
+  const seenIDs = new Set<string>();
+  const merged: OfflineMutation[] = [];
+  for (const { item } of ordered) {
+    if (seenIDs.has(item.id)) continue;
+    seenIDs.add(item.id);
+    if (item.method === 'PUT' || item.method === 'PATCH') {
+      const superseded = merged.findIndex((queued) => queued.path === item.path && queued.method === item.method);
+      if (superseded >= 0) merged.splice(superseded, 1);
+    }
+    merged.push(item);
+  }
+  return merged;
+}

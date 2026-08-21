@@ -35,9 +35,9 @@ describe('problemMessage', () => {
 });
 
 describe('offline queue', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     localStorage.clear();
-    setOfflineQueueOwner('user-1');
+    await setOfflineQueueOwner('user-1');
     vi.restoreAllMocks();
   });
 
@@ -61,10 +61,40 @@ describe('offline queue', () => {
     );
     await api('/a', { method: 'POST', body: '{}', queueIfOffline: true, silent: true }).catch(() => undefined);
     expect(offlineQueueCount()).toBe(1);
-    setOfflineQueueOwner('user-2');
+    await setOfflineQueueOwner('user-2');
     expect(offlineQueueCount()).toBe(0);
-    setOfflineQueueOwner('user-1');
+    await setOfflineQueueOwner('user-1');
     expect(offlineQueueCount()).toBe(1);
+  });
+
+  it('merges late legacy mutations into an existing account queue before deleting it', async () => {
+    const accountMutation = {
+      id: 'account-change',
+      path: '/notes/account',
+      method: 'PUT',
+      body: '{"content":"account"}',
+      headers: { 'Idempotency-Key': 'web:account-change' },
+      createdAt: '2026-08-21T00:00:00.000Z',
+    };
+    const lateLegacyMutation = {
+      id: 'late-legacy-change',
+      path: '/notes/legacy',
+      method: 'PUT',
+      body: '{"content":"legacy"}',
+      headers: { 'Idempotency-Key': 'web:late-legacy-change' },
+      createdAt: '2026-08-21T00:00:01.000Z',
+    };
+    localStorage.setItem('umm:offline-mutations:v1:user-1', JSON.stringify([accountMutation]));
+    localStorage.setItem('umm:offline-mutations:v1', JSON.stringify([lateLegacyMutation]));
+
+    await setOfflineQueueOwner('user-1');
+
+    expect(JSON.parse(localStorage.getItem('umm:offline-mutations:v1:user-1')!)).toEqual([
+      accountMutation,
+      lateLegacyMutation,
+    ]);
+    expect(localStorage.getItem('umm:offline-mutations:v1')).toBeNull();
+    expect(offlineQueueCount()).toBe(2);
   });
 
   it('collapses repeated updates to the same resource', async () => {

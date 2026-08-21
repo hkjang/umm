@@ -1,6 +1,11 @@
 import { msg, translate } from './i18n/translate';
 import { showError } from './ui-notifications';
-import { isTerminalOfflineRejection, reconcileOfflineQueue, type OfflineMutation } from './offline-queue';
+import {
+  isTerminalOfflineRejection,
+  mergeOfflineQueues,
+  reconcileOfflineQueue,
+  type OfflineMutation,
+} from './offline-queue';
 
 export interface Meta {
   serviceName: string;
@@ -123,19 +128,6 @@ const mutationMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const requestID = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const queueStorageKey = () => `${offlineKey}:${localStorage.getItem(offlineOwnerKey) || 'anonymous'}`;
 
-export function setOfflineQueueOwner(userId?: string) {
-  if (userId) {
-    const target = `${offlineKey}:${userId}`;
-    const legacy = localStorage.getItem(offlineKey);
-    if (legacy && !localStorage.getItem(target)) localStorage.setItem(target, legacy);
-    localStorage.removeItem(offlineKey);
-    localStorage.setItem(offlineOwnerKey, userId);
-  } else {
-    localStorage.removeItem(offlineOwnerKey);
-  }
-  window.dispatchEvent(new CustomEvent('umm:offline-queue', { detail: { count: offlineQueueCount() } }));
-}
-
 function loadOfflineQueue(storageKey = queueStorageKey()): OfflineMutation[] {
   try {
     const value = JSON.parse(localStorage.getItem(storageKey) || '[]');
@@ -154,6 +146,28 @@ function saveOfflineQueue(items: OfflineMutation[], storageKey = queueStorageKey
 async function withOfflineQueueLock<T>(storageKey: string, operation: () => T | Promise<T>): Promise<T> {
   if (!navigator.locks?.request) return operation();
   return navigator.locks.request(`${storageKey}:lock`, operation);
+}
+
+export async function setOfflineQueueOwner(userId?: string) {
+  if (userId) {
+    const target = `${offlineKey}:${userId}`;
+    // Current tabs use the target lock for queue writes. The legacy lock also
+    // serialises simultaneous migrations, so an existing account queue is
+    // reconciled with late writes from an older app before legacy is removed.
+    await withOfflineQueueLock(offlineKey, () =>
+      withOfflineQueueLock(target, () => {
+        const legacy = loadOfflineQueue(offlineKey);
+        if (legacy.length > 0) {
+          localStorage.setItem(target, JSON.stringify(mergeOfflineQueues(loadOfflineQueue(target), legacy)));
+        }
+        localStorage.removeItem(offlineKey);
+        localStorage.setItem(offlineOwnerKey, userId);
+      }),
+    );
+  } else {
+    await withOfflineQueueLock(offlineKey, () => localStorage.removeItem(offlineOwnerKey));
+  }
+  window.dispatchEvent(new CustomEvent('umm:offline-queue', { detail: { count: offlineQueueCount() } }));
 }
 
 async function enqueueOffline(item: OfflineMutation) {
