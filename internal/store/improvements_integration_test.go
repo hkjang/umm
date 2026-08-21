@@ -1257,23 +1257,8 @@ func TestStaleGatewayResponseCannotOverwriteCurrentEmbeddingIntegration(t *testi
 		t.Skip("POSTGRES_DSN is not configured")
 	}
 	ctx := context.Background()
-	db, err := Open(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Pool.Close()
-	if err = db.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	var originalGateway []byte
-	if err = db.Pool.QueryRow(ctx, `SELECT value FROM app_settings WHERE key='ai_gateway'`).Scan(&originalGateway); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		_, _ = db.Pool.Exec(context.Background(), `UPDATE app_settings SET value=$1::jsonb,updated_at=clock_timestamp() WHERE key='ai_gateway'`, originalGateway)
-		db.InvalidateEmbeddingProvider()
-	}()
+	db := isolatedStore(t, dsn)
+	var err error
 
 	oldStarted := make(chan struct{})
 	releaseOld := make(chan struct{})
@@ -1375,6 +1360,169 @@ func TestStaleGatewayResponseCannotOverwriteCurrentEmbeddingIntegration(t *testi
 	}
 	if algorithm != currentProvider.Algorithm() || dimensions != 3 || version != 1 {
 		t.Fatalf("an older content version replaced the current embedding: algorithm=%q dimensions=%d version=%d", algorithm, dimensions, version)
+	}
+}
+
+func TestFallbackNormalizationCannotCrossGatewayChangeIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	db := isolatedStore(t, dsn)
+
+	var oldCalls, currentCalls atomic.Int64
+	oldGateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		oldCalls.Add(1)
+		http.Error(w, "old gateway unavailable", http.StatusBadGateway)
+	}))
+	defer oldGateway.Close()
+	currentGateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		currentCalls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "embedding": []float32{0, 2, 0}}}})
+	}))
+	defer currentGateway.Close()
+
+	putGateway := func(baseURL string) error {
+		raw, marshalErr := json.Marshal(embeddingSettings{BaseURL: baseURL, EmbeddingModel: "shared-model", TimeoutSeconds: 2})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		_, updateErr := db.Pool.Exec(ctx, `UPDATE app_settings SET value=$1::jsonb,updated_at=clock_timestamp() WHERE key='ai_gateway'`, raw)
+		return updateErr
+	}
+	if err := putGateway(oldGateway.URL); err != nil {
+		t.Fatal(err)
+	}
+	db.InvalidateEmbeddingProvider()
+
+	userID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New()
+	username := "fallback_gateway_fence_" + userID.String()
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'fallback gateway fence')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'fenced fallback')`, noteID, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	lockKey := "embedding-fallback-rewrite:" + uuid.NewString()
+	if _, err := db.Pool.Exec(ctx, `CREATE TABLE embedding_rewrite_probe(lock_key text NOT NULL,calls integer NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO embedding_rewrite_probe(lock_key,calls) VALUES($1,0)`, lockKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `CREATE FUNCTION pause_second_embedding_write() RETURNS trigger LANGUAGE plpgsql AS $$
+		DECLARE attempt integer; probe_key text;
+		BEGIN
+		  UPDATE embedding_rewrite_probe SET calls=calls+1 RETURNING calls,lock_key INTO attempt,probe_key;
+		  IF attempt=2 THEN
+		    PERFORM pg_advisory_xact_lock(hashtextextended(probe_key,0));
+		  END IF;
+		  RETURN NEW;
+		END;
+		$$`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `CREATE TRIGGER pause_second_embedding_write
+		BEFORE INSERT ON note_embeddings
+		FOR EACH ROW EXECUTE FUNCTION pause_second_embedding_write()`); err != nil {
+		t.Fatal(err)
+	}
+	var applicationName string
+	if err := db.Pool.QueryRow(ctx, `SHOW application_name`).Scan(&applicationName); err != nil {
+		t.Fatal(err)
+	}
+	lockConn, err := db.Pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockHeld := true
+	defer func() {
+		if lockHeld {
+			_, _ = lockConn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtextextended($1,0))`, lockKey)
+		}
+		lockConn.Release()
+	}()
+	if _, err = lockConn.Exec(ctx, `SELECT pg_advisory_lock(hashtextextended($1,0))`, lockKey); err != nil {
+		t.Fatal(err)
+	}
+
+	notes := []Note{{ID: noteID, SpaceID: spaceID, Content: "fenced fallback", Version: 1}}
+	ensureDone := make(chan struct{})
+	go func() {
+		db.ensureEmbeddings(ctx, notes)
+		close(ensureDone)
+	}()
+
+	waiting := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err = db.Pool.QueryRow(ctx, `
+			SELECT EXISTS(
+			  SELECT 1 FROM pg_stat_activity
+			  WHERE application_name=$1 AND wait_event_type='Lock'
+			    AND lower(COALESCE(wait_event,'')) LIKE '%advisory%'
+			    AND query LIKE '%INSERT INTO note_embeddings%')`, applicationName).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !waiting {
+		_, _ = lockConn.Exec(context.Background(), `SELECT pg_advisory_unlock(hashtextextended($1,0))`, lockKey)
+		lockHeld = false
+		t.Fatal("fallback normalization did not reach the controlled rewrite boundary")
+	}
+
+	updateDone := make(chan error, 1)
+	go func() { updateDone <- putGateway(currentGateway.URL) }()
+	updatedBeforeRewrite := false
+	select {
+	case err = <-updateDone:
+		updatedBeforeRewrite = true
+	case <-time.After(300 * time.Millisecond):
+	}
+	if _, unlockErr := lockConn.Exec(ctx, `SELECT pg_advisory_unlock(hashtextextended($1,0))`, lockKey); unlockErr != nil {
+		t.Fatal(unlockErr)
+	}
+	lockHeld = false
+	if !updatedBeforeRewrite {
+		if err = <-updateDone; err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ensureDone:
+	case <-ctx.Done():
+		t.Fatal("fallback normalization did not finish after releasing the boundary")
+	}
+	if updatedBeforeRewrite {
+		t.Fatal("gateway settings committed while the old fallback rewrite was still in flight")
+	}
+
+	db.InvalidateEmbeddingProvider()
+	db.ensureEmbeddings(ctx, notes)
+	currentProvider := db.EmbeddingProvider(ctx)
+	var algorithm, model string
+	var dimensions int
+	var vector []float32
+	if err = db.Pool.QueryRow(ctx, `SELECT algorithm,model,dimensions,vector FROM note_embeddings WHERE note_id=$1`, noteID).Scan(&algorithm, &model, &dimensions, &vector); err != nil {
+		t.Fatal(err)
+	}
+	if algorithm != currentProvider.Algorithm() || model != "shared-model" || dimensions != 3 || len(vector) != 3 || vector[1] != 1 {
+		t.Fatalf("current gateway embedding was not preserved: algorithm=%q model=%q dimensions=%d vector=%v", algorithm, model, dimensions, vector)
+	}
+	if oldCalls.Load() != 1 || currentCalls.Load() != 1 {
+		t.Fatalf("unexpected gateway calls: old=%d current=%d", oldCalls.Load(), currentCalls.Load())
 	}
 }
 

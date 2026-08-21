@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -87,7 +88,25 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	policy := s.securityPolicy(r.Context())
 	identities := store.LoginIdentities(body.Username, clientIP(r))
-	if locked, remaining := s.Store.LoginLocked(r.Context(), identities); locked {
+	tx, err := s.Store.BeginLoginThrottle(r.Context(), identities)
+	if err != nil {
+		slog.Warn("login throttle lock failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+		return
+	}
+	defer tx.Rollback(context.Background())
+	locked, remaining, err := s.Store.LoginLockedTx(r.Context(), tx, identities)
+	if err != nil {
+		slog.Warn("login throttle check failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+		return
+	}
+	if locked {
+		if err = tx.Commit(r.Context()); err != nil {
+			slog.Warn("login throttle commit failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
 		writeRetryAfter(w, remaining)
 		s.Store.Audit(r.Context(), nil, "auth.local.locked", "user", strings.TrimSpace(body.Username), map[string]any{})
 		writeProblem(w, r, http.StatusTooManyRequests, "login-locked", "로그인이 일시적으로 잠겼습니다",
@@ -95,15 +114,38 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"retryAfterSeconds": int(remaining.Seconds())})
 		return
 	}
-	u, token, err := s.Auth.PasswordLogin(r.Context(), body.Username, body.Password, auth.OriginOf(r))
+	u, token, err := s.Auth.PasswordLoginTx(r.Context(), tx, body.Username, body.Password, auth.OriginOf(r))
 	if err != nil {
-		s.Store.RegisterLoginFailure(r.Context(), identities, policy.LoginMaxFailures, policy.lockout())
+		if !errors.Is(err, auth.ErrInvalidCredentials) {
+			slog.Warn("login session preparation failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "로그인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
+		if recordErr := s.Store.RegisterLoginFailureTx(r.Context(), tx, identities, policy.LoginMaxFailures, policy.lockout()); recordErr != nil {
+			slog.Warn("login throttle update failed", "error", recordErr)
+			writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			slog.Warn("login failure commit failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
 		s.Store.Audit(r.Context(), nil, "auth.local.failed", "user", strings.TrimSpace(body.Username), map[string]any{})
 		writeError(w, 401, "아이디 또는 비밀번호가 올바르지 않습니다.")
 		return
 	}
 	if accountIdentity := store.LoginAccountIdentity(body.Username); accountIdentity != "" {
-		s.Store.ClearLoginFailures(r.Context(), []string{accountIdentity})
+		if err = s.Store.ClearLoginFailuresTx(r.Context(), tx, []string{accountIdentity}); err != nil {
+			slog.Warn("login throttle reset failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		slog.Warn("login session commit failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "로그인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+		return
 	}
 	auth.SetSessionCookie(w, r, token)
 	s.Store.Audit(r.Context(), &u.ID, "auth.local.login", "user", u.ID.String(), map[string]any{})

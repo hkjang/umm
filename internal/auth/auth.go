@@ -20,6 +20,8 @@ import (
 
 const CookieName = "umm_session"
 
+var ErrInvalidCredentials = errors.New("invalid credentials")
+
 type contextKey string
 
 const principalKey contextKey = "principal"
@@ -100,17 +102,42 @@ func boundedUserAgent(agent string) string {
 
 func (s *Service) PasswordLogin(ctx context.Context, username, password string, origin SessionOrigin) (store.User, string, error) {
 	u, hash, err := s.Store.UserByUsername(ctx, strings.TrimSpace(username))
-	if err != nil {
-		return store.User{}, "", errors.New("invalid credentials")
+	return s.finishPasswordLogin(ctx, nil, u, hash, password, origin, err)
+}
+
+// PasswordLoginTx verifies credentials and creates the session on the login
+// throttle transaction's single connection. This keeps the throttle safe even
+// when PostgreSQL pool_max_conns=1.
+func (s *Service) PasswordLoginTx(ctx context.Context, tx pgx.Tx, username, password string, origin SessionOrigin) (store.User, string, error) {
+	u, hash, err := s.Store.UserByUsernameTx(ctx, tx, strings.TrimSpace(username))
+	return s.finishPasswordLogin(ctx, tx, u, hash, password, origin, err)
+}
+
+func (s *Service) finishPasswordLogin(ctx context.Context, tx pgx.Tx, u store.User, hash, password string, origin SessionOrigin, lookupErr error) (store.User, string, error) {
+	if lookupErr != nil {
+		return store.User{}, "", ErrInvalidCredentials
 	}
 	if !u.Active || hash == "" || bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
-		return store.User{}, "", errors.New("invalid credentials")
+		return store.User{}, "", ErrInvalidCredentials
+	}
+	if tx != nil {
+		token, err := s.CreateSessionTx(ctx, tx, u.ID, origin)
+		return u, token, err
 	}
 	token, err := s.CreateSession(ctx, u.ID, origin)
 	return u, token, err
 }
 
 func (s *Service) CreateSession(ctx context.Context, userID uuid.UUID, origin SessionOrigin) (string, error) {
+	return s.createSession(ctx, nil, userID, origin)
+}
+
+// CreateSessionTx persists a session on an existing transaction connection.
+func (s *Service) CreateSessionTx(ctx context.Context, tx pgx.Tx, userID uuid.UUID, origin SessionOrigin) (string, error) {
+	return s.createSession(ctx, tx, userID, origin)
+}
+
+func (s *Service) createSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID, origin SessionOrigin) (string, error) {
 	token, err := randomToken(32)
 	if err != nil {
 		return "", err
@@ -118,12 +145,20 @@ func (s *Service) CreateSession(ctx context.Context, userID uuid.UUID, origin Se
 	var general struct {
 		SessionHours int `json:"session_hours"`
 	}
-	_ = s.Store.GetSetting(ctx, "general", &general)
+	if tx == nil {
+		_ = s.Store.GetSetting(ctx, "general", &general)
+	} else {
+		_ = s.Store.GetSettingTx(ctx, tx, "general", &general)
+	}
 	if general.SessionHours < 1 || general.SessionHours > 720 {
 		general.SessionHours = 24
 	}
 	origin.UserAgent = boundedUserAgent(origin.UserAgent)
-	_, err = s.Store.Pool.Exec(ctx, `INSERT INTO sessions(user_id,token_hash,expires_at,user_agent,client_ip) VALUES($1,$2,now()+make_interval(hours=>$3),$4,$5)`, userID, digest(token), general.SessionHours, origin.UserAgent, origin.ClientIP)
+	if tx == nil {
+		_, err = s.Store.Pool.Exec(ctx, `INSERT INTO sessions(user_id,token_hash,expires_at,user_agent,client_ip) VALUES($1,$2,now()+make_interval(hours=>$3),$4,$5)`, userID, digest(token), general.SessionHours, origin.UserAgent, origin.ClientIP)
+	} else {
+		_, err = tx.Exec(ctx, `INSERT INTO sessions(user_id,token_hash,expires_at,user_agent,client_ip) VALUES($1,$2,now()+make_interval(hours=>$3),$4,$5)`, userID, digest(token), general.SessionHours, origin.UserAgent, origin.ClientIP)
+	}
 	return token, err
 }
 

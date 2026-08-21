@@ -251,11 +251,20 @@ func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
 		for index, note := range notes {
 			all[index] = embeddingTarget{ID: note.ID, Content: note.Content, Version: note.Version}
 		}
-		_, _ = s.writeEmbeddingsWithProvider(ctx, all, intelligence.Provider{})
+		_, _ = s.writeEmbeddings(ctx, all, intelligence.Provider{}, provider)
 	}
 }
 
 func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embeddingTarget, provider intelligence.Provider) (string, error) {
+	return s.writeEmbeddings(ctx, targets, provider, provider)
+}
+
+// writeEmbeddings lets a caller force the embedding algorithm while retaining
+// the settings-backed provider that authorized the overall operation. The
+// outage-wide local normalization pass uses a local active provider with its
+// original remote provider as origin, so an intervening gateway change fences
+// the rewrite just like the first fallback batch.
+func (s *Store) writeEmbeddings(ctx context.Context, targets []embeddingTarget, provider, origin intelligence.Provider) (string, error) {
 	if len(targets) == 0 {
 		return provider.Algorithm(), nil
 	}
@@ -276,7 +285,7 @@ func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embed
 			// the remaining batches locally instead of repeating the full timeout.
 			activeProvider = intelligence.Provider{}
 		}
-		if err := s.persistEmbeddingBatch(ctx, batch, vectors, algorithm, model, provider); err != nil {
+		if err := s.persistEmbeddingBatch(ctx, batch, vectors, algorithm, model, origin); err != nil {
 			return actualAlgorithm, err
 		}
 	}

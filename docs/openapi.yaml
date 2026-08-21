@@ -37,13 +37,15 @@ paths:
       operationId: post_auth_login
       security: []
       tags: [Auth]
-      summary: Sign in with the bootstrap/local administrator
+      summary: Sign in with the local password; concurrent guesses share the configured PostgreSQL-backed ceiling
       requestBody:
         required: true
         content: { application/json: { schema: { type: object, required: [username, password], properties: { username: { type: string }, password: { type: string, format: password } } } } }
       responses:
         '200': { description: Signed in, headers: { Set-Cookie: { schema: { type: string } } }, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '401': { $ref: '#/components/responses/Error' }
+        '429': { description: login-locked Problem Details with Retry-After after the shared failure ceiling, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { description: Fail-closed response when the durable throttle cannot be checked or committed, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /auth/oidc/start:
     get:
       operationId: get_auth_oidc_start

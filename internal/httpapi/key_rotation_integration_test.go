@@ -41,7 +41,7 @@ func legacyV1Ciphertext(t *testing.T, key []byte, plain string) string {
 	return base64.RawURLEncoding.EncodeToString(sealed)
 }
 
-func isolatedHTTPStore(t *testing.T, dsn string) *store.Store {
+func isolatedHTTPStore(t *testing.T, dsn string, maxConns ...int32) *store.Store {
 	t.Helper()
 	ctx := context.Background()
 	adminConfig, err := pgxpool.ParseConfig(dsn)
@@ -65,6 +65,12 @@ func isolatedHTTPStore(t *testing.T, dsn string) *store.Store {
 
 	testConfig := adminConfig.Copy()
 	testConfig.ConnConfig.RuntimeParams["search_path"] = identifier + ", public"
+	if len(maxConns) > 0 {
+		testConfig.MaxConns = maxConns[0]
+		if testConfig.MinConns > testConfig.MaxConns {
+			testConfig.MinConns = testConfig.MaxConns
+		}
+	}
 	testPool, err := pgxpool.NewWithConfig(ctx, testConfig)
 	if err != nil {
 		t.Fatal(err)

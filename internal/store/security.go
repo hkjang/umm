@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // LoginIdentities returns the throttle keys a login attempt counts against.
@@ -59,35 +62,106 @@ func failureBudget(identity string, maxFailures int) int {
 	return maxFailures
 }
 
+type loginAttemptDB interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// BeginLoginThrottle serializes password verification by every applicable
+// throttle identity. Advisory transaction locks are shared across application
+// instances, and sorting prevents requests that share an address and account
+// in different combinations from deadlocking each other.
+func (s *Store) BeginLoginThrottle(ctx context.Context, identities []string) (pgx.Tx, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin login throttle: %w", err)
+	}
+	locked := false
+	defer func() {
+		if !locked {
+			_ = tx.Rollback(context.Background())
+		}
+	}()
+
+	unique := make(map[string]struct{}, len(identities))
+	keys := make([]string, 0, len(identities))
+	for _, identity := range identities {
+		identity = strings.TrimSpace(identity)
+		if identity == "" {
+			continue
+		}
+		key := "umm:login:" + identity
+		if _, exists := unique[key]; exists {
+			continue
+		}
+		unique[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, key); err != nil {
+			return nil, fmt.Errorf("lock login throttle: %w", err)
+		}
+	}
+	locked = true
+	return tx, nil
+}
+
 // LoginLocked reports the remaining lockout for a set of identities. A database
 // error is reported as unlocked: an unavailable throttle table must never lock
 // everyone out of the service.
 func (s *Store) LoginLocked(ctx context.Context, identities []string) (bool, time.Duration) {
-	if len(identities) == 0 {
+	locked, remaining, err := loginLocked(ctx, s.Pool, identities)
+	if err != nil {
 		return false, 0
 	}
+	return locked, remaining
+}
+
+// LoginLockedTx checks the counters while the caller holds the corresponding
+// throttle locks.
+func (s *Store) LoginLockedTx(ctx context.Context, tx pgx.Tx, identities []string) (bool, time.Duration, error) {
+	return loginLocked(ctx, tx, identities)
+}
+
+func loginLocked(ctx context.Context, query loginAttemptDB, identities []string) (bool, time.Duration, error) {
+	if len(identities) == 0 {
+		return false, 0, nil
+	}
 	var until *time.Time
-	err := s.Pool.QueryRow(ctx, `SELECT max(locked_until) FROM login_attempts WHERE identity=ANY($1) AND locked_until>now()`, identities).Scan(&until)
+	err := query.QueryRow(ctx, `SELECT max(locked_until) FROM login_attempts WHERE identity=ANY($1) AND locked_until>now()`, identities).Scan(&until)
 	if err != nil || until == nil {
-		return false, 0
+		return false, 0, err
 	}
 	remaining := time.Until(*until)
 	if remaining <= 0 {
-		return false, 0
+		return false, 0, nil
 	}
-	return true, remaining
+	return true, remaining, nil
 }
 
 // RegisterLoginFailure records one failed attempt and locks the identity once it
 // crosses its budget. Counting happens in the database so every instance of a
 // horizontally scaled deployment shares the same view.
 func (s *Store) RegisterLoginFailure(ctx context.Context, identities []string, maxFailures int, lockout time.Duration) {
+	if err := registerLoginFailure(ctx, s.Pool, identities, maxFailures, lockout); err != nil {
+		slog.Warn("login throttle update failed", "error", err)
+	}
+}
+
+// RegisterLoginFailureTx records all applicable counters atomically with the
+// password check guarded by BeginLoginThrottle.
+func (s *Store) RegisterLoginFailureTx(ctx context.Context, tx pgx.Tx, identities []string, maxFailures int, lockout time.Duration) error {
+	return registerLoginFailure(ctx, tx, identities, maxFailures, lockout)
+}
+
+func registerLoginFailure(ctx context.Context, query loginAttemptDB, identities []string, maxFailures int, lockout time.Duration) error {
 	if maxFailures < 1 || lockout <= 0 {
-		return
+		return nil
 	}
 	for _, identity := range identities {
 		budget := failureBudget(identity, maxFailures)
-		_, err := s.Pool.Exec(ctx, `
+		_, err := query.Exec(ctx, `
 			INSERT INTO login_attempts(identity,failure_count,first_failed_at,last_failed_at)
 			VALUES($1,1,now(),now())
 			ON CONFLICT(identity) DO UPDATE SET
@@ -103,18 +177,30 @@ func (s *Store) RegisterLoginFailure(ctx context.Context, identities []string, m
 			                      ELSE login_attempts.locked_until END`,
 			identity, budget, lockout)
 		if err != nil {
-			slog.Warn("login throttle update failed", "error", err)
+			return err
 		}
 	}
+	return nil
 }
 
 // ClearLoginFailures resets only the explicitly supplied counters. Successful
 // password authentication supplies the account identity, never the source IP.
 func (s *Store) ClearLoginFailures(ctx context.Context, identities []string) {
+	_ = clearLoginFailures(ctx, s.Pool, identities)
+}
+
+// ClearLoginFailuresTx resets explicitly supplied counters before the guarded
+// login transaction commits its new session.
+func (s *Store) ClearLoginFailuresTx(ctx context.Context, tx pgx.Tx, identities []string) error {
+	return clearLoginFailures(ctx, tx, identities)
+}
+
+func clearLoginFailures(ctx context.Context, query loginAttemptDB, identities []string) error {
 	if len(identities) == 0 {
-		return
+		return nil
 	}
-	_, _ = s.Pool.Exec(ctx, `DELETE FROM login_attempts WHERE identity=ANY($1)`, identities)
+	_, err := query.Exec(ctx, `DELETE FROM login_attempts WHERE identity=ANY($1)`, identities)
+	return err
 }
 
 // aiQuotaReservationTTL bounds an abandoned claim between reservation and

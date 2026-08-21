@@ -237,9 +237,25 @@ func scanUser(row pgx.Row) (User, error) {
 }
 
 func (s *Store) UserByUsername(ctx context.Context, username string) (User, string, error) {
+	return userByUsername(ctx, s.Pool, username)
+}
+
+// UserByUsernameTx reads a password identity on the caller's transaction. The
+// login handler uses this after taking its cross-instance throttle locks so a
+// one-connection pool never has to acquire a second connection while the lock
+// is held.
+func (s *Store) UserByUsernameTx(ctx context.Context, tx pgx.Tx, username string) (User, string, error) {
+	return userByUsername(ctx, tx, username)
+}
+
+type rowQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func userByUsername(ctx context.Context, query rowQuerier, username string) (User, string, error) {
 	var u User
 	var hash *string
-	err := s.Pool.QueryRow(ctx, `SELECT id,username,display_name,COALESCE(email,''),role,team_id,active,password_hash FROM users WHERE username=$1`, username).
+	err := query.QueryRow(ctx, `SELECT id,username,display_name,COALESCE(email,''),role,team_id,active,password_hash FROM users WHERE username=$1`, username).
 		Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Role, &u.TeamID, &u.Active, &hash)
 	if err != nil {
 		return User{}, "", err
@@ -278,8 +294,17 @@ func (s *Store) UpsertOIDCUser(ctx context.Context, subject, username, display, 
 }
 
 func (s *Store) GetSetting(ctx context.Context, key string, dst any) error {
+	return getSetting(ctx, s.Pool, key, dst)
+}
+
+// GetSettingTx keeps setting reads on an existing transaction connection.
+func (s *Store) GetSettingTx(ctx context.Context, tx pgx.Tx, key string, dst any) error {
+	return getSetting(ctx, tx, key, dst)
+}
+
+func getSetting(ctx context.Context, query rowQuerier, key string, dst any) error {
 	var raw []byte
-	if err := s.Pool.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&raw); err != nil {
+	if err := query.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&raw); err != nil {
 		return err
 	}
 	return json.Unmarshal(raw, dst)
