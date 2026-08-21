@@ -52,6 +52,12 @@ func TestNotificationAccessRevocationIntegration(t *testing.T) {
 	if _, _, err = db.CreateComment(ctx, ownerID, noteID, nil, "revoked secret body", []string{memberName}); err != nil {
 		t.Fatal(err)
 	}
+	// Simulate a notification created before resource_space_id was introduced.
+	// Note-scoped access must be derived from the current note, not stale or
+	// missing denormalized metadata.
+	if _, err = db.Pool.Exec(ctx, `UPDATE notifications SET resource_space_id=NULL WHERE user_id=$1 AND resource_type='note' AND resource_id=$2`, memberID, noteID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = db.Pool.Exec(ctx, `
 		INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id) VALUES
 		($1,'space_shared','legacy space notification','legacy revoked body','space',$2),
@@ -92,6 +98,25 @@ func TestNotificationAccessRevocationIntegration(t *testing.T) {
 	before := fetch()
 	if len(before.Notifications) != 3 || before.Unread != 3 {
 		t.Fatalf("accessible notifications=%d unread=%d, want 3", len(before.Notifications), before.Unread)
+	}
+	if _, err = db.Pool.Exec(ctx, `UPDATE notes SET deleted_at=now() WHERE id=$1`, noteID); err != nil {
+		t.Fatal(err)
+	}
+	deleted := fetch()
+	if len(deleted.Notifications) != 2 || deleted.Unread != 2 {
+		t.Fatalf("deleted-note notifications=%d unread=%d, want 2", len(deleted.Notifications), deleted.Unread)
+	}
+	for _, item := range deleted.Notifications {
+		if item.Body == "revoked secret body" {
+			t.Fatalf("deleted note notification leaked: %#v", deleted.Notifications)
+		}
+	}
+	if _, err = db.Pool.Exec(ctx, `UPDATE notes SET deleted_at=NULL WHERE id=$1`, noteID); err != nil {
+		t.Fatal(err)
+	}
+	restored := fetch()
+	if len(restored.Notifications) != 3 || restored.Unread != 3 {
+		t.Fatalf("restored-note notifications=%d unread=%d, want 3", len(restored.Notifications), restored.Unread)
 	}
 	if _, err = db.Pool.Exec(ctx, `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID); err != nil {
 		t.Fatal(err)
