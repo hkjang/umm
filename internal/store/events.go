@@ -19,6 +19,58 @@ type webhookOutboxEvent struct {
 	CreatedAt  time.Time       `json:"createdAt"`
 }
 
+// SpaceEvent is the access-scoped collaboration record sent over SSE.
+type SpaceEvent struct {
+	Sequence   int64           `json:"sequence"`
+	Type       string          `json:"type"`
+	ResourceID *uuid.UUID      `json:"resourceId"`
+	ActorID    *uuid.UUID      `json:"actorId"`
+	Payload    json.RawMessage `json:"payload"`
+	CreatedAt  time.Time       `json:"createdAt"`
+}
+
+// SpaceEvents reads one bounded event batch and checks membership in the same
+// PostgreSQL statement. A stream therefore cannot observe an event batch from
+// a snapshot in which its caller no longer has access to the space.
+func (s *Store) SpaceEvents(ctx context.Context, userID, spaceID uuid.UUID, after int64, limit int) ([]SpaceEvent, bool, error) {
+	if limit < 1 || limit > 100 {
+		limit = 100
+	}
+	var allowed bool
+	var raw json.RawMessage
+	err := s.Pool.QueryRow(ctx, `
+		WITH access AS (
+		  SELECT EXISTS(
+		    SELECT 1 FROM spaces sp
+		    LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$1
+		    WHERE sp.id=$2 AND (sp.owner_id=$1 OR sm.user_id=$1)
+		  ) AS allowed
+		), pending AS (
+		  SELECT e.sequence,e.event_type,e.resource_id,e.payload,e.actor_id,e.created_at
+		  FROM space_events e CROSS JOIN access a
+		  WHERE a.allowed AND e.space_id=$2 AND e.sequence>$3
+		  ORDER BY e.sequence
+		  LIMIT $4
+		)
+		SELECT a.allowed,COALESCE(
+		  jsonb_agg(jsonb_build_object(
+		    'sequence',p.sequence,'type',p.event_type,'resourceId',p.resource_id,
+		    'payload',p.payload,'actorId',p.actor_id,'createdAt',p.created_at
+		  ) ORDER BY p.sequence) FILTER (WHERE p.sequence IS NOT NULL),
+		  '[]'::jsonb
+		)
+		FROM access a LEFT JOIN pending p ON true
+		GROUP BY a.allowed`, userID, spaceID, after, limit).Scan(&allowed, &raw)
+	if err != nil {
+		return nil, false, err
+	}
+	events := []SpaceEvent{}
+	if err = json.Unmarshal(raw, &events); err != nil {
+		return nil, false, err
+	}
+	return events, allowed, nil
+}
+
 // AppendSpaceEvent writes the collaboration log and every currently eligible
 // webhook delivery into the caller's mutation transaction. Callers must not
 // commit their domain change when this returns an error.

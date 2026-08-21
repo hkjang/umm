@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestOpaqueOffsetCursorRoundTripAndValidation(t *testing.T) {
@@ -61,6 +62,24 @@ func TestCommentCreateErrorsPreserveRetryableFailures(t *testing.T) {
 				t.Fatalf("status = %d, want %d", status, test.want)
 			}
 		})
+	}
+}
+
+func TestOfflineCanvasMutationErrorsPreserveRetryableFailures(t *testing.T) {
+	if got := deleteNoteErrorStatus(pgx.ErrNoRows); got != http.StatusNotFound {
+		t.Fatalf("missing delete status = %d", got)
+	}
+	if got := deleteNoteErrorStatus(errors.New("commit failed")); got != http.StatusInternalServerError {
+		t.Fatalf("transient delete status = %d", got)
+	}
+	if got := createEdgeErrorStatus(pgx.ErrNoRows); got != http.StatusBadRequest {
+		t.Fatalf("invalid edge status = %d", got)
+	}
+	if got := createEdgeErrorStatus(&pgconn.PgError{Code: "23505"}); got != http.StatusBadRequest {
+		t.Fatalf("duplicate edge status = %d", got)
+	}
+	if got := createEdgeErrorStatus(errors.New("outbox unavailable")); got != http.StatusInternalServerError {
+		t.Fatalf("transient edge status = %d", got)
 	}
 }
 

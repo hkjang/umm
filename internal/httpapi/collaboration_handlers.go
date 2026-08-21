@@ -56,24 +56,18 @@ func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
 		case <-ticker.C:
-			rows, err := s.Store.Pool.Query(r.Context(), `SELECT sequence,event_type,resource_id,payload,actor_id,created_at FROM space_events WHERE space_id=$1 AND sequence>$2 ORDER BY sequence LIMIT 100`, spaceID, last)
+			events, allowed, err := s.Store.SpaceEvents(r.Context(), p.User.ID, spaceID, last, 100)
 			if err != nil {
 				continue
 			}
-			for rows.Next() {
-				var sequence int64
-				var typ string
-				var resource, actor *uuid.UUID
-				var payload json.RawMessage
-				var created time.Time
-				if rows.Scan(&sequence, &typ, &resource, &payload, &actor, &created) != nil {
-					continue
-				}
-				event, _ := json.Marshal(map[string]any{"sequence": sequence, "type": typ, "resourceId": resource, "actorId": actor, "payload": payload, "createdAt": created})
-				fmt.Fprintf(w, "id: %d\nevent: space-change\ndata: %s\n\n", sequence, event)
-				last = sequence
+			if !allowed {
+				return
 			}
-			rows.Close()
+			for _, item := range events {
+				event, _ := json.Marshal(item)
+				fmt.Fprintf(w, "id: %d\nevent: space-change\ndata: %s\n\n", item.Sequence, event)
+				last = item.Sequence
+			}
 			flusher.Flush()
 		}
 	}

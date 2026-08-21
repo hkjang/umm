@@ -15,6 +15,7 @@ import (
 	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // noteWriteRequest contains only client-editable note fields. Server-managed
@@ -364,7 +365,13 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 	var dreamID uuid.UUID
 	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT dream_id FROM dream_notes WHERE note_id=$1 AND user_id=$2`, id, p.User.ID).Scan(&dreamID)
 	if err := s.Store.DeleteNote(r.Context(), p.User.ID, id); err != nil {
-		writeError(w, 404, "삭제할 수 없는 메모입니다.")
+		status := deleteNoteErrorStatus(err)
+		message := "삭제할 수 없는 메모입니다."
+		if status == http.StatusInternalServerError {
+			message = "메모 삭제를 저장하지 못했습니다."
+			slog.Warn("note delete failed", "note_id", id, "user_id", p.User.ID, "error", err)
+		}
+		writeError(w, status, message)
 		return
 	}
 	if dreamID != uuid.Nil {
@@ -393,7 +400,13 @@ func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	created, err := s.Store.CreateEdge(r.Context(), p.User.ID, e)
 	if err != nil {
-		writeError(w, 400, "생각을 연결하지 못했습니다.")
+		status := createEdgeErrorStatus(err)
+		message := "생각을 연결할 수 없습니다."
+		if status == http.StatusInternalServerError {
+			message = "생각 연결을 저장하지 못했습니다."
+			slog.Warn("edge create failed", "space_id", spaceID, "user_id", p.User.ID, "error", err)
+		}
+		writeError(w, status, message)
 		return
 	}
 	var dreamID uuid.UUID
@@ -401,6 +414,24 @@ func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
 		_ = s.Dreams.Feedback(r.Context(), p.User.ID, dreamID, "connected")
 	}
 	writeJSON(w, 201, created)
+}
+
+func deleteNoteErrorStatus(err error) int {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
+func createEdgeErrorStatus(err error) int {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return http.StatusBadRequest
+	}
+	var databaseError *pgconn.PgError
+	if errors.As(err, &databaseError) && strings.HasPrefix(databaseError.Code, "23") {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 func (s *Server) relatedNotes(w http.ResponseWriter, r *http.Request) {
