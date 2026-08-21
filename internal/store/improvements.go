@@ -243,7 +243,6 @@ func (s *Store) TodayReview(ctx context.Context, userID uuid.UUID) (TodayReview,
 		LEFT JOIN note_reviews nr ON nr.note_id=n.id AND nr.user_id=$1
 		WHERE n.deleted_at IS NULL AND n.archived=false
 		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
-		  AND COALESCE((SELECT review_digest FROM user_preferences WHERE user_id=$1),true)
 		  AND (COALESCE(nr.pinned,false) OR (nr.review_at IS NOT NULL AND nr.review_at<=now()) OR
 		       (nr.review_at IS NULL AND COALESCE(nr.reviewed_at,n.updated_at)<now()-interval '14 days'))
 		ORDER BY COALESCE(nr.pinned,false) DESC,COALESCE(nr.review_at,nr.reviewed_at,n.updated_at),n.id LIMIT 8`, userID)
@@ -464,16 +463,30 @@ func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, par
 		return Comment{}, uuid.Nil, err
 	}
 	defer tx.Rollback(ctx)
-	var spaceID, noteAuthor uuid.UUID
+	var spaceID, noteAuthor, spaceOwner uuid.UUID
 	var noteAuthorCanView bool
 	err = tx.QueryRow(ctx, `
-		SELECT n.space_id,n.author_id,
-		       (sp.owner_id=n.author_id OR EXISTS(SELECT 1 FROM space_members author_member WHERE author_member.space_id=sp.id AND author_member.user_id=n.author_id))
+		SELECT n.space_id,n.author_id,sp.owner_id
 		FROM notes n JOIN spaces sp ON sp.id=n.space_id
-		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
-		WHERE n.id=$1 AND n.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.user_id=$2)`, noteID, userID).
-		Scan(&spaceID, &noteAuthor, &noteAuthorCanView)
+		WHERE n.id=$1 AND n.deleted_at IS NULL
+		FOR SHARE OF n,sp`, noteID).
+		Scan(&spaceID, &noteAuthor, &spaceOwner)
 	if err != nil {
+		return Comment{}, uuid.Nil, err
+	}
+	if spaceOwner != userID {
+		var currentMember uuid.UUID
+		err = tx.QueryRow(ctx, `
+			SELECT user_id FROM space_members
+			WHERE space_id=$1 AND user_id=$2
+			FOR KEY SHARE`, spaceID, userID).Scan(&currentMember)
+		if err != nil {
+			return Comment{}, uuid.Nil, err
+		}
+	}
+	if noteAuthor == spaceOwner {
+		noteAuthorCanView = true
+	} else if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM space_members WHERE space_id=$1 AND user_id=$2)`, spaceID, noteAuthor).Scan(&noteAuthorCanView); err != nil {
 		return Comment{}, uuid.Nil, err
 	}
 	if parentID != nil {

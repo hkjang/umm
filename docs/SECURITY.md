@@ -72,7 +72,7 @@ HSTS는 TLS로 도착한 요청 또는 명시적으로 신뢰한 proxy가 전달
 - payload는 일회 공개되는 subscription secret으로 HMAC-SHA256 서명되며 delivery ID와 Unix timestamp를 포함합니다.
 - 도메인 변경, SSE log, 구독별 delivery payload는 하나의 PostgreSQL 트랜잭션에 영속화되고 lease 기반 워커가 재시작 후 이어서 처리합니다. 구독 소유자의 활성 상태와 현재 공간 접근 권한을 실제 전송 직전에 다시 확인합니다. 중단 경계에서 같은 delivery가 다시 전송될 수 있으므로 수신 측은 delivery ID를 멱등 키로 사용합니다.
 - terminal delivery의 복사 payload는 즉시 `{}`로 비우고 상태·응답·오류 metadata는 30일 뒤 삭제해 원본 리소스보다 오래 민감 본문을 보존하지 않습니다.
-- 댓글 알림 대상과 Today 활동은 현재 공간 접근 권한 및 생각 삭제 상태를 다시 확인해 탈퇴 사용자나 삭제된 리소스로 정보가 새지 않도록 합니다.
+- 댓글 알림 대상과 Today 활동은 현재 공간 접근 권한 및 생각 삭제 상태를 다시 확인해 탈퇴 사용자나 삭제된 리소스로 정보가 새지 않도록 합니다. 댓글 작성 transaction은 호출자의 멤버십 행을 `FOR KEY SHARE`로 잠가 권한 회수와 생성이 겹칠 때 댓글·알림·공간 이벤트·webhook outbox가 이전 확인 결과로 커밋되지 않게 합니다.
 - CI는 Go 취약점 검사, npm high 이상 audit, PostgreSQL 17 통합·복구 시험, 다중 인스턴스 스모크, 마이그레이션 dry-run, 실제 바이너리를 대상으로 한 브라우저 end-to-end 시험을 수행합니다.
 - 태그 릴리스는 SPDX JSON SBOM, SHA-256 checksum, GitHub provenance 및 SBOM attestation을 이미지 archive와 함께 게시합니다.
 

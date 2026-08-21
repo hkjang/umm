@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,6 +86,63 @@ func TestTodayReviewStateIsIsolatedPerUserIntegration(t *testing.T) {
 	}
 	if !reviewContains(ownerReview.Review, noteID, true) {
 		t.Fatal("member review completion changed the owner's pinned state")
+	}
+}
+
+func TestTodayReviewDigestPreferenceOnlyHidesActivityIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	ownerID, memberID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	ownerName, memberName := "digest_owner_"+ownerID.String(), "digest_member_"+memberID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, memberID, memberName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO user_preferences(user_id,review_digest) VALUES($1,false),($2,true)`, ownerID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'digest preference boundary')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'view')`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content,updated_at) VALUES($1,$2,$3,'review item remains visible',now()-interval '30 days')`, noteID, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO note_reviews(user_id,note_id,pinned) VALUES($1,$2,true)`, ownerID, noteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO note_comments(note_id,author_id,body) VALUES($1,$2,'hidden activity')`, noteID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, memberID)
+
+	review, err := db.TodayReview(ctx, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reviewContains(review.Review, noteID, true) || review.Counts["review"] != 1 {
+		t.Fatalf("activity preference removed the primary review queue: %#v", review)
+	}
+	if len(review.Activity) != 0 || review.Counts["activity"] != 0 {
+		t.Fatalf("disabled activity preference still returned activity: %#v", review.Activity)
 	}
 }
 
@@ -338,6 +396,187 @@ func TestCreateCommentResolvesLongestPunctuationUsernameIntegration(t *testing.T
 	}
 	if len(comment.Mentions) != 2 || !got[bangName] || !got[dotName] || got[plainBangName] || got[plainDotName] {
 		t.Fatalf("longest punctuation usernames were not selected: %#v", comment.Mentions)
+	}
+}
+
+func TestCreateCommentSerializesMembershipRemovalIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	ownerID, memberID, spaceID, noteID, subscriptionID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	ownerName, memberName := "create_lock_owner_"+suffix, "create_lock_member_"+suffix
+	marker := "membership-gate-" + suffix
+	deleteMarker := "membership-delete-" + suffix
+	functionName := "test_comment_gate_" + suffix
+	triggerName := "test_comment_gate_trigger_" + suffix
+	var gateKey int64
+	if err = db.Pool.QueryRow(ctx, `SELECT (random()*2147483646)::bigint+1`).Scan(&gateKey); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, memberID, memberName); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, memberID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'comment membership lock')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'view')`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'membership-locked comment target')`, noteID, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO webhook_subscriptions(id,owner_id,name,url,secret_ciphertext,events) VALUES($1,$2,'comment create boundary','https://example.com/webhook','test-ciphertext',ARRAY['comment.created'])`, subscriptionID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	functionSQL := fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+		  IF NEW.body = '%s' THEN
+		    PERFORM pg_advisory_xact_lock(%d::bigint);
+		  END IF;
+		  RETURN NEW;
+		END $$`, functionName, marker, gateKey)
+	if _, err = db.Pool.Exec(ctx, functionSQL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, fmt.Sprintf(`CREATE TRIGGER %s BEFORE INSERT ON note_comments FOR EACH ROW EXECUTE FUNCTION %s()`, triggerName, functionName)); err != nil {
+		db.Pool.Exec(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+		t.Fatal(err)
+	}
+	defer func() {
+		db.Pool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON note_comments`, triggerName))
+		db.Pool.Exec(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	}()
+
+	gateConn, err := db.Pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gateConn.Release()
+	if _, err = gateConn.Exec(ctx, `SELECT pg_advisory_lock($1)`, gateKey); err != nil {
+		t.Fatal(err)
+	}
+	gateLocked := true
+	defer func() {
+		if gateLocked {
+			gateConn.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, gateKey)
+		}
+	}()
+
+	type commentResult struct {
+		comment Comment
+		err     error
+	}
+	commentDone := make(chan commentResult, 1)
+	go func() {
+		comment, _, createErr := db.CreateComment(context.Background(), memberID, noteID, nil, marker, nil)
+		commentDone <- commentResult{comment: comment, err: createErr}
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var waiting int
+		if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND classid=0::oid AND objid=$1::oid AND NOT granted`, gateKey).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			break
+		}
+		select {
+		case result := <-commentDone:
+			t.Fatalf("comment insert did not reach the concurrency gate: %v", result.err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for the comment insert gate")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	type deleteResult struct{ err error }
+	deleteDone := make(chan deleteResult, 1)
+	go func() {
+		query := fmt.Sprintf(`DELETE FROM space_members WHERE space_id=$1 AND user_id=$2 /* %s */`, deleteMarker)
+		_, deleteErr := db.Pool.Exec(context.Background(), query, spaceID, memberID)
+		deleteDone <- deleteResult{err: deleteErr}
+	}()
+
+	removalSerialized := false
+	var earlyDelete *deleteResult
+	deadline = time.Now().Add(10 * time.Second)
+	for !removalSerialized && earlyDelete == nil {
+		select {
+		case result := <-deleteDone:
+			earlyDelete = &result
+		default:
+		}
+		if earlyDelete != nil {
+			break
+		}
+		if err = db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE query LIKE '%'||$1||'%' AND wait_event_type='Lock')`, deleteMarker).Scan(&removalSerialized); err != nil {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if _, err = gateConn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, gateKey); err != nil {
+		t.Fatal(err)
+	}
+	gateLocked = false
+
+	var created commentResult
+	select {
+	case created = <-commentDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for comment creation")
+	}
+	if created.err != nil {
+		t.Fatalf("authorized comment creation failed: %v", created.err)
+	}
+	var deleted deleteResult
+	if earlyDelete != nil {
+		deleted = *earlyDelete
+	} else {
+		select {
+		case deleted = <-deleteDone:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for membership removal")
+		}
+	}
+	if deleted.err != nil {
+		t.Fatalf("membership removal failed: %v", deleted.err)
+	}
+	if !removalSerialized {
+		t.Fatal("membership removal committed while comment creation still used its earlier access check")
+	}
+	if _, _, err = db.CreateComment(ctx, memberID, noteID, nil, "after membership removal", nil); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("removed member retained comment creation access: %v", err)
+	}
+
+	var comments, events, deliveries int
+	if err = db.Pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM note_comments WHERE id=$1),
+		  (SELECT count(*) FROM space_events WHERE event_type='comment.created' AND resource_id=$1),
+		  (SELECT count(*) FROM webhook_deliveries WHERE subscription_id=$2 AND payload->>'resourceId'=$1::text)`,
+		created.comment.ID, subscriptionID).Scan(&comments, &events, &deliveries); err != nil {
+		t.Fatal(err)
+	}
+	if comments != 1 || events != 1 || deliveries != 1 {
+		t.Fatalf("serialized comment side effects mismatch: comments=%d events=%d deliveries=%d", comments, events, deliveries)
 	}
 }
 
