@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 func TestNormalizeTokenLimit(t *testing.T) {
@@ -28,6 +30,34 @@ func TestRedactSecrets(t *testing.T) {
 	got := redact(input)
 	if strings.Contains(got, "hello") || strings.Contains(got, "sk-test") || strings.Contains(got, "umm_key_") {
 		t.Fatalf("secret was not redacted: %s", got)
+	}
+}
+
+func TestTruncateSanitizesInvalidUTF8WithoutSplittingRunes(t *testing.T) {
+	value := "가" + string([]byte{0xff, 0xfe}) + "나다"
+	if got := truncate(value, 2); got != "가나" || !utf8.ValidString(got) {
+		t.Fatalf("truncate() = %q, want valid UTF-8 %q", got, "가나")
+	}
+	if got := truncate(value, 10); got != "가나다" || !utf8.ValidString(got) {
+		t.Fatalf("short truncate() = %q, want sanitized UTF-8 %q", got, "가나다")
+	}
+}
+
+func TestRequestChatBoundsGatewayErrorOnUTF8Boundary(t *testing.T) {
+	body := strings.Repeat("a", 299) + "한" + string([]byte{0xff}) + "tail"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	_, err := requestChat(context.Background(), server.Client(), server.URL, "", chatRequest{Model: "test-model"})
+	if err == nil {
+		t.Fatal("requestChat must surface the gateway error")
+	}
+	want := "AI gateway status 502: " + strings.Repeat("a", 299)
+	if err.Error() != want || !utf8.ValidString(err.Error()) {
+		t.Fatalf("gateway error = %q, want valid UTF-8 %q", err, want)
 	}
 }
 func TestQualityScoreRejectsTrivialDream(t *testing.T) {
@@ -244,6 +274,30 @@ func TestCallTextReportsTokenLimitBeforeFinalAnswer(t *testing.T) {
 	}
 	if inputTokens != 10 || outputTokens != 524288 {
 		t.Fatalf("truncated usage was not accumulated: input=%d output=%d", inputTokens, outputTokens)
+	}
+}
+
+func TestCallTextTimeoutBoundsAllRetries(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		time.Sleep(2 * time.Second)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": "너무 늦은 응답"}}},
+		})
+	}))
+	defer server.Close()
+
+	started := time.Now()
+	service := &Service{}
+	_, _, _, _, err := service.callText(context.Background(), GatewayConfig{
+		BaseURL: server.URL, TimeoutSeconds: 1, MaxRetries: MaxGatewayRetries,
+	}, "test-model", .2, 200, koreanOnlyInstruction, "사용자 메모")
+	if err == nil {
+		t.Fatal("timed-out gateway call unexpectedly succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("gateway timeout was applied once per retry: elapsed=%s calls=%d", elapsed, calls.Load())
 	}
 }
 

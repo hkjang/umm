@@ -167,7 +167,7 @@ func (s *OIDCService) Callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unable to provision OIDC user", 500)
 		return
 	}
-	session, err := s.Sessions.CreateSession(r.Context(), u.ID)
+	session, err := s.Sessions.CreateSession(r.Context(), u.ID, OriginOf(r))
 	if err != nil {
 		http.Error(w, "unable to create session", 500)
 		return

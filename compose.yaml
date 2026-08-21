@@ -17,10 +17,10 @@ services:
     build:
       context: .
       args:
-        VERSION: 0.6.1
-    image: umm:v0.6.1
+        VERSION: 0.8.1
+    image: umm:v0.8.1
     environment:
-      POSTGRES_DSN: postgres://umm:local-development-only@postgres:5432/umm?sslmode=disable
+      POSTGRES_DSN: "postgres://umm:local-development-only@postgres:5432/umm?sslmode=disable&pool_max_conns=16"
       BOOTSTRAP_ADMIN: admin
       BOOTSTRAP_ADMIN_PASSWORD: change-this-before-production
       ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef

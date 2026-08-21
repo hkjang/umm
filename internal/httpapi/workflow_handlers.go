@@ -130,18 +130,24 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "공간 공유 승인을 적용하지 못했습니다.")
 			return
 		}
-		_, _ = tx.Exec(r.Context(), `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id) VALUES($1,'space_shared','새 공간이 공유되었습니다','공유된 공간을 열어 생각을 함께 발전시켜 보세요.','space',$2)`, sharePayload.TargetUserID, resourceID)
+		if _, err = tx.Exec(r.Context(), `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id,resource_space_id) VALUES($1,'space_shared','새 공간이 공유되었습니다','공유된 공간을 열어 생각을 함께 발전시켜 보세요.','space',$2,$2)`, sharePayload.TargetUserID, resourceID); err != nil {
+			writeError(w, 500, "공간 공유 알림을 저장하지 못했습니다.")
+			return
+		}
 	}
 	if _, err = tx.Exec(r.Context(), `UPDATE approval_requests SET status=$2,comment=CASE WHEN $3='' THEN comment ELSE $3 END,reviewer_id=$4,reviewed_at=now() WHERE id=$1`, id, body.Decision, body.Comment, p.User.ID); err != nil {
 		writeError(w, 500, "검토 결과를 저장하지 못했습니다.")
 		return
 	}
+	if body.Decision == "approved" && action == "space_share" {
+		if err = s.Store.AppendSpaceEvent(r.Context(), tx, p.User.ID, resourceID, "member.updated", sharePayload.TargetUserID, sharePayload); err != nil {
+			writeError(w, 500, "공유 변경 이벤트를 저장하지 못했습니다.")
+			return
+		}
+	}
 	if err = tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "검토 결과를 확정하지 못했습니다.")
 		return
-	}
-	if body.Decision == "approved" && action == "space_share" {
-		s.publishSpaceEvent(r, resourceID, "member.updated", sharePayload.TargetUserID, sharePayload)
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "approval."+body.Decision, "approval", id.String(), map[string]any{})
 	writeJSON(w, 200, map[string]string{"status": body.Decision})

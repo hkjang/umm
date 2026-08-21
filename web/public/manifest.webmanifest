@@ -1,0 +1,44 @@
+{
+  "name": "umm · Spatial Thought Memory",
+  "short_name": "umm",
+  "description": "Offline-first spatial thought memory and Dream review",
+  "start_url": "/today",
+  "display": "standalone",
+  "background_color": "#f5f2ea",
+  "theme_color": "#765c96",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "/umm-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "share_target": {
+    "action": "/canvas",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
+  "shortcuts": [
+    {
+      "name": "오늘의 리뷰",
+      "short_name": "리뷰",
+      "url": "/today"
+    },
+    {
+      "name": "My Space",
+      "short_name": "Space",
+      "url": "/canvas"
+    },
+    {
+      "name": "Dreams",
+      "short_name": "Dreams",
+      "url": "/dreams"
+    }
+  ]
+}

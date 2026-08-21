@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"slices"
 	"time"
@@ -18,12 +19,68 @@ type preferences struct {
 	Theme              string     `json:"theme"`
 	Locale             string     `json:"locale"`
 	EdgeStyle          string     `json:"edge_style"`
+	ReviewDigest       bool       `json:"review_digest"`
+}
+
+// preferencesPatch preserves field presence so a PUT can update one setting
+// without copying a stale snapshot over unrelated settings. In particular,
+// dream_pause_until uses RawMessage to distinguish an omitted field from an
+// explicit null, which clears a pause.
+type preferencesPatch struct {
+	DreamEnabled       *bool           `json:"dream_enabled"`
+	DreamFrequency     *string         `json:"dream_frequency"`
+	DreamStyle         *string         `json:"dream_style"`
+	DreamNotifications *bool           `json:"dream_notifications"`
+	IncludeOldNotes    *bool           `json:"include_old_notes"`
+	DreamPauseUntil    json.RawMessage `json:"dream_pause_until"`
+	Theme              *string         `json:"theme"`
+	Locale             *string         `json:"locale"`
+	EdgeStyle          *string         `json:"edge_style"`
+	ReviewDigest       *bool           `json:"review_digest"`
+}
+
+func (patch preferencesPatch) apply(v *preferences) error {
+	if patch.DreamEnabled != nil {
+		v.DreamEnabled = *patch.DreamEnabled
+	}
+	if patch.DreamFrequency != nil {
+		v.DreamFrequency = *patch.DreamFrequency
+	}
+	if patch.DreamStyle != nil {
+		v.DreamStyle = *patch.DreamStyle
+	}
+	if patch.DreamNotifications != nil {
+		v.DreamNotifications = *patch.DreamNotifications
+	}
+	if patch.IncludeOldNotes != nil {
+		v.IncludeOldNotes = *patch.IncludeOldNotes
+	}
+	if len(patch.DreamPauseUntil) > 0 {
+		var pauseUntil *time.Time
+		if err := json.Unmarshal(patch.DreamPauseUntil, &pauseUntil); err != nil {
+			return err
+		}
+		v.DreamPauseUntil = pauseUntil
+	}
+	if patch.Theme != nil {
+		v.Theme = *patch.Theme
+	}
+	if patch.Locale != nil {
+		v.Locale = *patch.Locale
+	}
+	if patch.EdgeStyle != nil {
+		v.EdgeStyle = *patch.EdgeStyle
+	}
+	if patch.ReviewDigest != nil {
+		v.ReviewDigest = *patch.ReviewDigest
+	}
+	return nil
 }
 
 func (s *Server) getPreferences(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	var v preferences
-	err := s.Store.Pool.QueryRow(r.Context(), `SELECT dream_enabled,dream_frequency,dream_style,dream_notifications,include_old_notes,dream_pause_until,theme,locale,edge_style FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.DreamEnabled, &v.DreamFrequency, &v.DreamStyle, &v.DreamNotifications, &v.IncludeOldNotes, &v.DreamPauseUntil, &v.Theme, &v.Locale, &v.EdgeStyle)
+	err := s.Store.Pool.QueryRow(r.Context(), `SELECT dream_enabled,dream_frequency,dream_style,dream_notifications,include_old_notes,dream_pause_until,theme,locale,edge_style,review_digest FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.DreamEnabled, &v.DreamFrequency, &v.DreamStyle, &v.DreamNotifications, &v.IncludeOldNotes, &v.DreamPauseUntil, &v.Theme, &v.Locale, &v.EdgeStyle, &v.ReviewDigest)
 	if err != nil {
 		writeError(w, 500, "개인 설정을 불러오지 못했습니다.")
 		return
@@ -33,9 +90,36 @@ func (s *Server) getPreferences(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	var v preferences
-	if decodeJSON(w, r, &v) != nil {
+	var patch preferencesPatch
+	if decodeJSON(w, r, &patch) != nil {
 		writeError(w, 400, "개인 설정 형식이 올바르지 않습니다.")
+		return
+	}
+	var dreamCfg struct {
+		AllowUserDisable bool `json:"allow_user_disable"`
+	}
+	_ = s.Store.GetSetting(r.Context(), "dream", &dreamCfg)
+
+	// Lock, read, merge, and write in one transaction. Two independent partial
+	// updates are therefore serialized and each one merges over the latest row.
+	tx, err := s.Store.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "개인 설정을 저장하지 못했습니다.")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var v preferences
+	if err = tx.QueryRow(r.Context(), `SELECT dream_enabled,dream_frequency,dream_style,dream_notifications,include_old_notes,dream_pause_until,theme,locale,edge_style,review_digest FROM user_preferences WHERE user_id=$1 FOR UPDATE`, p.User.ID).
+		Scan(&v.DreamEnabled, &v.DreamFrequency, &v.DreamStyle, &v.DreamNotifications, &v.IncludeOldNotes, &v.DreamPauseUntil, &v.Theme, &v.Locale, &v.EdgeStyle, &v.ReviewDigest); err != nil {
+		writeError(w, 500, "개인 설정을 불러오지 못했습니다.")
+		return
+	}
+	if patch.apply(&v) != nil {
+		writeError(w, 400, "개인 설정 형식이 올바르지 않습니다.")
+		return
+	}
+	if !slices.Contains([]string{"ko", "en"}, v.Locale) {
+		writeError(w, 400, "지원하지 않는 언어입니다.")
 		return
 	}
 	if !slices.Contains([]string{"daily", "three_week", "weekly"}, v.DreamFrequency) {
@@ -51,24 +135,21 @@ func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if v.EdgeStyle == "" {
-		_ = s.Store.Pool.QueryRow(r.Context(), `SELECT edge_style FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.EdgeStyle)
-		if v.EdgeStyle == "" {
-			v.EdgeStyle = "bezier"
-		}
+		v.EdgeStyle = "bezier"
 	}
 	if !slices.Contains([]string{"bezier", "smoothstep", "straight"}, v.EdgeStyle) {
 		writeError(w, 400, "연결선 형태가 올바르지 않습니다.")
 		return
 	}
-	var dreamCfg struct {
-		AllowUserDisable bool `json:"allow_user_disable"`
-	}
-	_ = s.Store.GetSetting(r.Context(), "dream", &dreamCfg)
 	if !dreamCfg.AllowUserDisable {
 		v.DreamEnabled = true
 	}
-	_, err := s.Store.Pool.Exec(r.Context(), `UPDATE user_preferences SET dream_enabled=$2,dream_frequency=$3,dream_style=$4,dream_notifications=$5,include_old_notes=$6,dream_pause_until=$7,theme=$8,locale=$9,edge_style=$10,updated_at=now() WHERE user_id=$1`, p.User.ID, v.DreamEnabled, v.DreamFrequency, v.DreamStyle, v.DreamNotifications, v.IncludeOldNotes, v.DreamPauseUntil, v.Theme, v.Locale, v.EdgeStyle)
+	_, err = tx.Exec(r.Context(), `UPDATE user_preferences SET dream_enabled=$2,dream_frequency=$3,dream_style=$4,dream_notifications=$5,include_old_notes=$6,dream_pause_until=$7,theme=$8,locale=$9,edge_style=$10,review_digest=$11,updated_at=now() WHERE user_id=$1`, p.User.ID, v.DreamEnabled, v.DreamFrequency, v.DreamStyle, v.DreamNotifications, v.IncludeOldNotes, v.DreamPauseUntil, v.Theme, v.Locale, v.EdgeStyle, v.ReviewDigest)
 	if err != nil {
+		writeError(w, 500, "개인 설정을 저장하지 못했습니다.")
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "개인 설정을 저장하지 못했습니다.")
 		return
 	}
@@ -204,12 +285,22 @@ func (s *Server) dreamHistory(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "dreams:read") {
 		return
 	}
-	v, err := s.Dreams.History(r.Context(), principal(r).User.ID)
+	offset, ok := decodeOffsetCursor(r.URL.Query().Get("cursor"))
+	if !ok {
+		writeError(w, 400, "Dream 커서가 올바르지 않습니다.")
+		return
+	}
+	limit := parsePageLimit(r, 30, 100)
+	v, hasMore, err := s.Dreams.HistoryPage(r.Context(), principal(r).User.ID, limit, offset)
 	if err != nil {
 		writeError(w, 500, "Dream 기록을 불러오지 못했습니다.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"dreams": v})
+	next := ""
+	if hasMore {
+		next = encodeOffsetCursor(offset + limit)
+	}
+	writeJSON(w, 200, map[string]any{"dreams": v, "nextCursor": next})
 }
 func (s *Server) dreamFeedback(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "dreams:read") {
@@ -256,7 +347,6 @@ func (s *Server) acceptDream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "dream.accept", "dream", id.String(), map[string]any{"noteId": note.ID, "spaceId": note.SpaceID})
-	s.publishSpaceEvent(r, note.SpaceID, "note.created", note.ID, note)
 	writeJSON(w, http.StatusCreated, note)
 }
 
@@ -271,6 +361,9 @@ func (s *Server) regenerateDream(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	view, err := s.Dreams.Regenerate(r.Context(), p.User.ID, id)
 	if err != nil {
+		if writeAIQuotaProblem(w, r, err) {
+			return
+		}
 		writeError(w, 400, err.Error())
 		return
 	}
@@ -296,6 +389,9 @@ func (s *Server) developDream(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	result, err := s.Dreams.Develop(r.Context(), p.User.ID, id, body.Mode)
 	if err != nil {
+		if writeAIQuotaProblem(w, r, err) {
+			return
+		}
 		writeError(w, 400, err.Error())
 		return
 	}
@@ -328,8 +424,6 @@ func (s *Server) saveDevelopedDream(w http.ResponseWriter, r *http.Request) {
 	if result.Created {
 		status = http.StatusCreated
 		s.Store.Audit(r.Context(), &p.User.ID, "dream.development.save", "dream", id.String(), map[string]any{"noteId": result.Note.ID, "spaceId": result.Note.SpaceID})
-		s.publishSpaceEvent(r, result.Note.SpaceID, "note.created", result.Note.ID, result.Note)
-		s.publishSpaceEvent(r, result.Edge.SpaceID, "edge.created", result.Edge.ID, result.Edge)
 	}
 	writeJSON(w, status, result)
 }

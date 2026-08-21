@@ -3,7 +3,6 @@ package httpapi
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -11,23 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/realtime"
 )
 
-func (s *Server) publishSpaceEvent(r *http.Request, spaceID uuid.UUID, eventType string, resourceID uuid.UUID, payload any) {
-	p := principal(r)
-	raw, _ := json.Marshal(payload)
-	var resource any = resourceID
-	if resourceID == uuid.Nil {
-		resource = nil
-	}
-	tag, err := s.Store.Pool.Exec(r.Context(), `INSERT INTO space_events(space_id,actor_id,event_type,resource_id,payload) VALUES($1,$2,$3,$4,$5)`, spaceID, p.User.ID, eventType, resource, raw)
-	if err != nil {
-		slog.Warn("space event publish failed", "space_id", spaceID, "event_type", eventType, "error", err)
-	} else if tag.RowsAffected() != 1 {
-		slog.Warn("space event was not stored", "space_id", spaceID, "event_type", eventType)
-	}
-}
-
+// spaceEvents streams the collaboration log. The reader is woken by the
+// realtime hub's PostgreSQL LISTEN connection, so an idle space costs no
+// queries at all. The ticker is only a safety net: it runs slowly while the
+// listener is healthy and takes over at the old poll rate if it is not.
 func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:read") {
 		return
@@ -58,12 +47,56 @@ func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request) {
 	if last == 0 && r.Header.Get("Last-Event-ID") == "" && r.URL.Query().Get("after") == "" {
 		_ = s.Store.Pool.QueryRow(r.Context(), `SELECT COALESCE(max(sequence),0) FROM space_events WHERE space_id=$1`, spaceID).Scan(&last)
 	}
-	ticker := time.NewTicker(time.Second)
+	// Subscribing before the first drain closes the race where an event is
+	// committed between reading the cursor above and registering here.
+	var pushed <-chan struct{}
+	if s.Events != nil {
+		subscription := s.Events.Subscribe(spaceID)
+		defer subscription.Close()
+		pushed = subscription.C()
+	}
+	ticker := time.NewTicker(sseFallbackInterval(s.Events))
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	defer heartbeat.Stop()
 	fmt.Fprint(w, ": umm collaboration stream\n\n")
 	flusher.Flush()
+	// Each batch re-checks membership inside the same statement, so a stream
+	// cannot keep delivering events after its reader loses access to the space.
+	drain := func() (wrote bool, keepStreaming bool) {
+		events, allowed, err := s.Store.SpaceEvents(r.Context(), p.User.ID, spaceID, last, 100)
+		if err != nil {
+			return false, true
+		}
+		if !allowed {
+			return false, false
+		}
+		for _, item := range events {
+			event, _ := json.Marshal(item)
+			fmt.Fprintf(w, "id: %d\nevent: space-change\ndata: %s\n\n", item.Sequence, event)
+			last = item.Sequence
+			wrote = true
+		}
+		return wrote, true
+	}
+	// One batch is bounded, so keep draining until the query comes back empty
+	// before parking on the next signal. Returns false once the reader has lost
+	// access and the stream must end.
+	drainAll := func() bool {
+		for {
+			wrote, keepStreaming := drain()
+			if !keepStreaming {
+				return false
+			}
+			flusher.Flush()
+			if !wrote {
+				return true
+			}
+		}
+	}
+	if !drainAll() {
+		return
+	}
 	for {
 		select {
 		case <-r.Context().Done():
@@ -71,28 +104,32 @@ func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request) {
 		case <-heartbeat.C:
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
+		case <-pushed:
+			if !drainAll() {
+				return
+			}
+			// Listener state transitions use the same coalesced wake-up as
+			// committed events. Refreshing here switches a disconnected stream
+			// from the 30-second safety net to one-second polling immediately,
+			// and restores the slow interval as soon as LISTEN reconnects.
+			ticker.Reset(sseFallbackInterval(s.Events))
 		case <-ticker.C:
-			rows, err := s.Store.Pool.Query(r.Context(), `SELECT sequence,event_type,resource_id,payload,actor_id,created_at FROM space_events WHERE space_id=$1 AND sequence>$2 ORDER BY sequence LIMIT 100`, spaceID, last)
-			if err != nil {
-				continue
+			ticker.Reset(sseFallbackInterval(s.Events))
+			if !drainAll() {
+				return
 			}
-			for rows.Next() {
-				var sequence int64
-				var typ string
-				var resource, actor *uuid.UUID
-				var payload json.RawMessage
-				var created time.Time
-				if rows.Scan(&sequence, &typ, &resource, &payload, &actor, &created) != nil {
-					continue
-				}
-				event, _ := json.Marshal(map[string]any{"sequence": sequence, "type": typ, "resourceId": resource, "actorId": actor, "payload": payload, "createdAt": created})
-				fmt.Fprintf(w, "id: %d\nevent: space-change\ndata: %s\n\n", sequence, event)
-				last = sequence
-			}
-			rows.Close()
-			flusher.Flush()
 		}
 	}
+}
+
+// sseFallbackInterval keeps the pre-v0.8 one second poll only while the
+// PostgreSQL listener is unavailable. A healthy listener needs the timer purely
+// as a backstop against a missed notification.
+func sseFallbackInterval(hub *realtime.Hub) time.Duration {
+	if hub != nil && hub.Listening() {
+		return 30 * time.Second
+	}
+	return time.Second
 }
 
 func (s *Server) listSpaceMembers(w http.ResponseWriter, r *http.Request) {
@@ -104,11 +141,20 @@ func (s *Server) listSpaceMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	if !s.Store.CanViewSpace(r.Context(), p.User.ID, spaceID) {
-		writeError(w, 404, "공간을 찾을 수 없습니다.")
-		return
-	}
-	rows, err := s.Store.Pool.Query(r.Context(), `SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),'owner'::text FROM spaces sp JOIN users u ON u.id=sp.owner_id WHERE sp.id=$1 UNION ALL SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),sm.permission FROM space_members sm JOIN users u ON u.id=sm.user_id WHERE sm.space_id=$1 ORDER BY 5,3`, spaceID)
+	rows, err := s.Store.Pool.Query(r.Context(), `
+		WITH authorized_space AS (
+		  SELECT sp.id,sp.owner_id FROM spaces sp
+		  LEFT JOIN space_members caller ON caller.space_id=sp.id AND caller.user_id=$2
+		  WHERE sp.id=$1 AND (sp.owner_id=$2 OR caller.user_id=$2)
+		)
+		SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),'owner'::text
+		FROM authorized_space asp JOIN users u ON u.id=asp.owner_id
+		UNION ALL
+		SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),member.permission
+		FROM authorized_space asp
+		JOIN space_members member ON member.space_id=asp.id
+		JOIN users u ON u.id=member.user_id
+		ORDER BY 5,3`, spaceID, p.User.ID)
 	if err != nil {
 		writeError(w, 500, "공유 사용자를 불러오지 못했습니다.")
 		return
@@ -118,9 +164,19 @@ func (s *Server) listSpaceMembers(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id uuid.UUID
 		var username, name, email, permission string
-		if rows.Scan(&id, &username, &name, &email, &permission) == nil {
-			members = append(members, map[string]any{"id": id, "username": username, "displayName": name, "email": email, "permission": permission})
+		if err := rows.Scan(&id, &username, &name, &email, &permission); err != nil {
+			writeError(w, 500, "공유 사용자를 읽지 못했습니다.")
+			return
 		}
+		members = append(members, map[string]any{"id": id, "username": username, "displayName": name, "email": email, "permission": permission})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "공유 사용자를 불러오지 못했습니다.")
+		return
+	}
+	if len(members) == 0 {
+		writeError(w, 404, "공간을 찾을 수 없습니다.")
+		return
 	}
 	writeJSON(w, 200, map[string]any{"members": members, "canManage": s.canManageSpace(r, p.User.ID, spaceID)})
 }
@@ -177,21 +233,40 @@ func (s *Server) shareSpace(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 202, map[string]any{"required": true, "requestId": requestID, "status": "pending"})
 		return
 	}
-	if err := s.applySpaceShare(r, spaceID, targetID, body.Permission); err != nil {
+	if err := s.applySpaceShare(r, spaceID, targetID, body.Permission, payload); err != nil {
 		writeError(w, 500, "공간을 공유하지 못했습니다.")
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "space.share", "space", spaceID.String(), payload)
-	s.publishSpaceEvent(r, spaceID, "member.updated", targetID, payload)
 	writeJSON(w, 201, map[string]any{"required": false, "status": "shared"})
 }
 
-func (s *Server) applySpaceShare(r *http.Request, spaceID, targetID uuid.UUID, permission string) error {
-	_, err := s.Store.Pool.Exec(r.Context(), `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,$3) ON CONFLICT(space_id,user_id) DO UPDATE SET permission=EXCLUDED.permission`, spaceID, targetID, permission)
-	if err == nil {
-		_, _ = s.Store.Pool.Exec(r.Context(), `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id) VALUES($1,'space_shared','새 공간이 공유되었습니다','공유된 공간을 열어 생각을 함께 발전시켜 보세요.','space',$2)`, targetID, spaceID)
+func (s *Server) applySpaceShare(r *http.Request, spaceID, targetID uuid.UUID, permission string, payload any) error {
+	actorID := principal(r).User.ID
+	tx, err := s.Store.Pool.Begin(r.Context())
+	if err != nil {
+		return err
 	}
-	return err
+	defer tx.Rollback(r.Context())
+	command, err := tx.Exec(r.Context(), `
+		INSERT INTO space_members(space_id,user_id,permission)
+		SELECT $1,$2,$3 WHERE EXISTS(
+		  SELECT 1 FROM spaces sp LEFT JOIN space_members actor_member ON actor_member.space_id=sp.id AND actor_member.user_id=$4
+		  WHERE sp.id=$1 AND (sp.owner_id=$4 OR actor_member.permission='manage'))
+		ON CONFLICT(space_id,user_id) DO UPDATE SET permission=EXCLUDED.permission`, spaceID, targetID, permission, actorID)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf("space share permission changed before commit")
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id,resource_space_id) VALUES($1,'space_shared','새 공간이 공유되었습니다','공유된 공간을 열어 생각을 함께 발전시켜 보세요.','space',$2,$2)`, targetID, spaceID); err != nil {
+		return err
+	}
+	if err = s.Store.AppendSpaceEvent(r.Context(), tx, actorID, spaceID, "member.updated", targetID, payload); err != nil {
+		return err
+	}
+	return tx.Commit(r.Context())
 }
 
 func (s *Server) removeSpaceMember(w http.ResponseWriter, r *http.Request) {
@@ -211,12 +286,33 @@ func (s *Server) removeSpaceMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "공간 공유를 관리할 권한이 없습니다.")
 		return
 	}
-	cmd, err := s.Store.Pool.Exec(r.Context(), `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID)
-	if err != nil || cmd.RowsAffected() == 0 {
+	tx, err := s.Store.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "공유 사용자를 제거하지 못했습니다.")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	cmd, err := tx.Exec(r.Context(), `
+		DELETE FROM space_members target USING spaces sp
+		LEFT JOIN space_members actor_member ON actor_member.space_id=sp.id AND actor_member.user_id=$3
+		WHERE target.space_id=$1 AND target.user_id=$2 AND sp.id=target.space_id
+		  AND (sp.owner_id=$3 OR actor_member.permission='manage')`, spaceID, memberID, p.User.ID)
+	if err != nil {
+		writeError(w, 500, "공유 사용자를 제거하지 못했습니다.")
+		return
+	}
+	if cmd.RowsAffected() == 0 {
 		writeError(w, 404, "공유 사용자를 찾을 수 없습니다.")
 		return
 	}
-	s.publishSpaceEvent(r, spaceID, "member.removed", memberID, map[string]any{})
+	if err = s.Store.AppendSpaceEvent(r.Context(), tx, p.User.ID, spaceID, "member.removed", memberID, map[string]any{}); err != nil {
+		writeError(w, 500, "공유 변경 이벤트를 저장하지 못했습니다.")
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "공유 사용자 제거를 확정하지 못했습니다.")
+		return
+	}
 	s.Store.Audit(r.Context(), &p.User.ID, "space.unshare", "space", spaceID.String(), map[string]any{"userId": memberID})
 	w.WriteHeader(http.StatusNoContent)
 }

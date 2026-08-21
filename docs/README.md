@@ -2,6 +2,8 @@
 
 `umm`은 생각을 문서나 폴더로 정리하기 전에 공간에 먼저 붙이고, 연결하고, 밤사이 **Dream**으로 다시 발견하는 **Spatial Thought Memory** 플랫폼입니다.
 
+현재 문서 기준은 **v0.8.1**입니다. v0.8.0의 푸시 기반 실시간 협업(LISTEN/NOTIFY), 인덱스 검색, 선택적 게이트웨이 임베딩, 남용 방지, 응답별 CSP nonce, English·다크 모드·마크다운 가져오기에 더해, 멤버 제거와 콘텐츠 조회가 겹치는 순간에도 Canvas·이력·댓글·백링크·멤버 목록·내보내기의 접근권한을 원자적으로 다시 확인합니다.
+
 ---
 
 ## 📚 공식 기술 문서 (PDF 다운로드 & 바로보기)
@@ -20,7 +22,7 @@
   - 무한 캔버스 조작, 포스트잇 단축키, 연관 생각, 인력(Gravity), 내보내기 가이드
 
 ### 2. 아키텍처 및 시스템 설계
-- 📄 **[실행 아키텍처 및 불변 조건 (PDF)](umm_architecture.pdf)** (`docs/umm_architecture.pdf`) · [MD](architecture.md)
+- 📄 **[실행 아키텍처 및 불변 조건 (PDF)](umm_architecture.pdf)** (`docs/umm_architecture.pdf`) · [MD](ARCHITECTURE.md)
   - 단일 이미지 오프라인 구조, PostgreSQL 이벤트 스트림, n-gram 의미 분석, Dream 파이프라인
 - 📄 **[보안 및 키 체계 (Markdown)](SECURITY.md)**
   - AES-256-GCM 봉투 암호화 및 Scoped Key 권한 모델
@@ -35,7 +37,12 @@
 - 📄 **[API & MCP 연동 가이드 (PDF)](umm_api_guide.pdf)** (`docs/umm_api_guide.pdf`) · [MD](api-guide.md)
   - REST API 명세, SSE 실시간 동기화, Model Context Protocol(MCP) JSON-RPC 스펙
 - 📄 **[OpenAPI 3.1 명세 (YAML)](openapi.yaml)**
-  - REST API 공식 계약 스키마
+  - REST API 공식 계약 스키마. CI가 라우터와 대조해 문서와 실제 API가 어긋나면 빌드를 실패시킵니다
+
+### 5. 릴리스 노트
+- 📄 **[v0.8.1 — 권한 경계를 끝까지 지키는 패치](releases/v0.8.1.md)**
+- 📄 **[v0.8.0 — 많아져도 버티는 umm](releases/v0.8.0.md)**
+- 📄 **[v0.7.0 — 생각을 다시 만나고, 안전하게 협업하기](releases/v0.7.0.md)**
 
 ---
 
@@ -43,7 +50,7 @@
 
 ```bash
 # 1. 패키지 이미지 로드
-gzip -dc umm-v0.6.1.tar.gz | docker load
+gzip -dc umm-v0.8.1.tar.gz | docker load
 
 # 2. 필수 환경변수 4개로 컨테이너 실행
 docker run -d --name umm --restart unless-stopped \
@@ -52,7 +59,8 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-admin-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.6.1
+  umm:v0.8.1
 ```
 
 - **접속 주소**: `http://localhost:8080` (초기 관리자 계정: `admin`)
+- 선택 환경변수는 `ENCRYPTION_KEY_PREVIOUS`, `UMM_HTTP_ADDR`, `UMM_TRUSTED_PROXY_CIDRS`, 표준 `OTEL_EXPORTER_OTLP_*`입니다. 필수 환경변수는 네 개로 유지됩니다. `UMM_TRUSTED_PROXY_CIDRS`를 비우면 클라이언트가 보낸 forwarding header는 신뢰하지 않습니다.

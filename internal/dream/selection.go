@@ -40,6 +40,7 @@ func (s *Service) selectSources(ctx context.Context, cfg Config, userID uuid.UUI
 		JOIN spaces sp ON sp.id=n.space_id
 		WHERE n.author_id=$1 AND n.deleted_at IS NULL AND n.source!='dream'
 		  AND n.ai_excluded=false AND sp.ai_excluded=false
+		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
 		  AND n.updated_at>now()-make_interval(days=>$2)
 		  AND length(trim(n.content))>0
 		GROUP BY n.space_id
@@ -55,12 +56,14 @@ func (s *Service) selectSources(ctx context.Context, cfg Config, userID uuid.UUI
 		recentLimit -= 2
 	}
 	rows, err := s.Store.Pool.Query(ctx, `
-		SELECT id,space_id,content,x,y,updated_at
-		FROM notes
-		WHERE author_id=$1 AND space_id=$2 AND deleted_at IS NULL AND source!='dream'
-		  AND ai_excluded=false AND updated_at>now()-make_interval(days=>$3)
+		SELECT n.id,n.space_id,n.content,n.x,n.y,n.updated_at
+		FROM notes n JOIN spaces sp ON sp.id=n.space_id
+		WHERE n.author_id=$1 AND n.space_id=$2 AND n.deleted_at IS NULL AND n.source!='dream'
+		  AND n.ai_excluded=false AND sp.ai_excluded=false
+		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
+		  AND n.updated_at>now()-make_interval(days=>$3)
 		  AND length(trim(content))>0
-		ORDER BY updated_at DESC LIMIT $4`, userID, spaceID, cfg.ContextDays, recentLimit)
+		ORDER BY n.updated_at DESC LIMIT $4`, userID, spaceID, cfg.ContextDays, recentLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -76,12 +79,14 @@ func (s *Service) selectSources(ctx context.Context, cfg Config, userID uuid.UUI
 	rows.Close()
 	if includeOld && len(sources) < cfg.MaxContextNotes {
 		oldRows, oldErr := s.Store.Pool.Query(ctx, `
-			SELECT id,space_id,content,x,y,updated_at
-			FROM notes
-			WHERE author_id=$1 AND space_id=$2 AND deleted_at IS NULL AND source!='dream'
-			  AND ai_excluded=false AND updated_at<=now()-make_interval(days=>$3)
+			SELECT n.id,n.space_id,n.content,n.x,n.y,n.updated_at
+			FROM notes n JOIN spaces sp ON sp.id=n.space_id
+			WHERE n.author_id=$1 AND n.space_id=$2 AND n.deleted_at IS NULL AND n.source!='dream'
+			  AND n.ai_excluded=false AND sp.ai_excluded=false
+			  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
+			  AND n.updated_at<=now()-make_interval(days=>$3)
 			  AND length(trim(content))>0
-			ORDER BY updated_at ASC LIMIT $4`, userID, spaceID, cfg.ContextDays, cfg.MaxContextNotes-len(sources))
+			ORDER BY n.updated_at ASC LIMIT $4`, userID, spaceID, cfg.ContextDays, cfg.MaxContextNotes-len(sources))
 		if oldErr == nil {
 			for oldRows.Next() {
 				var note sourceNote

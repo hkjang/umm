@@ -1,12 +1,19 @@
 {
   "name": "umm-web",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.8.1",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
-    "lint": "tsc -b --pretty false",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "oxlint src && prettier --check src",
+    "format": "prettier --write src",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:offline-queue": "node scripts/verify-offline-queue.mjs",
+    "verify:pwa": "node scripts/verify-pwa.mjs",
+    "e2e": "playwright test",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
@@ -23,11 +30,18 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.2",
+    "@types/node": "^26.2.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "@vitejs/plugin-react": "6.0.5",
+    "jsdom": "30.0.1",
     "marked": "^18.0.9",
+    "oxlint": "1.79.0",
+    "prettier": "3.9.6",
     "typescript": "7.0.2",
-    "vite": "8.2.1"
+    "vite": "8.2.1",
+    "vitest": "4.1.11"
   }
 }

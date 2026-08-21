@@ -11,3 +11,7 @@ web/vite.config.js
 web/vite.config.d.ts
 bin/
 cookies.txt
+web/test-results/
+web/playwright-report/
+web/blob-report/
+web/.playwright/

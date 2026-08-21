@@ -11,5 +11,5 @@ export default defineConfig({
       '/healthz': 'http://localhost:8080',
     },
   },
-  build: { sourcemap: false, target: 'es2022' },
+  build: { sourcemap: false, target: 'es2022', manifest: 'asset-manifest.json' },
 });

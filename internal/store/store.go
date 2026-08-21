@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,7 +18,24 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Store struct{ Pool *pgxpool.Pool }
+// Store owns the database pool. Cipher is optional and only needed for the
+// settings that hold encrypted credentials.
+type Store struct {
+	Pool   *pgxpool.Pool
+	Cipher Decrypter
+
+	embeddings        embeddingCache
+	leaseConfig       *pgx.ConnConfig
+	aiLeaseSlots      chan struct{}
+	webhookLeaseSlots chan struct{}
+}
+
+const (
+	// MaxAILeaseConnections bounds long Gateway authorization transactions.
+	MaxAILeaseConnections = 2
+	// MaxWebhookLeaseConnections matches the bounded delivery worker count.
+	MaxWebhookLeaseConnections = 3
+)
 
 type User struct {
 	ID          uuid.UUID  `json:"id"`
@@ -80,6 +98,8 @@ type NoteSearchResult struct {
 	Content   string    `json:"content"`
 	Kind      string    `json:"kind"`
 	UpdatedAt time.Time `json:"updatedAt"`
+	Score     float64   `json:"score"`
+	Reason    string    `json:"reason"`
 }
 type ThoughtCluster struct {
 	ID       string      `json:"id"`
@@ -102,7 +122,12 @@ type NoteRevision struct {
 }
 
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse POSTGRES_DSN: %w", err)
+	}
+	applyPoolDefaults(poolConfig)
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +135,98 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
-	return &Store{Pool: pool}, nil
+	return &Store{
+		Pool:              pool,
+		leaseConfig:       pool.Config().ConnConfig.Copy(),
+		aiLeaseSlots:      make(chan struct{}, MaxAILeaseConnections),
+		webhookLeaseSlots: make(chan struct{}, MaxWebhookLeaseConnections),
+	}, nil
+}
+
+// BeginAILease starts a long-lived Gateway authorization transaction outside
+// the request pool and within the per-instance AI connection bound.
+func (s *Store) BeginAILease(ctx context.Context) (pgx.Tx, func(), error) {
+	return s.beginExternalLease(ctx, s.aiLeaseSlots, "AI")
+}
+
+// BeginWebhookLease starts a long-lived delivery authorization transaction
+// outside the request pool and within the per-instance webhook worker bound.
+func (s *Store) BeginWebhookLease(ctx context.Context) (pgx.Tx, func(), error) {
+	return s.beginExternalLease(ctx, s.webhookLeaseSlots, "webhook")
+}
+
+func (s *Store) beginExternalLease(ctx context.Context, slots chan struct{}, kind string) (pgx.Tx, func(), error) {
+	// Tests and specialized callers may construct Store directly. Keep that
+	// legacy shape functional, while Store.Open always provisions the isolated
+	// production path below.
+	if s.leaseConfig == nil || slots == nil {
+		tx, err := s.Pool.Begin(ctx)
+		return tx, func() {}, err
+	}
+
+	select {
+	case slots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+	releaseSlot := func() { <-slots }
+	conn, err := pgx.ConnectConfig(ctx, s.leaseConfig.Copy())
+	if err != nil {
+		releaseSlot()
+		return nil, nil, fmt.Errorf("connect %s lease database capacity: %w", kind, err)
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = conn.Close(closeCtx)
+		cancel()
+		releaseSlot()
+		return nil, nil, fmt.Errorf("begin %s lease transaction: %w", kind, err)
+	}
+
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = conn.Close(closeCtx)
+			cancel()
+			releaseSlot()
+		})
+	}
+	return tx, release, nil
+}
+
+// applyPoolDefaults keeps headroom for the connections umm holds open while
+// bounding each instance independently of the host's CPU count. This keeps a
+// high-core host or a small replica set from exhausting PostgreSQL's global
+// connection limit. An explicit pool_max_conns in the DSN always wins.
+func applyPoolDefaults(config *pgxpool.Config) {
+	const (
+		defaultMaxConns        = 16
+		reservedLongLivedConns = 2
+	)
+	if !strings.Contains(config.ConnString(), "pool_max_conns") {
+		config.MaxConns = defaultMaxConns
+	}
+	minimum := int32(reservedLongLivedConns)
+	if minimum > config.MaxConns {
+		minimum = config.MaxConns
+	}
+	if config.MinConns < minimum {
+		config.MinConns = minimum
+	}
+	if config.MinConns > config.MaxConns {
+		config.MinConns = config.MaxConns
+	}
+	if config.MaxConnLifetime == 0 {
+		config.MaxConnLifetime = time.Hour
+	}
+	if config.MaxConnIdleTime == 0 {
+		config.MaxConnIdleTime = 30 * time.Minute
+	}
+	if config.HealthCheckPeriod == 0 {
+		config.HealthCheckPeriod = time.Minute
+	}
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
@@ -190,9 +306,25 @@ func scanUser(row pgx.Row) (User, error) {
 }
 
 func (s *Store) UserByUsername(ctx context.Context, username string) (User, string, error) {
+	return userByUsername(ctx, s.Pool, username)
+}
+
+// UserByUsernameTx reads a password identity on the caller's transaction. The
+// login handler uses this after taking its cross-instance throttle locks so a
+// one-connection pool never has to acquire a second connection while the lock
+// is held.
+func (s *Store) UserByUsernameTx(ctx context.Context, tx pgx.Tx, username string) (User, string, error) {
+	return userByUsername(ctx, tx, username)
+}
+
+type rowQuerier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func userByUsername(ctx context.Context, query rowQuerier, username string) (User, string, error) {
 	var u User
 	var hash *string
-	err := s.Pool.QueryRow(ctx, `SELECT id,username,display_name,COALESCE(email,''),role,team_id,active,password_hash FROM users WHERE username=$1`, username).
+	err := query.QueryRow(ctx, `SELECT id,username,display_name,COALESCE(email,''),role,team_id,active,password_hash FROM users WHERE username=$1`, username).
 		Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Role, &u.TeamID, &u.Active, &hash)
 	if err != nil {
 		return User{}, "", err
@@ -231,8 +363,17 @@ func (s *Store) UpsertOIDCUser(ctx context.Context, subject, username, display, 
 }
 
 func (s *Store) GetSetting(ctx context.Context, key string, dst any) error {
+	return getSetting(ctx, s.Pool, key, dst)
+}
+
+// GetSettingTx keeps setting reads on an existing transaction connection.
+func (s *Store) GetSettingTx(ctx context.Context, tx pgx.Tx, key string, dst any) error {
+	return getSetting(ctx, tx, key, dst)
+}
+
+func getSetting(ctx context.Context, query rowQuerier, key string, dst any) error {
 	var raw []byte
-	if err := s.Pool.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&raw); err != nil {
+	if err := query.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&raw); err != nil {
 		return err
 	}
 	return json.Unmarshal(raw, dst)
@@ -260,12 +401,99 @@ func (s *Store) PutSetting(ctx context.Context, key string, value any, actor uui
 	if !AllowedSetting(key) {
 		return errors.New("unknown setting section")
 	}
+	switch key {
+	case "security":
+		return s.putSettingPreserving(ctx, key, value, actor, []string{
+			"login_max_failures",
+			"login_lockout_minutes",
+			"api_rate_per_minute",
+			"ai_rate_per_minute",
+			"ai_daily_limit",
+		})
+	case "oidc":
+		return s.putSettingPreserving(ctx, key, value, actor, []string{"client_secret"})
+	case "ai_gateway":
+		return s.putSettingPreserving(ctx, key, value, actor, []string{"api_key"})
+	}
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
 	_, err = s.Pool.Exec(ctx, `INSERT INTO app_settings(key,value,updated_by,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`, key, raw, actor)
 	return err
+}
+
+// LockSettingTx serializes read/merge/write setting transitions, including
+// master-key rotation when the row may not exist yet.
+func (s *Store) LockSettingTx(ctx context.Context, tx pgx.Tx, key string) error {
+	if !AllowedSetting(key) {
+		return errors.New("unknown setting section")
+	}
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "umm:app-setting:"+key)
+	return err
+}
+
+// putSettingPreserving applies backward-compatible object updates under a
+// transaction-scoped lock. Older clients do not know newly added fields, so a
+// whole-object PUT must retain those fields from the latest committed row while
+// still honoring every field that the caller explicitly supplied.
+func (s *Store) putSettingPreserving(ctx context.Context, key string, value any, actor uuid.UUID, preserve []string) error {
+	incomingRaw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	incoming := map[string]json.RawMessage{}
+	if err = json.Unmarshal(incomingRaw, &incoming); err != nil {
+		return fmt.Errorf("decode incoming setting %q: %w", key, err)
+	}
+	if incoming == nil {
+		return fmt.Errorf("setting %q must be a JSON object", key)
+	}
+
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin setting update %q: %w", key, err)
+	}
+	defer tx.Rollback(context.Background())
+	if err = s.LockSettingTx(ctx, tx, key); err != nil {
+		return fmt.Errorf("lock setting %q: %w", key, err)
+	}
+
+	var existingRaw []byte
+	err = tx.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&existingRaw)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("read setting %q: %w", key, err)
+	}
+	if err == nil {
+		existing := map[string]json.RawMessage{}
+		if err = json.Unmarshal(existingRaw, &existing); err != nil {
+			return fmt.Errorf("decode stored setting %q: %w", key, err)
+		}
+		for _, field := range preserve {
+			if _, supplied := incoming[field]; supplied {
+				continue
+			}
+			if raw, exists := existing[field]; exists {
+				incoming[field] = raw
+			}
+		}
+	}
+
+	mergedRaw, err := json.Marshal(incoming)
+	if err != nil {
+		return fmt.Errorf("encode setting %q: %w", key, err)
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO app_settings(key,value,updated_by,updated_at)
+		VALUES($1,$2,$3,now())
+		ON CONFLICT(key) DO UPDATE
+		SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`, key, mergedRaw, actor); err != nil {
+		return fmt.Errorf("write setting %q: %w", key, err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit setting update %q: %w", key, err)
+	}
+	return nil
 }
 
 func AllowedSetting(key string) bool {
@@ -318,10 +546,24 @@ func (s *Store) CreateSpace(ctx context.Context, userID uuid.UUID, name string) 
 
 func (s *Store) UpdateSpace(ctx context.Context, userID, spaceID uuid.UUID, name string, aiExcluded *bool) (Space, error) {
 	name = strings.TrimSpace(name)
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return Space{}, err
+	}
+	defer tx.Rollback(ctx)
 	var v Space
-	err := s.Pool.QueryRow(ctx, `UPDATE spaces sp SET name=$3,ai_excluded=COALESCE($4,ai_excluded),updated_at=now() WHERE sp.id=$1 AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2 AND sm.permission='manage')) RETURNING id,owner_id,name,color,ai_excluded`, spaceID, userID, name, aiExcluded).
+	err = tx.QueryRow(ctx, `UPDATE spaces sp SET name=$3,ai_excluded=COALESCE($4,ai_excluded),updated_at=now() WHERE sp.id=$1 AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2 AND sm.permission='manage')) RETURNING id,owner_id,name,color,ai_excluded`, spaceID, userID, name, aiExcluded).
 		Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded)
-	return v, err
+	if err != nil {
+		return Space{}, err
+	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, spaceID, "space.updated", spaceID, v); err != nil {
+		return Space{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Space{}, err
+	}
+	return v, nil
 }
 
 func (s *Store) DeleteSpace(ctx context.Context, userID, spaceID uuid.UUID) error {
@@ -335,66 +577,24 @@ func (s *Store) DeleteSpace(ctx context.Context, userID, spaceID uuid.UUID) erro
 	return nil
 }
 
-func (s *Store) CanEditSpace(ctx context.Context, userID, spaceID uuid.UUID) bool {
-	var ok bool
-	_ = s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$1 WHERE s.id=$2 AND (s.owner_id=$1 OR m.permission IN ('edit','manage')))`, userID, spaceID).Scan(&ok)
-	return ok
-}
-
-func noteSearchPatterns(query string) []string {
-	escape := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	terms := strings.Fields(strings.TrimSpace(query))
-	patterns := make([]string, 0, len(terms))
-	for _, term := range terms {
-		patterns = append(patterns, "%"+escape.Replace(term)+"%")
-	}
-	return patterns
-}
-
-func (s *Store) SearchNotes(ctx context.Context, userID uuid.UUID, query string, limit int) ([]NoteSearchResult, error) {
+func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query string) ([]Note, []Edge, error) {
 	patterns := noteSearchPatterns(query)
-	if len(patterns) == 0 {
-		return []NoteSearchResult{}, nil
+	b := &queryBuilder{}
+	space := b.bind(spaceID)
+	user := b.bind(userID)
+	match := "true"
+	if len(patterns) > 0 {
+		match = allMatch(noteTextExpression, patterns, b)
 	}
-	if limit < 1 {
-		limit = 12
-	}
-	if limit > 30 {
-		limit = 30
-	}
-	rows, err := s.Pool.Query(ctx, `
-		SELECT n.id,n.space_id,sp.name,n.title,left(n.content,500),n.kind,n.updated_at
+	rows, err := s.Pool.Query(ctx, fmt.Sprintf(`
+		SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
+		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at
 		FROM notes n
 		JOIN spaces sp ON sp.id=n.space_id
-		WHERE n.deleted_at IS NULL
-		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
-		  AND NOT EXISTS(
-			SELECT 1 FROM unnest($2::text[]) AS term(pattern)
-			WHERE concat_ws(' ',n.title,n.content,sp.name) NOT ILIKE term.pattern ESCAPE E'\\'
-		  )
-		ORDER BY (NULLIF(trim(n.title),'') IS NOT NULL) DESC,n.updated_at DESC
-		LIMIT $3`, userID, patterns, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	results := []NoteSearchResult{}
-	for rows.Next() {
-		var result NoteSearchResult
-		if err := rows.Scan(&result.ID, &result.SpaceID, &result.SpaceName, &result.Title, &result.Content, &result.Kind, &result.UpdatedAt); err != nil {
-			return nil, err
-		}
-		results = append(results, result)
-	}
-	return results, rows.Err()
-}
-
-func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query string) ([]Note, []Edge, error) {
-	if !s.CanViewSpace(ctx, userID, spaceID) {
-		return nil, nil, pgx.ErrNoRows
-	}
-	patterns := noteSearchPatterns(query)
-	rows, err := s.Pool.Query(ctx, `SELECT id,space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation,version,created_at,updated_at FROM notes WHERE space_id=$1 AND deleted_at IS NULL AND (cardinality($2::text[])=0 OR NOT EXISTS(SELECT 1 FROM unnest($2::text[]) AS term(pattern) WHERE concat_ws(' ',content,title) NOT ILIKE term.pattern ESCAPE E'\\')) ORDER BY created_at`, spaceID, patterns)
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=%s
+		WHERE n.space_id=%s AND n.deleted_at IS NULL AND (sp.owner_id=%s OR sm.user_id=%s)
+		  AND %s
+		ORDER BY n.created_at`, user, space, user, user, match), b.args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -406,6 +606,19 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 			return nil, nil, err
 		}
 		notes = append(notes, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	rows.Close()
+	if len(notes) == 0 {
+		allowed, accessErr := s.checkSpaceViewAccess(ctx, userID, spaceID)
+		if accessErr != nil {
+			return nil, nil, accessErr
+		}
+		if !allowed {
+			return nil, nil, pgx.ErrNoRows
+		}
 	}
 	noteIDs := make([]uuid.UUID, len(notes))
 	for i := range notes {
@@ -420,7 +633,13 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 			}
 		}
 	}
-	edgeRows, err := s.Pool.Query(ctx, `SELECT id,space_id,source_note_id,target_note_id,relation FROM note_edges WHERE space_id=$1 AND source_note_id=ANY($2) AND target_note_id=ANY($2)`, spaceID, noteIDs)
+	edgeRows, err := s.Pool.Query(ctx, `
+		SELECT e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation
+		FROM note_edges e
+		JOIN spaces sp ON sp.id=e.space_id
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$3
+		WHERE e.space_id=$1 AND e.source_note_id=ANY($2) AND e.target_note_id=ANY($2)
+		  AND (sp.owner_id=$3 OR sm.user_id=$3)`, spaceID, noteIDs, userID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -437,15 +656,17 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 }
 
 func (s *Store) CanViewSpace(ctx context.Context, userID, spaceID uuid.UUID) bool {
-	var ok bool
-	_ = s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$1 WHERE s.id=$2 AND (s.owner_id=$1 OR m.user_id=$1))`, userID, spaceID).Scan(&ok)
+	ok, _ := s.checkSpaceViewAccess(ctx, userID, spaceID)
 	return ok
 }
 
+func (s *Store) checkSpaceViewAccess(ctx context.Context, userID, spaceID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$1 WHERE s.id=$2 AND (s.owner_id=$1 OR m.user_id=$1))`, userID, spaceID).Scan(&ok)
+	return ok, err
+}
+
 func (s *Store) CreateNote(ctx context.Context, userID uuid.UUID, n Note) (Note, error) {
-	if !s.CanEditSpace(ctx, userID, n.SpaceID) {
-		return Note{}, pgx.ErrNoRows
-	}
 	if n.Color == "" {
 		n.Color = "yellow"
 	}
@@ -461,14 +682,36 @@ func (s *Store) CreateNote(ctx context.Context, userID uuid.UUID, n Note) (Note,
 	if n.Height == 0 {
 		n.Height = 160
 	}
-	err := s.Pool.QueryRow(ctx, `INSERT INTO notes(space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id,space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation,version,created_at,updated_at`, n.SpaceID, userID, n.Content, n.Title, n.Color, n.Kind, n.Source, n.AIExcluded, n.X, n.Y, n.Width, n.Height, n.Rotation).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.AIExcluded, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
-	if err == nil {
-		_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return Note{}, err
 	}
-	return n, err
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO notes(space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+		WHERE EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2 WHERE s.id=$1 AND (s.owner_id=$2 OR m.permission IN ('edit','manage')))
+		RETURNING id,space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation,version,created_at,updated_at`,
+		n.SpaceID, userID, n.Content, n.Title, n.Color, n.Kind, n.Source, n.AIExcluded, n.X, n.Y, n.Width, n.Height, n.Rotation).
+		Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.AIExcluded, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+	if err != nil {
+		return Note{}, err
+	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, n.SpaceID, "note.created", n.ID, n); err != nil {
+		return Note{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Note{}, err
+	}
+	_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
+	return n, nil
 }
 
 func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcluded *bool) (Note, error) {
+	return s.updateNote(ctx, userID, n, aiExcluded, "note.updated")
+}
+
+func (s *Store) updateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcluded *bool, eventType string) (Note, error) {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return Note{}, err
@@ -482,6 +725,9 @@ func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcl
 	if err != nil {
 		return Note{}, err
 	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, n.SpaceID, eventType, n.ID, n); err != nil {
+		return Note{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return Note{}, err
 	}
@@ -490,64 +736,53 @@ func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcl
 }
 
 func (s *Store) DeleteNote(ctx context.Context, userID, noteID uuid.UUID) error {
-	cmd, err := s.Pool.Exec(ctx, `UPDATE notes SET deleted_at=now(),updated_at=now() WHERE id=$1 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2 WHERE s.id=notes.space_id AND (s.owner_id=$2 OR m.permission IN ('edit','manage')))`, noteID, userID)
+	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if cmd.RowsAffected() == 0 {
-		return pgx.ErrNoRows
+	defer tx.Rollback(ctx)
+	var spaceID uuid.UUID
+	err = tx.QueryRow(ctx, `UPDATE notes SET deleted_at=now(),updated_at=now() WHERE id=$1 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2 WHERE s.id=notes.space_id AND (s.owner_id=$2 OR m.permission IN ('edit','manage'))) RETURNING space_id`, noteID, userID).Scan(&spaceID)
+	if err != nil {
+		return err
 	}
-	return nil
+	if err = s.AppendSpaceEvent(ctx, tx, userID, spaceID, "note.deleted", noteID, map[string]any{}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) CreateEdge(ctx context.Context, userID uuid.UUID, e Edge) (Edge, error) {
-	if !s.CanEditSpace(ctx, userID, e.SpaceID) {
-		return Edge{}, pgx.ErrNoRows
-	}
 	if e.Relation == "" {
 		e.Relation = "related"
 	}
-	err := s.Pool.QueryRow(ctx, `INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by) SELECT $1,$2,$3,$4,$5 WHERE EXISTS(SELECT 1 FROM notes WHERE id=$2 AND space_id=$1 AND deleted_at IS NULL) AND EXISTS(SELECT 1 FROM notes WHERE id=$3 AND space_id=$1 AND deleted_at IS NULL) RETURNING id`, e.SpaceID, e.SourceID, e.TargetID, e.Relation, userID).Scan(&e.ID)
-	return e, err
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return Edge{}, err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by)
+		SELECT $1,$2,$3,$4,$5
+		WHERE EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$5 WHERE s.id=$1 AND (s.owner_id=$5 OR m.permission IN ('edit','manage')))
+		  AND EXISTS(SELECT 1 FROM notes WHERE id=$2 AND space_id=$1 AND deleted_at IS NULL)
+		  AND EXISTS(SELECT 1 FROM notes WHERE id=$3 AND space_id=$1 AND deleted_at IS NULL)
+		RETURNING id`, e.SpaceID, e.SourceID, e.TargetID, e.Relation, userID).Scan(&e.ID)
+	if err != nil {
+		return Edge{}, err
+	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, e.SpaceID, "edge.created", e.ID, e); err != nil {
+		return Edge{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Edge{}, err
+	}
+	return e, nil
 }
 
 func (s *Store) Audit(ctx context.Context, actor *uuid.UUID, action, resourceType, resourceID string, metadata any) {
 	raw, _ := json.Marshal(metadata)
 	_, _ = s.Pool.Exec(ctx, `INSERT INTO audit_logs(actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,$4,$5)`, actor, action, resourceType, resourceID, raw)
-}
-
-func (s *Store) UpsertEmbedding(ctx context.Context, noteID uuid.UUID, content string, version int) error {
-	vector := intelligence.Embed(content)
-	_, err := s.Pool.Exec(ctx, `INSERT INTO note_embeddings(note_id,dimensions,vector,content_version,updated_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(note_id) DO UPDATE SET dimensions=EXCLUDED.dimensions,vector=EXCLUDED.vector,content_version=EXCLUDED.content_version,updated_at=now() WHERE note_embeddings.content_version<EXCLUDED.content_version`, noteID, len(vector), vector, version)
-	return err
-}
-func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
-	for _, n := range notes {
-		_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
-	}
-}
-func (s *Store) loadEmbeddings(ctx context.Context, notes []Note) map[uuid.UUID][]float32 {
-	out := map[uuid.UUID][]float32{}
-	if len(notes) == 0 {
-		return out
-	}
-	ids := make([]uuid.UUID, len(notes))
-	for i, n := range notes {
-		ids[i] = n.ID
-	}
-	rows, err := s.Pool.Query(ctx, `SELECT note_id,vector FROM note_embeddings WHERE note_id=ANY($1)`, ids)
-	if err != nil {
-		return out
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id uuid.UUID
-		var vector []float32
-		if rows.Scan(&id, &vector) == nil {
-			out[id] = vector
-		}
-	}
-	return out
 }
 
 func (s *Store) RelatedNotes(ctx context.Context, userID, noteID uuid.UUID, limit int) ([]RelatedNote, error) {
@@ -626,12 +861,14 @@ func (s *Store) Clusters(ctx context.Context, userID, spaceID uuid.UUID) ([]Thou
 }
 
 func (s *Store) NoteHistory(ctx context.Context, userID, noteID uuid.UUID) ([]NoteRevision, error) {
-	var allowed bool
-	_ = s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2 WHERE n.id=$1 AND (sp.owner_id=$2 OR sm.user_id=$2))`, noteID, userID).Scan(&allowed)
-	if !allowed {
-		return nil, pgx.ErrNoRows
-	}
-	rows, err := s.Pool.Query(ctx, `SELECT version,content,title,color,kind,x,y,width,height,rotation,created_at FROM note_revisions WHERE note_id=$1 ORDER BY version DESC LIMIT 50`, noteID)
+	rows, err := s.Pool.Query(ctx, `
+		SELECT r.version,r.content,r.title,r.color,r.kind,r.x,r.y,r.width,r.height,r.rotation,r.created_at
+		FROM note_revisions r
+		JOIN notes n ON n.id=r.note_id AND n.deleted_at IS NULL
+		JOIN spaces sp ON sp.id=n.space_id
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
+		WHERE r.note_id=$1 AND (sp.owner_id=$2 OR sm.user_id=$2)
+		ORDER BY r.version DESC LIMIT 50`, noteID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -644,7 +881,20 @@ func (s *Store) NoteHistory(ctx context.Context, userID, noteID uuid.UUID) ([]No
 		}
 		out = append(out, v)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if len(out) == 0 {
+		allowed, accessErr := s.noteViewAccess(ctx, userID, noteID)
+		if accessErr != nil {
+			return nil, accessErr
+		}
+		if !allowed {
+			return nil, pgx.ErrNoRows
+		}
+	}
+	return out, nil
 }
 func (s *Store) RestoreNote(ctx context.Context, userID, noteID uuid.UUID, version int) (Note, error) {
 	var n Note
@@ -652,5 +902,5 @@ func (s *Store) RestoreNote(ctx context.Context, userID, noteID uuid.UUID, versi
 	if err != nil {
 		return Note{}, err
 	}
-	return s.UpdateNote(ctx, userID, n, &n.AIExcluded)
+	return s.updateNote(ctx, userID, n, &n.AIExcluded, "note.restored")
 }

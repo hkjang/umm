@@ -1,13 +1,16 @@
 package httpapi
 
 import (
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func (s *Server) exportAllowed(r *http.Request, spaceID, userID uuid.UUID) bool {
@@ -65,11 +68,26 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 	}
 	notes, edges, err := s.Store.ListNotes(r.Context(), p.User.ID, spaceID, "")
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 404, "공간을 찾을 수 없습니다.")
+			return
+		}
 		writeError(w, 500, "내보낼 생각을 불러오지 못했습니다.")
 		return
 	}
 	var spaceName string
-	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT name FROM spaces WHERE id=$1`, spaceID).Scan(&spaceName)
+	if err := s.Store.Pool.QueryRow(r.Context(), `
+		SELECT sp.name FROM spaces sp
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
+		WHERE sp.id=$1 AND (sp.owner_id=$2 OR sm.user_id=$2)`, spaceID, p.User.ID).Scan(&spaceName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 404, "공간을 찾을 수 없습니다.")
+			return
+		}
+		slog.Warn("export space access recheck failed", "space_id", spaceID, "user_id", p.User.ID, "error", err)
+		writeError(w, 500, "내보낼 공간을 확인하지 못했습니다.")
+		return
+	}
 	var out strings.Builder
 	fmt.Fprintf(&out, "# %s\n\nExported from umm at %s.\n\n", spaceName, time.Now().Format(time.RFC3339))
 	for _, n := range notes {

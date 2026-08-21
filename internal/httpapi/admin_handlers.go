@@ -57,11 +57,11 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if field := secretField(section); field != "" {
-		var existing map[string]any
-		_ = s.Store.GetSetting(r.Context(), section, &existing)
 		raw, _ := incoming[field].(string)
 		if raw == "" || raw == secretMask {
-			incoming[field] = existing[field]
+			// Omit a masked secret so Store.PutSetting can merge the latest
+			// ciphertext while holding the same lock as master-key rotation.
+			delete(incoming, field)
 		} else {
 			encrypted, err := s.Cipher.Encrypt(raw)
 			if err != nil {
@@ -76,6 +76,14 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.PutSetting(r.Context(), section, incoming, p.User.ID); err != nil {
 		writeError(w, 500, "설정을 저장하지 못했습니다.")
 		return
+	}
+	// Cached settings must not outlive the change that an administrator just
+	// confirmed, so the derived caches are dropped immediately.
+	if section == "ai_gateway" {
+		s.Store.InvalidateEmbeddingProvider()
+	}
+	if section == "security" {
+		s.invalidateSecurityPolicy()
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "settings.update", "settings", section, map[string]any{})
 	writeJSON(w, 200, map[string]bool{"ok": true})
@@ -122,6 +130,30 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 		scopes, ok := v["api_key_scopes"].([]any)
 		if !ok || len(scopes) == 0 {
 			return errors.New("하나 이상의 API 키 권한이 필요합니다")
+		}
+		// The abuse guards are optional in the payload so an older client can
+		// still save this section, but a value that is present must be sane:
+		// silently clamping one would hide a misconfiguration from the operator.
+		for _, guard := range []struct {
+			key     string
+			low     float64
+			high    float64
+			message string
+		}{
+			{key: "login_max_failures", low: 3, high: 100, message: "로그인 실패 허용 횟수는 3~100회여야 합니다"},
+			{key: "login_lockout_minutes", low: 1, high: 1440, message: "로그인 잠금 시간은 1~1440분이어야 합니다"},
+			{key: "api_rate_per_minute", low: 30, high: 100000, message: "분당 API 요청 한도는 30~100000이어야 합니다"},
+			{key: "ai_rate_per_minute", low: 1, high: 600, message: "분당 AI 요청 한도는 1~600이어야 합니다"},
+			{key: "ai_daily_limit", low: 0, high: 100000, message: "하루 AI 생성 한도는 0~100000이어야 합니다"},
+		} {
+			raw, present := v[guard.key]
+			if !present {
+				continue
+			}
+			value, ok := raw.(float64)
+			if !ok || math.Trunc(value) != value || value < guard.low || value > guard.high {
+				return errors.New(guard.message)
+			}
 		}
 	case "workflow":
 		actions, ok := v["actions"].([]any)
@@ -181,8 +213,20 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 			return errors.New("AI 로그 보존 기간은 1~3650일이어야 합니다")
 		}
 		timeout, ok := v["timeout_seconds"].(float64)
-		if !ok || math.Trunc(timeout) != timeout || timeout < 5 || timeout > 1800 {
-			return errors.New("AI Gateway Timeout은 5~1800초 사이의 정수여야 합니다")
+		if !ok || math.Trunc(timeout) != timeout || timeout < dream.MinGatewayTimeoutSeconds || timeout > dream.MaxGatewayTimeoutSeconds {
+			return fmt.Errorf("AI Gateway Timeout은 %d~%d초 사이의 정수여야 합니다", dream.MinGatewayTimeoutSeconds, dream.MaxGatewayTimeoutSeconds)
+		}
+		retries, ok := v["max_retries"].(float64)
+		if !ok || math.Trunc(retries) != retries || retries < 0 || retries > dream.MaxGatewayRetries {
+			return fmt.Errorf("AI Gateway 재시도는 0~%d 사이의 정수여야 합니다", dream.MaxGatewayRetries)
+		}
+		if model := strings.TrimSpace(fmt.Sprint(v["embedding_model"])); model != "" && model != "<nil>" {
+			if raw == "" {
+				return errors.New("임베딩 모델을 사용하려면 AI Gateway 주소가 필요합니다")
+			}
+			if len(model) > 200 {
+				return errors.New("임베딩 모델 이름은 200자 이내여야 합니다")
+			}
 		}
 	}
 	return nil
@@ -263,14 +307,33 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminMetrics(w http.ResponseWriter, r *http.Request) {
-	var users, active, notes, spaces, pending int64
-	err := s.Store.Pool.QueryRow(r.Context(), `SELECT (SELECT count(*) FROM users),(SELECT count(*) FROM users WHERE active),(SELECT count(*) FROM notes WHERE deleted_at IS NULL),(SELECT count(*) FROM spaces),(SELECT count(*) FROM approval_requests WHERE status='pending')`).Scan(&users, &active, &notes, &spaces, &pending)
+	var users, active, notes, spaces, pending, comments, onboarded, webhookFailures int64
+	err := s.Store.Pool.QueryRow(r.Context(), `SELECT (SELECT count(*) FROM users),(SELECT count(*) FROM users WHERE active),(SELECT count(*) FROM notes WHERE deleted_at IS NULL),(SELECT count(*) FROM spaces),(SELECT count(*) FROM approval_requests WHERE status='pending'),(SELECT count(*) FROM note_comments WHERE deleted_at IS NULL),(SELECT count(*) FROM user_preferences WHERE onboarding_completed_at IS NOT NULL),(SELECT count(*) FROM webhook_deliveries WHERE status='failed' AND attempted_at>=now()-interval '24 hours')`).Scan(&users, &active, &notes, &spaces, &pending, &comments, &onboarded, &webhookFailures)
 	if err != nil {
 		writeError(w, 500, "운영 지표를 불러오지 못했습니다.")
 		return
 	}
-	dreamMetrics, _ := s.Dreams.Metrics(r.Context())
-	writeJSON(w, 200, map[string]any{"users": users, "activeUsers": active, "notes": notes, "spaces": spaces, "pendingApprovals": pending, "dream": dreamMetrics})
+	dreamMetrics, err := s.Dreams.Metrics(r.Context())
+	if err != nil {
+		writeError(w, 500, "Dream 운영 지표를 불러오지 못했습니다.")
+		return
+	}
+	var evalRuns, evalPassed int64
+	if err := s.Store.Pool.QueryRow(r.Context(), `SELECT count(*),count(*) FILTER (WHERE status='passed') FROM ai_eval_runs WHERE created_at>=now()-interval '30 days'`).Scan(&evalRuns, &evalPassed); err != nil {
+		writeError(w, 500, "AI 평가 지표를 불러오지 못했습니다.")
+		return
+	}
+	out := map[string]any{"users": users, "activeUsers": active, "notes": notes, "spaces": spaces, "pendingApprovals": pending, "comments": comments, "onboardedUsers": onboarded, "webhookFailures24h": webhookFailures, "aiEvalRuns30d": evalRuns, "aiEvalPassed30d": evalPassed, "dream": dreamMetrics}
+	if s.Metrics != nil {
+		out["http"] = s.Metrics.Snapshot()
+	}
+	if s.Events != nil {
+		subscribers, spaces, delivered, listening := s.Events.Stats()
+		out["realtime"] = map[string]any{
+			"subscribers": subscribers, "spaces": spaces, "delivered": delivered, "listening": listening,
+		}
+	}
+	writeJSON(w, 200, out)
 }
 
 func (s *Server) runDreams(w http.ResponseWriter, r *http.Request) {
@@ -284,7 +347,13 @@ func (s *Server) runDreams(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Store.Pool.Query(r.Context(), `SELECT a.id,a.action,a.resource_type,a.resource_id,a.metadata,a.created_at,COALESCE(u.username,'system') FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.created_at DESC LIMIT 300`)
+	offset, ok := decodeOffsetCursor(r.URL.Query().Get("cursor"))
+	if !ok {
+		writeError(w, 400, "감사 로그 커서가 올바르지 않습니다.")
+		return
+	}
+	limit := parsePageLimit(r, 100, 300)
+	rows, err := s.Store.Pool.Query(r.Context(), `SELECT a.id,a.action,a.resource_type,a.resource_id,a.metadata,a.created_at,COALESCE(u.username,'system') FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.created_at DESC,a.id DESC LIMIT $1 OFFSET $2`, limit+1, offset)
 	if err != nil {
 		writeError(w, 500, "감사 로그를 불러오지 못했습니다.")
 		return
@@ -296,10 +365,20 @@ func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
 		var action, resourceType, resourceID, actor string
 		var metadata json.RawMessage
 		var at time.Time
-		if rows.Scan(&id, &action, &resourceType, &resourceID, &metadata, &at, &actor) != nil {
-			continue
+		if err := rows.Scan(&id, &action, &resourceType, &resourceID, &metadata, &at, &actor); err != nil {
+			writeError(w, 500, "감사 로그를 읽지 못했습니다.")
+			return
 		}
 		out = append(out, map[string]any{"id": id, "action": action, "resourceType": resourceType, "resourceId": resourceID, "metadata": metadata, "createdAt": at, "actor": actor})
 	}
-	writeJSON(w, 200, map[string]any{"audit": out})
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "감사 로그를 불러오지 못했습니다.")
+		return
+	}
+	next := ""
+	if len(out) > limit {
+		out = out[:limit]
+		next = encodeOffsetCursor(offset + limit)
+	}
+	writeJSON(w, 200, map[string]any{"audit": out, "nextCursor": next})
 }

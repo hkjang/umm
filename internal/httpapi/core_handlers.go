@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // noteWriteRequest contains only client-editable note fields. Server-managed
@@ -84,10 +86,65 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "아이디와 비밀번호를 확인해 주세요.")
 		return
 	}
-	u, token, err := s.Auth.PasswordLogin(r.Context(), body.Username, body.Password)
+	policy := s.securityPolicy(r.Context())
+	identities := store.LoginIdentities(body.Username, clientIP(r))
+	tx, err := s.Store.BeginLoginThrottle(r.Context(), identities)
 	if err != nil {
+		slog.Warn("login throttle lock failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+		return
+	}
+	defer tx.Rollback(context.Background())
+	locked, remaining, err := s.Store.LoginLockedTx(r.Context(), tx, identities)
+	if err != nil {
+		slog.Warn("login throttle check failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+		return
+	}
+	if locked {
+		if err = tx.Commit(r.Context()); err != nil {
+			slog.Warn("login throttle commit failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
+		writeRetryAfter(w, remaining)
+		s.Store.Audit(r.Context(), nil, "auth.local.locked", "user", strings.TrimSpace(body.Username), map[string]any{})
+		writeProblem(w, r, http.StatusTooManyRequests, "login-locked", "로그인이 일시적으로 잠겼습니다",
+			"로그인 실패가 반복되어 "+strconv.Itoa(int(remaining.Minutes())+1)+"분 동안 잠겼습니다. 잠시 후 다시 시도해 주세요.",
+			map[string]any{"retryAfterSeconds": int(remaining.Seconds())})
+		return
+	}
+	u, token, err := s.Auth.PasswordLoginTx(r.Context(), tx, body.Username, body.Password, auth.OriginOf(r))
+	if err != nil {
+		if !errors.Is(err, auth.ErrInvalidCredentials) {
+			slog.Warn("login session preparation failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "로그인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
+		if recordErr := s.Store.RegisterLoginFailureTx(r.Context(), tx, identities, policy.LoginMaxFailures, policy.lockout()); recordErr != nil {
+			slog.Warn("login throttle update failed", "error", recordErr)
+			writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
+		if err = tx.Commit(r.Context()); err != nil {
+			slog.Warn("login failure commit failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
 		s.Store.Audit(r.Context(), nil, "auth.local.failed", "user", strings.TrimSpace(body.Username), map[string]any{})
 		writeError(w, 401, "아이디 또는 비밀번호가 올바르지 않습니다.")
+		return
+	}
+	if accountIdentity := store.LoginAccountIdentity(body.Username); accountIdentity != "" {
+		if err = s.Store.ClearLoginFailuresTx(r.Context(), tx, []string{accountIdentity}); err != nil {
+			slog.Warn("login throttle reset failed", "error", err)
+			writeError(w, http.StatusServiceUnavailable, "로그인 보안 상태를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.")
+			return
+		}
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		slog.Warn("login session commit failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "로그인을 완료하지 못했습니다. 잠시 후 다시 시도해 주세요.")
 		return
 	}
 	auth.SetSessionCookie(w, r, token)
@@ -181,7 +238,6 @@ func (s *Server) updateSpace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "space.update", "space", spaceID.String(), map[string]any{"name": name, "aiExcluded": body.AIExcluded})
-	s.publishSpaceEvent(r, spaceID, "space.updated", spaceID, updated)
 	writeJSON(w, 200, updated)
 }
 
@@ -241,20 +297,46 @@ func (s *Server) searchNotes(w http.ResponseWriter, r *http.Request) {
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	if query == "" {
-		writeJSON(w, 200, map[string]any{"notes": []store.NoteSearchResult{}})
+		writeJSON(w, 200, map[string]any{"notes": []store.NoteSearchResult{}, "nextCursor": ""})
 		return
 	}
 	if utf8.RuneCountInString(query) > 200 {
 		writeError(w, 400, "검색어는 200자 이내로 입력해 주세요.")
 		return
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	results, err := s.Store.SearchNotes(r.Context(), principal(r).User.ID, query, limit)
+	offset, ok := decodeOffsetCursor(r.URL.Query().Get("cursor"))
+	if !ok {
+		writeError(w, 400, "검색 커서가 올바르지 않습니다.")
+		return
+	}
+	spaceID, ok := parseOptionalUUID(r.URL.Query().Get("spaceId"))
+	if !ok {
+		writeError(w, 400, "검색 공간 ID가 올바르지 않습니다.")
+		return
+	}
+	updatedFrom, ok := parseOptionalTime(r.URL.Query().Get("updatedFrom"))
+	if !ok {
+		writeError(w, 400, "검색 시작 시각은 RFC 3339 형식이어야 합니다.")
+		return
+	}
+	updatedTo, ok := parseOptionalTime(r.URL.Query().Get("updatedTo"))
+	if !ok {
+		writeError(w, 400, "검색 종료 시각은 RFC 3339 형식이어야 합니다.")
+		return
+	}
+	page, err := s.Store.SearchNotesHybrid(r.Context(), principal(r).User.ID, store.SearchOptions{
+		Query: query, SpaceID: spaceID, Kind: strings.TrimSpace(r.URL.Query().Get("kind")),
+		UpdatedFrom: updatedFrom, UpdatedTo: updatedTo, Offset: offset, Limit: parsePageLimit(r, 20, 50),
+	})
 	if err != nil {
 		writeError(w, 500, "메모 바로가기를 검색하지 못했습니다.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"notes": results})
+	next := ""
+	if page.HasMore {
+		next = encodeOffsetCursor(page.NextOffset)
+	}
+	writeJSON(w, 200, map[string]any{"notes": page.Notes, "nextCursor": next})
 }
 
 func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
@@ -285,7 +367,6 @@ func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "note.create", "note", created.ID.String(), map[string]any{"spaceId": spaceID})
-	s.publishSpaceEvent(r, spaceID, "note.created", created.ID, created)
 	writeJSON(w, 201, created)
 }
 
@@ -308,7 +389,20 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 	updated, err := s.Store.UpdateNote(r.Context(), p.User.ID, n, body.AIExcluded)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, 409, "다른 위치에서 메모가 변경되었습니다. 새로고침 후 다시 시도해 주세요.")
+			latest, canEdit, latestErr := s.Store.NoteByIDWithEditAccess(r.Context(), p.User.ID, noteID)
+			if latestErr == nil {
+				if !canEdit {
+					writeProblem(w, r, http.StatusForbidden, "note-read-only", "읽기 전용 메모", "이 공간의 편집 권한이 없어 오프라인 변경을 적용할 수 없습니다.", nil)
+					return
+				}
+				writeProblem(w, r, http.StatusConflict, "note-version-conflict", "메모 버전 충돌", "다른 위치에서 메모가 변경되었습니다. 두 버전을 비교해 선택해 주세요.", map[string]any{"clientVersion": n.Version, "latest": latest})
+				return
+			}
+			if updateNoteLookupFailureStatus(latestErr) == http.StatusNotFound {
+				writeProblem(w, r, http.StatusNotFound, "note-not-found", "메모를 찾을 수 없음", "메모가 삭제되었거나 더 이상 접근할 수 없어 오프라인 변경을 적용할 수 없습니다.", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "최신 메모를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
 			return
 		}
 		writeError(w, 500, "생각을 저장하지 못했습니다.")
@@ -320,7 +414,6 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 			_ = s.Dreams.Feedback(r.Context(), p.User.ID, dreamID, "edited")
 		}
 	}
-	s.publishSpaceEvent(r, updated.SpaceID, "note.updated", updated.ID, updated)
 	writeJSON(w, 200, updated)
 }
 
@@ -333,21 +426,22 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	var spaceID uuid.UUID
-	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT space_id FROM notes WHERE id=$1`, id).Scan(&spaceID)
 	var dreamID uuid.UUID
 	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT dream_id FROM dream_notes WHERE note_id=$1 AND user_id=$2`, id, p.User.ID).Scan(&dreamID)
 	if err := s.Store.DeleteNote(r.Context(), p.User.ID, id); err != nil {
-		writeError(w, 404, "삭제할 수 없는 메모입니다.")
+		status := deleteNoteErrorStatus(err)
+		message := "삭제할 수 없는 메모입니다."
+		if status == http.StatusInternalServerError {
+			message = "메모 삭제를 저장하지 못했습니다."
+			slog.Warn("note delete failed", "note_id", id, "user_id", p.User.ID, "error", err)
+		}
+		writeError(w, status, message)
 		return
 	}
 	if dreamID != uuid.Nil {
 		_ = s.Dreams.Feedback(r.Context(), p.User.ID, dreamID, "deleted")
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "note.delete", "note", id.String(), map[string]any{})
-	if spaceID != uuid.Nil {
-		s.publishSpaceEvent(r, spaceID, "note.deleted", id, map[string]any{})
-	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -370,15 +464,45 @@ func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	created, err := s.Store.CreateEdge(r.Context(), p.User.ID, e)
 	if err != nil {
-		writeError(w, 400, "생각을 연결하지 못했습니다.")
+		status := createEdgeErrorStatus(err)
+		message := "생각을 연결할 수 없습니다."
+		if status == http.StatusInternalServerError {
+			message = "생각 연결을 저장하지 못했습니다."
+			slog.Warn("edge create failed", "space_id", spaceID, "user_id", p.User.ID, "error", err)
+		}
+		writeError(w, status, message)
 		return
 	}
 	var dreamID uuid.UUID
 	if s.Store.Pool.QueryRow(r.Context(), `SELECT dream_id FROM dream_notes WHERE note_id IN ($1,$2) AND user_id=$3 LIMIT 1`, e.SourceID, e.TargetID, p.User.ID).Scan(&dreamID) == nil {
 		_ = s.Dreams.Feedback(r.Context(), p.User.ID, dreamID, "connected")
 	}
-	s.publishSpaceEvent(r, spaceID, "edge.created", created.ID, created)
 	writeJSON(w, 201, created)
+}
+
+func deleteNoteErrorStatus(err error) int {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
+func updateNoteLookupFailureStatus(err error) int {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
+func createEdgeErrorStatus(err error) int {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return http.StatusBadRequest
+	}
+	var databaseError *pgconn.PgError
+	if errors.As(err, &databaseError) && strings.HasPrefix(databaseError.Code, "23") {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
 }
 
 func (s *Server) relatedNotes(w http.ResponseWriter, r *http.Request) {
@@ -415,7 +539,7 @@ func (s *Server) thoughtClusters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) aiAssist(w http.ResponseWriter, r *http.Request) {
-	if !requireScope(w, r, "notes:read") {
+	if !requireScope(w, r, "ai:assist") {
 		return
 	}
 	var body struct {
@@ -430,6 +554,9 @@ func (s *Server) aiAssist(w http.ResponseWriter, r *http.Request) {
 	result, err := s.Dreams.Assist(r.Context(), p.User.ID, body.NoteIDs, body.Mode)
 	if err != nil {
 		slog.Warn("AI assist failed", "user_id", p.User.ID, "mode", body.Mode, "error", err)
+		if writeAIQuotaProblem(w, r, err) {
+			return
+		}
 		if errors.Is(err, dream.ErrAIResponseTokenLimit) {
 			writeError(w, http.StatusBadGateway, "AI 모델이 최종 답변을 만들기 전에 Token Limit에 도달했습니다. 관리자에게 Dream Layer의 응답 Token Limit을 높여 달라고 요청해 주세요.")
 			return
@@ -481,7 +608,6 @@ func (s *Server) restoreNote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "복원할 기록을 찾을 수 없습니다.")
 		return
 	}
-	s.publishSpaceEvent(r, restored.SpaceID, "note.restored", restored.ID, restored)
 	s.Store.Audit(r.Context(), &p.User.ID, "note.restore", "note", id.String(), map[string]any{"fromVersion": version})
 	writeJSON(w, 200, restored)
 }

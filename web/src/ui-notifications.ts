@@ -1,3 +1,5 @@
+import { translate } from './i18n/translate';
+
 export type NoticeTone = 'success' | 'error' | 'info';
 
 export interface UINotice {
@@ -20,11 +22,10 @@ export function showNotice(input: Omit<UINotice, 'id' | 'timeout'> & { id?: stri
   window.dispatchEvent(new CustomEvent<UINotice>('umm:notice', { detail: notice }));
 }
 
-export const showError = (message: string, title = '요청을 완료하지 못했습니다.', id?: string) =>
+export const showError = (message: string, title = translate('요청을 완료하지 못했습니다.'), id?: string) =>
   showNotice({ id, tone: 'error', title, message });
 
-export const showSuccess = (message: string, title = '완료되었습니다.') =>
+export const showSuccess = (message: string, title = translate('완료되었습니다.')) =>
   showNotice({ tone: 'success', title, message });
 
-export const showInfo = (message: string, title = '안내') =>
-  showNotice({ tone: 'info', title, message });
+export const showInfo = (message: string, title = translate('안내')) => showNotice({ tone: 'info', title, message });

@@ -6,7 +6,7 @@ RUN npm ci --ignore-scripts
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.26-alpine AS go-build
+FROM golang:1.26.7-alpine AS go-build
 ARG VERSION=dev
 WORKDIR /src
 RUN apk add --no-cache ca-certificates
@@ -24,10 +24,11 @@ WORKDIR /app
 COPY --from=go-build /out/umm /app/umm
 COPY --from=web-build /src/web/dist /app/web
 USER umm
+ENV UMM_HTTP_ADDR=:8080
 EXPOSE 8080
 LABEL org.opencontainers.image.title="umm" \
       org.opencontainers.image.description="Spatial Thought Memory with Dream Layer" \
       org.opencontainers.image.source="https://github.com/hkjang/umm" \
       org.opencontainers.image.version="${VERSION}"
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD listen="${UMM_HTTP_ADDR:-:8080}"; port="${listen##*:}"; wget -q -O /dev/null "http://127.0.0.1:${port}/healthz" || exit 1
 ENTRYPOINT ["/app/umm"]

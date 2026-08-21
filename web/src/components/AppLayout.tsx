@@ -1,70 +1,218 @@
-import { AppShell, Avatar, Burger, Button, Divider, Group, Indicator, Menu, NavLink as MantineNavLink, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
+import {
+  AppShell,
+  Avatar,
+  Burger,
+  Button,
+  Divider,
+  Group,
+  Menu,
+  NavLink as MantineNavLink,
+  ScrollArea,
+  Stack,
+  Text,
+  UnstyledButton,
+} from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconAdjustments, IconArrowLeft, IconBell, IconCheckupList, IconLayoutDashboard, IconLogout, IconMoonStars, IconSettings, IconSparkles, IconUser } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import {
+  IconAdjustments,
+  IconArrowLeft,
+  IconCalendarCheck,
+  IconCheckupList,
+  IconLayoutDashboard,
+  IconLogout,
+  IconMoonStars,
+  IconSettings,
+  IconSparkles,
+  IconUser,
+} from '@tabler/icons-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth-context';
-import { api } from '../api';
+import { msg, useTranslation } from '../i18n';
+import AppearanceMenu from './AppearanceMenu';
+import NotificationMenu from './NotificationMenu';
+import OfflineStatus from './OfflineStatus';
 import QuickNavigator from './QuickNavigator';
 
 const links = [
-  { to: '/', label: 'My Space', icon: IconSparkles },
+  { to: '/today', label: msg('오늘의 리뷰'), icon: IconCalendarCheck },
+  { to: '/canvas', label: 'My Space', icon: IconSparkles },
   { to: '/dreams', label: 'Dreams', icon: IconMoonStars },
-  { to: '/approvals', label: '검토 · 승인', icon: IconCheckupList },
-  { to: '/settings', label: '개인 설정', icon: IconAdjustments },
+  { to: '/approvals', label: msg('검토 · 승인'), icon: IconCheckupList },
+  { to: '/settings', label: msg('개인 설정'), icon: IconAdjustments },
 ];
 
-interface AppNotification {
-  id: string;
-  title: string;
-  body: string;
-  resourceType?: string;
-  resourceId?: string;
-  readAt?: string;
-}
-
-function notificationTarget(item: AppNotification) {
-  if (!item.resourceId) return '';
-  if (item.resourceType === 'dream') return `/dreams?focus=${encodeURIComponent(item.resourceId)}`;
-  if (item.resourceType === 'space') return `/space/${encodeURIComponent(item.resourceId)}`;
-  return '';
-}
+const roleLabel = (role?: string) =>
+  role === 'admin' ? msg('서비스 관리자') : role === 'team_lead' ? msg('팀장') : msg('사용자');
 
 export default function AppLayout() {
   const [opened, { toggle, close }] = useDisclosure(false);
   const { user, meta, logout } = useAuth();
-  const location = useLocation(); const navigate = useNavigate();
+  const { t } = useTranslation();
+  const location = useLocation();
+  const navigate = useNavigate();
   const isAdmin = location.pathname.startsWith('/admin');
-  const isLinkActive = (to: string) => to === '/'
-    ? location.pathname === '/' || location.pathname.startsWith('/space/')
-    : location.pathname === to;
-  const [notifications,setNotifications]=useState<AppNotification[]>([]);const [unread,setUnread]=useState(0);
-  const loadNotifications=()=>api<{notifications:AppNotification[];unread:number}>('/notifications',{silent:true}).then(v=>{setNotifications(v.notifications);setUnread(v.unread)}).catch(()=>undefined);
-  const openNotification=async(item:AppNotification)=>{
-    if(!item.readAt)await api(`/notifications/${item.id}/read`,{method:'POST',silent:true}).catch(()=>undefined);
-    void loadNotifications();
-    const target=notificationTarget(item);
-    if(target)navigate(target);
-  };
-  useEffect(()=>{void loadNotifications();const timer=window.setInterval(loadNotifications,60000);return()=>window.clearInterval(timer)},[]);
-  return <AppShell className="warm-shell" header={{ height: isAdmin ? 0 : 66 }} navbar={{ width: 238, breakpoint: 'sm', collapsed: { mobile: !opened, desktop: isAdmin } }} padding={0}>
-    {!isAdmin && <AppShell.Header className="app-header"><Group h="100%" px={{ base: 'md', sm: 'lg' }} justify="space-between">
-      <Group><Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="메뉴 열기" /><UnstyledButton onClick={() => navigate('/')}><Group gap="sm"><div className="brand-mark">um</div><Text fw={720} fz="lg" visibleFrom="xs">{meta?.serviceName || 'umm'}</Text></Group></UnstyledButton></Group>
-      <Group><QuickNavigator/><Menu shadow="md" width={330} position="bottom-end"><Menu.Target><Indicator disabled={unread===0} label={unread>9?'9+':unread} size={17} color="grape"><UnstyledButton aria-label={`알림 ${unread}개`}><IconBell size={22}/></UnstyledButton></Indicator></Menu.Target><Menu.Dropdown><Menu.Label>알림</Menu.Label>{notifications.length===0?<Menu.Item disabled>새 알림이 없습니다.</Menu.Item>:notifications.slice(0,8).map(item=><Menu.Item key={item.id} bg={!item.readAt?'grape.0':undefined} onClick={()=>void openNotification(item)}><Text size="sm" fw={!item.readAt?650:500}>{item.title}</Text><Text size="xs" c="dimmed" lineClamp={2}>{item.body}</Text></Menu.Item>)}</Menu.Dropdown></Menu><Menu shadow="md" width={245} position="bottom-end"><Menu.Target><UnstyledButton aria-label="프로필 메뉴"><Group gap="sm"><Avatar color="grape" radius="xl">{user?.displayName?.slice(0, 1)}</Avatar><div className="profile-text"><Text size="sm" fw={650}>{user?.displayName}</Text><Text size="xs" c="dimmed">{user?.role === 'admin' ? '서비스 관리자' : user?.role === 'team_lead' ? '팀장' : '사용자'}</Text></div></Group></UnstyledButton></Menu.Target><Menu.Dropdown>
-        <Menu.Label>내 계정</Menu.Label><Menu.Item leftSection={<IconUser size={16} />} onClick={() => navigate('/settings')}>개인화 및 키 관리</Menu.Item>
-        {user?.role === 'admin' && <Menu.Item leftSection={<IconSettings size={16} />} onClick={() => navigate('/admin/overview')}>서비스 관리자</Menu.Item>}
-        <Divider my="xs" /><Menu.Label>{meta?.serviceName || 'umm'} · v{meta?.version || 'dev'}</Menu.Label>
-        <Menu.Item color="red" leftSection={<IconLogout size={16} />} onClick={async () => { await logout(); navigate('/'); }}>로그아웃</Menu.Item>
-      </Menu.Dropdown></Menu></Group>
-    </Group></AppShell.Header>}
-    <AppShell.Navbar className="app-navbar" p="md" aria-label="주 메뉴"><AppShell.Section grow component={ScrollArea} className="nav-scroll"><Stack gap={5}>
-      <Text size="xs" tt="uppercase" fw={700} c="dimmed" px="sm" pt="xs" pb={4}>Thought Space</Text>
-      {links.map(({ to, label, icon: Icon }) => <MantineNavLink key={to} component={NavLink} to={to} label={label} leftSection={<Icon size={19} />} active={isLinkActive(to)} aria-current={isLinkActive(to) ? 'page' : undefined} onClick={close} />)}
-      {user?.role === 'admin' && <><Divider my="sm" /><Text size="xs" tt="uppercase" fw={700} c="dimmed" px="sm">Service</Text><MantineNavLink component={NavLink} to="/admin/overview" label="서비스 관리자" leftSection={<IconLayoutDashboard size={19} />} onClick={close} /></>}
-    </Stack></AppShell.Section><AppShell.Section><Text size="xs" c="dimmed" px="sm">정리는 나중에.<br />생각부터 붙입니다.</Text></AppShell.Section></AppShell.Navbar>
-    <AppShell.Main h="100%"><Outlet /></AppShell.Main>
-    {!isAdmin && <nav className="mobile-tabs" aria-label="모바일 주 메뉴">{links.slice(0,3).map(({to,label,icon:Icon}) => <Button key={to} component={NavLink} to={to} variant="subtle" color={isLinkActive(to)?'grape':'gray'} aria-current={isLinkActive(to) ? 'page' : undefined} px="xs" leftSection={<Icon size={19} />}>{label.split(' ')[0]}</Button>)}</nav>}
-    {isAdmin && <Button className="admin-back-button" pos="fixed" top={16} left={16} style={{zIndex:80}} variant="white" color="dark" leftSection={<IconArrowLeft size={18}/>} onClick={() => navigate('/')}>내 공간</Button>}
-    {isAdmin && <QuickNavigator admin/>}
-  </AppShell>;
+  const isLinkActive = (to: string) =>
+    to === '/'
+      ? location.pathname === '/'
+      : to === '/canvas'
+        ? location.pathname === '/canvas' || location.pathname.startsWith('/space/')
+        : location.pathname === to;
+
+  return (
+    <AppShell
+      className="warm-shell"
+      header={{ height: isAdmin ? 0 : 66 }}
+      navbar={{ width: 238, breakpoint: 'sm', collapsed: { mobile: !opened, desktop: isAdmin } }}
+      padding={0}
+    >
+      {!isAdmin && (
+        <AppShell.Header className="app-header">
+          <Group h="100%" px={{ base: 'md', sm: 'lg' }} justify="space-between">
+            <Group>
+              <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label={t('메뉴 열기')} />
+              <UnstyledButton onClick={() => navigate('/')}>
+                <Group gap="sm">
+                  <div className="brand-mark">um</div>
+                  <Text fw={720} fz="lg" visibleFrom="xs">
+                    {meta?.serviceName || 'umm'}
+                  </Text>
+                </Group>
+              </UnstyledButton>
+            </Group>
+            <Group>
+              <QuickNavigator />
+              <NotificationMenu />
+              <Menu shadow="md" width={245} position="bottom-end">
+                <Menu.Target>
+                  <UnstyledButton aria-label={t('프로필 메뉴')}>
+                    <Group gap="sm">
+                      <Avatar color="grape" radius="xl">
+                        {user?.displayName?.slice(0, 1)}
+                      </Avatar>
+                      <div className="profile-text">
+                        <Text size="sm" fw={650}>
+                          {user?.displayName}
+                        </Text>
+                        <Text size="xs" c="dimmed">
+                          {t(roleLabel(user?.role))}
+                        </Text>
+                      </div>
+                    </Group>
+                  </UnstyledButton>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Label>{t('내 계정')}</Menu.Label>
+                  <Menu.Item leftSection={<IconUser size={16} />} onClick={() => navigate('/settings')}>
+                    {t('개인화 및 키 관리')}
+                  </Menu.Item>
+                  {user?.role === 'admin' && (
+                    <Menu.Item leftSection={<IconSettings size={16} />} onClick={() => navigate('/admin/overview')}>
+                      {t('서비스 관리자')}
+                    </Menu.Item>
+                  )}
+                  <Divider my="xs" />
+                  <AppearanceMenu />
+                  <Divider my="xs" />
+                  <Menu.Label>
+                    {meta?.serviceName || 'umm'} · v{meta?.version || 'dev'}
+                  </Menu.Label>
+                  <Menu.Item
+                    color="red"
+                    leftSection={<IconLogout size={16} />}
+                    onClick={async () => {
+                      await logout();
+                      navigate('/');
+                    }}
+                  >
+                    {t('로그아웃')}
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            </Group>
+          </Group>
+        </AppShell.Header>
+      )}
+      <AppShell.Navbar className="app-navbar" p="md" aria-label={t('주 메뉴')}>
+        <AppShell.Section grow component={ScrollArea} className="nav-scroll">
+          <Stack gap={5}>
+            <Text size="xs" tt="uppercase" fw={700} c="dimmed" px="sm" pt="xs" pb={4}>
+              Thought Space
+            </Text>
+            {links.map(({ to, label, icon: Icon }) => (
+              <MantineNavLink
+                key={to}
+                component={NavLink}
+                to={to}
+                label={t(label)}
+                leftSection={<Icon size={19} />}
+                active={isLinkActive(to)}
+                aria-current={isLinkActive(to) ? 'page' : undefined}
+                onClick={close}
+              />
+            ))}
+            {user?.role === 'admin' && (
+              <>
+                <Divider my="sm" />
+                <Text size="xs" tt="uppercase" fw={700} c="dimmed" px="sm">
+                  Service
+                </Text>
+                <MantineNavLink
+                  component={NavLink}
+                  to="/admin/overview"
+                  label={t('서비스 관리자')}
+                  leftSection={<IconLayoutDashboard size={19} />}
+                  onClick={close}
+                />
+              </>
+            )}
+          </Stack>
+        </AppShell.Section>
+        <AppShell.Section>
+          <Text size="xs" c="dimmed" px="sm">
+            {t('정리는 나중에.')}
+            <br />
+            {t('생각부터 붙입니다.')}
+          </Text>
+        </AppShell.Section>
+      </AppShell.Navbar>
+      <AppShell.Main h="100%">
+        <Outlet />
+      </AppShell.Main>
+      <OfflineStatus />
+      {!isAdmin && (
+        <nav className="mobile-tabs" aria-label={t('모바일 주 메뉴')}>
+          {links.slice(0, 3).map(({ to, label, icon: Icon }) => (
+            <Button
+              key={to}
+              component={NavLink}
+              to={to}
+              variant="subtle"
+              color={isLinkActive(to) ? 'grape' : 'gray'}
+              aria-current={isLinkActive(to) ? 'page' : undefined}
+              px="xs"
+              leftSection={<Icon size={19} />}
+            >
+              {t(label).split(' ')[0]}
+            </Button>
+          ))}
+        </nav>
+      )}
+      {isAdmin && (
+        <Button
+          className="admin-back-button"
+          pos="fixed"
+          top={16}
+          left={16}
+          style={{ zIndex: 80 }}
+          variant="white"
+          color="dark"
+          leftSection={<IconArrowLeft size={18} />}
+          onClick={() => navigate('/')}
+        >
+          {t('내 공간')}
+        </Button>
+      )}
+      {isAdmin && <QuickNavigator admin />}
+    </AppShell>
+  );
 }
