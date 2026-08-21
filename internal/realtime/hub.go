@@ -34,7 +34,10 @@ type Subscription struct {
 	closed  sync.Once
 }
 
-// C returns the notification channel. It is closed only when Close is called.
+// C returns the notification channel. The channel is deliberately never
+// closed: request cancellation owns the reader lifetime, while leaving the
+// channel open removes the possibility of a concurrent publisher sending to a
+// channel that Close has just closed.
 func (s *Subscription) C() <-chan struct{} { return s.signal }
 
 // Close releases the subscription. It is safe to call more than once.
@@ -88,14 +91,13 @@ func (h *Hub) Subscribe(spaceID uuid.UUID) *Subscription {
 
 func (h *Hub) remove(sub *Subscription) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	if set := h.subscribers[sub.spaceID]; set != nil {
 		delete(set, sub)
 		if len(set) == 0 {
 			delete(h.subscribers, sub.spaceID)
 		}
 	}
-	h.mu.Unlock()
-	close(sub.signal)
 }
 
 // Publish wakes every subscriber of a space. Sends are non-blocking, so a

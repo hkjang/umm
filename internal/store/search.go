@@ -95,8 +95,7 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 	if options.Offset < 0 {
 		options.Offset = 0
 	}
-	provider := s.EmbeddingProvider(ctx)
-	algorithm := provider.Algorithm()
+	queryVector, algorithm := s.EmbedQuery(ctx, options.Query)
 
 	b := &queryBuilder{}
 	user := b.bind(userID)
@@ -151,7 +150,6 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 		return HybridSearchPage{}, err
 	}
 	defer rows.Close()
-	queryVector := s.EmbedQuery(ctx, options.Query)
 	// Embedding a missing vector inline is only safe for the local algorithm; a
 	// gateway backed one would turn a single search into hundreds of calls, so
 	// those rows are scored lexically until the background refresh catches up.

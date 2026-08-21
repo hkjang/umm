@@ -152,5 +152,5 @@ docker run -d --name umm --restart unless-stopped \
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)
-- 선택 환경변수: `ENCRYPTION_KEY_PREVIOUS`(키 회전), `UMM_HTTP_ADDR`(바인드 주소), 표준 `OTEL_EXPORTER_OTLP_*`(trace 전송). 필수 입력은 위 네 개로 유지됩니다.
+- 선택 환경변수: `ENCRYPTION_KEY_PREVIOUS`(키 회전), `UMM_HTTP_ADDR`(바인드 주소), `UMM_TRUSTED_PROXY_CIDRS`(신뢰할 reverse proxy IP/CIDR), 표준 `OTEL_EXPORTER_OTLP_*`(trace 전송). 필수 입력은 위 네 개로 유지됩니다. 프록시 목록을 비우면 전달 헤더는 모두 무시됩니다.
 - 데이터베이스 사용자에게 `CREATE EXTENSION` 권한이 필요합니다 (`pgcrypto`, `citext`, `pg_trgm`).

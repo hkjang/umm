@@ -83,7 +83,7 @@ func main() {
 		webDir = "/app/web"
 	}
 	metrics := observability.NewRegistry()
-	api := &httpapi.Server{Store: db, Auth: authService, OIDC: oidcService, Cipher: cipher, Dreams: dreamService, Webhooks: webhookService, Metrics: metrics, Events: events, Version: version, WebDir: webDir}
+	api := &httpapi.Server{Store: db, Auth: authService, OIDC: oidcService, Cipher: cipher, Dreams: dreamService, Webhooks: webhookService, Metrics: metrics, Events: events, Version: version, WebDir: webDir, TrustedProxies: cfg.TrustedProxyCIDRs}
 	httpServer := newHTTPServer(cfg.HTTPAddr, api.Handler())
 	go func() {
 		slog.Info("umm started", "version", version, "address", httpServer.Addr)

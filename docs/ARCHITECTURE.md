@@ -48,7 +48,7 @@
 - **Canvas Domain**: `spaces`, `notes`, `note_edges`
 - **Intelligence Domain**: `note_revisions`, `note_embeddings`
 - **Collaboration Domain**: `space_members`, `space_events`, `notifications`, `note_comments`, `comment_mentions`
-- **Identity & Access**: `users`, `sessions`, `oauth_states`, `teams`, `login_attempts`
+- **Identity & Access**: `users`, `sessions`, `oauth_states`, `teams`, `login_attempts`, `ai_quota_reservations`
 - **Personalization & Review**: `user_preferences`, `note_reviews`, `api_keys`
 - **Governance & Security**: `approval_requests`, `audit_logs`, `app_settings`
 - **Dream & LLM Domain**: `dream_jobs`, `dream_notes`, `dream_sources`, `dream_feedback`, `ai_calls`, `ai_eval_cases`, `ai_eval_runs`

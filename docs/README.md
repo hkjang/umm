@@ -63,4 +63,4 @@ docker run -d --name umm --restart unless-stopped \
 ```
 
 - **접속 주소**: `http://localhost:8080` (초기 관리자 계정: `admin`)
-- 선택 환경변수는 `ENCRYPTION_KEY_PREVIOUS`, `UMM_HTTP_ADDR`, 표준 `OTEL_EXPORTER_OTLP_*`입니다. 필수 환경변수는 네 개로 유지됩니다.
+- 선택 환경변수는 `ENCRYPTION_KEY_PREVIOUS`, `UMM_HTTP_ADDR`, `UMM_TRUSTED_PROXY_CIDRS`, 표준 `OTEL_EXPORTER_OTLP_*`입니다. 필수 환경변수는 네 개로 유지됩니다. `UMM_TRUSTED_PROXY_CIDRS`를 비우면 클라이언트가 보낸 forwarding header는 신뢰하지 않습니다.

@@ -3,11 +3,16 @@ package store
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/intelligence"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -639,4 +644,156 @@ func reviewContains(items []ReviewItem, noteID uuid.UUID, requirePinned bool) bo
 		}
 	}
 	return false
+}
+
+func TestAIDailyQuotaReservationIsAtomicAcrossStoresIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	first, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Pool.Close()
+	if err = first.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	second, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Pool.Close()
+
+	userID := uuid.New()
+	username := "quota_user_" + userID.String()
+	if _, err = first.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	marker := "quota-test-" + userID.String()
+	defer first.Pool.Exec(ctx, `DELETE FROM ai_calls WHERE model=$1`, marker)
+	defer first.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+
+	type result struct {
+		id      uuid.UUID
+		allowed bool
+		err     error
+	}
+	const contenders = 12
+	start := make(chan struct{})
+	results := make(chan result, contenders)
+	var workers sync.WaitGroup
+	for index := range contenders {
+		workers.Add(1)
+		db := first
+		if index%2 == 1 {
+			db = second
+		}
+		go func() {
+			defer workers.Done()
+			<-start
+			id, _, allowed, reserveErr := db.ReserveAIDailyQuota(ctx, userID, 1)
+			results <- result{id: id, allowed: allowed, err: reserveErr}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+
+	allowed := 0
+	var winningReservation uuid.UUID
+	for item := range results {
+		if item.err != nil {
+			t.Fatal(item.err)
+		}
+		if item.allowed {
+			allowed++
+			winningReservation = item.id
+		}
+	}
+	if allowed != 1 || winningReservation == uuid.Nil {
+		t.Fatalf("expected exactly one atomic reservation, got %d (id=%s)", allowed, winningReservation)
+	}
+	if err = first.ReleaseAIDailyQuota(ctx, winningReservation); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement, used, replacementAllowed, err := second.ReserveAIDailyQuota(ctx, userID, 1)
+	if err != nil || !replacementAllowed || used != 1 {
+		t.Fatalf("released slot was not reusable: allowed=%v used=%d err=%v", replacementAllowed, used, err)
+	}
+	if err = second.ReleaseAIDailyQuota(ctx, replacement); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = first.Pool.Exec(ctx, `INSERT INTO ai_calls(user_id,model,status) VALUES($1,$2,'completed')`, userID, marker); err != nil {
+		t.Fatal(err)
+	}
+	_, used, allowedAfterCall, err := first.ReserveAIDailyQuota(ctx, userID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowedAfterCall || used != 1 {
+		t.Fatalf("durable AI call did not consume the quota: allowed=%v used=%d", allowedAfterCall, used)
+	}
+}
+
+func TestHybridSearchUsesTheActualFallbackVectorSpaceIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "gateway unavailable", http.StatusBadGateway)
+	}))
+	defer gateway.Close()
+	db.embeddings.provider = intelligence.Provider{Remote: &intelligence.RemoteConfig{
+		BaseURL: gateway.URL,
+		Model:   "remote-model",
+		Timeout: time.Second,
+	}}
+	db.embeddings.loadedAt = time.Now()
+
+	userID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New()
+	username := "fallback_search_" + userID.String()
+	query := "semantic-fallback-" + noteID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'fallback vector space')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,$4)`, noteID, spaceID, userID, query); err != nil {
+		t.Fatal(err)
+	}
+	// This vector belongs to the configured remote space and is deliberately
+	// unusable. A local fallback query must ignore it and locally embed the row.
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO note_embeddings(note_id,algorithm,model,dimensions,vector,content_version)
+		VALUES($1,'gateway:remote-model','remote-model',2,$2,1)`, noteID, []float32{0, 0}); err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := db.SearchNotesHybrid(ctx, userID, SearchOptions{Query: query, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Notes) != 1 || page.Notes[0].ID != noteID {
+		t.Fatalf("fallback search omitted the note: %#v", page.Notes)
+	}
+	if !strings.Contains(page.Notes[0].Reason, "의미상 유사") {
+		t.Fatalf("search compared the fallback query in the wrong vector space: %#v", page.Notes[0])
+	}
 }

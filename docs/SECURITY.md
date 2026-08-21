@@ -26,7 +26,7 @@ User API/MCP key (one-time plaintext display)
 
 - Browser session: random 256-bit token의 digest만 DB 저장, HttpOnly, SameSite=Lax, HTTPS 인지 시 Secure cookie. 사용자는 개인 설정에서 활성 세션 목록을 확인하고 개별 또는 일괄 종료할 수 있음
 - Login throttling: 실패 횟수를 PostgreSQL에 기록해 인스턴스 간에 공유. 주소별 임계값을 넘으면 잠금, 계정별 임계값은 그 3배로 두어 아이디를 아는 사람이 남의 계정을 잠그는 것을 방지
-- Rate limits: 호출자별 API 요청 한도와 AI 생성 전용 분당·일일 한도. 일일 한도는 `ai_calls`에서 세므로 재시작과 인스턴스를 넘어 유지되며, 초과 시 `429`와 `Retry-After` 반환
+- Rate limits: 호출자별 API 요청 한도와 AI 생성 전용 분당·일일 한도. 일일 한도는 Gateway 호출 전에 PostgreSQL advisory lock과 만료형 예약 행으로 원자적으로 선점하고 완료 후 `ai_calls`를 내역으로 사용하므로, 동시 요청·재시작·여러 인스턴스를 넘어 유지됨. 초과 시 `429`와 `Retry-After` 반환
 - OIDC: Authorization Code flow, state 일회 사용/10분 만료, provider Discovery, ID token 서명·issuer·audience 검증
 - Roles: `user`, `team_lead`, `admin`
 - API/MCP: Bearer key와 세부 scope. MCP는 browser cookie를 허용하지 않음
@@ -40,7 +40,7 @@ User API/MCP key (one-time plaintext display)
 - Aggregate scope: `notes:read`만 가진 API key의 Today 응답에서는 `dreams:read` 데이터와 개수를 제거해 집계 endpoint를 통한 scope 우회를 차단
 - One-time secrets: API key와 webhook signing key 생성·회전 응답은 멱등 캐시 대상에서 제외해 평문 자격 증명을 PostgreSQL에 남기지 않음
 
-TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장하며 `X-Forwarded-Proto: https`를 전달해야 합니다. Keycloak redirect URI는 wildcard가 아니라 callback 전체 경로로 제한하세요.
+TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장합니다. 이 경우 직접 연결되는 proxy IP/CIDR만 `UMM_TRUSTED_PROXY_CIDRS`에 지정하고 proxy가 `X-Forwarded-For`와 `X-Forwarded-Proto: https`를 정규화해 전달하도록 구성하세요. 목록이 비어 있거나 socket peer가 목록 밖이면 umm은 모든 forwarding header를 제거합니다. Keycloak redirect URI는 wildcard가 아니라 callback 전체 경로로 제한하세요.
 
 ## AI 개인정보 보호
 
@@ -62,7 +62,7 @@ TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장하며 
 
 `style-src`의 `'unsafe-inline'`은 **의도적으로 남겨 두었습니다.** Mantine이 테마 변수를 런타임 `<style>` 요소로 주입하고 React Flow가 모든 노드를 style 속성으로 배치하기 때문에, 제거하면 캔버스가 동작하지 않습니다. style 주입은 script 주입보다 현저히 낮은 심각도이므로, 제품을 깨뜨리면서 얻는 방어보다 이 상태를 문서화하는 편이 정직하다고 판단했습니다. 서비스 워커가 오프라인에 대비해 캐시하는 shell 응답은 헤더와 문서를 함께 저장하므로 캐시된 nonce와 헤더가 어긋나지 않습니다.
 
-HSTS는 TLS로 도착한 요청(또는 `X-Forwarded-Proto: https`)에만 붙입니다. 평문 HTTP로 평가 중인 배포가 자기 브라우저에서 스스로 잠기는 것을 막기 위해서입니다. JSON body는 1 MiB, MCP body도 1 MiB로 제한합니다. HTTP server는 header/read/write/idle timeout을 둡니다. 공간 SSE는 인증·공간 조회 권한을 먼저 확인하고 event payload에 관리자 secret을 싣지 않습니다. MCP는 Origin 검증과 현재 프로토콜 routing header 일치를 확인합니다. API 오류는 RFC 9457 Problem Details로 반환하며 기존 `error` 필드는 호환성을 위해 유지합니다.
+HSTS는 TLS로 도착한 요청 또는 명시적으로 신뢰한 proxy가 전달한 `X-Forwarded-Proto: https`에만 붙입니다. 평문 HTTP로 평가 중인 배포가 자기 브라우저에서 스스로 잠기거나, 외부 요청이 spoofed header로 쿠키·요청 제한 판단을 바꾸는 것을 막기 위해서입니다. JSON body는 1 MiB, MCP body도 1 MiB로 제한합니다. HTTP server는 header/read/write/idle timeout을 둡니다. 공간 SSE는 인증·공간 조회 권한을 먼저 확인하고 event payload에 관리자 secret을 싣지 않습니다. MCP는 Origin 검증과 현재 프로토콜 routing header 일치를 확인합니다. API 오류는 RFC 9457 Problem Details로 반환하며 기존 `error` 필드는 호환성을 위해 유지합니다.
 
 ## 웹훅과 공급망
 

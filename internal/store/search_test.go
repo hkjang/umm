@@ -1,8 +1,14 @@
 package store
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hkjang/umm/internal/intelligence"
 )
 
 func TestNoteSearchPatternsEscapesWildcards(t *testing.T) {
@@ -64,5 +70,28 @@ func TestAllMatchWithNoTermsMatchesNothing(t *testing.T) {
 func TestNoteTextExpressionMatchesTheIndexedExpression(t *testing.T) {
 	if noteTextExpression != `(n.title || ' ' || n.content)` {
 		t.Fatalf("noteTextExpression changed to %q without a matching migration", noteTextExpression)
+	}
+}
+
+func TestEmbedQueryReportsTheFallbackAlgorithm(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "gateway unavailable", http.StatusBadGateway)
+	}))
+	defer gateway.Close()
+
+	db := &Store{}
+	db.embeddings.provider = intelligence.Provider{Remote: &intelligence.RemoteConfig{
+		BaseURL: gateway.URL,
+		Model:   "remote-model",
+		Timeout: time.Second,
+	}}
+	db.embeddings.loadedAt = time.Now()
+
+	vector, algorithm := db.EmbedQuery(context.Background(), "fallback query")
+	if algorithm != intelligence.LocalAlgorithm {
+		t.Fatalf("a failed remote query must select local stored vectors, got %q", algorithm)
+	}
+	if len(vector) != intelligence.Dimensions {
+		t.Fatalf("expected a %d-dimensional local fallback, got %d", intelligence.Dimensions, len(vector))
 	}
 }

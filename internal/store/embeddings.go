@@ -188,11 +188,14 @@ func (s *Store) loadEmbeddings(ctx context.Context, notes []Note) map[uuid.UUID]
 	return out
 }
 
-// EmbedQuery vectorises a search query with the active provider.
-func (s *Store) EmbedQuery(ctx context.Context, query string) []float32 {
-	vectors, _ := s.EmbeddingProvider(ctx).Embed(ctx, []string{query})
+// EmbedQuery vectorises a search query and reports the algorithm that actually
+// produced it. A remote provider can fall back locally, so callers must use the
+// returned label rather than the provider's configured label when selecting
+// stored vectors.
+func (s *Store) EmbedQuery(ctx context.Context, query string) ([]float32, string) {
+	vectors, algorithm := s.EmbeddingProvider(ctx).Embed(ctx, []string{query})
 	if len(vectors) == 0 {
-		return nil
+		return nil, algorithm
 	}
-	return vectors[0]
+	return vectors[0], algorithm
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"reflect"
 	"strings"
 	"testing"
@@ -257,8 +258,8 @@ func TestSecurityHeadersPinScriptsToAPerResponseNonce(t *testing.T) {
 }
 
 func TestStrictTransportSecurityOnlyOnTLS(t *testing.T) {
-	server := &Server{}
-	handler := server.securityHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server := &Server{TrustedProxies: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}}
+	handler := server.trustedProxyHeaders(server.securityHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 
 	plain := httptest.NewRecorder()
 	handler.ServeHTTP(plain, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -267,11 +268,21 @@ func TestStrictTransportSecurityOnlyOnTLS(t *testing.T) {
 	}
 
 	forwarded := httptest.NewRequest(http.MethodGet, "/", nil)
+	forwarded.RemoteAddr = "10.1.2.3:4321"
 	forwarded.Header.Set("X-Forwarded-Proto", "https")
 	behindProxy := httptest.NewRecorder()
 	handler.ServeHTTP(behindProxy, forwarded)
 	if behindProxy.Header().Get("Strict-Transport-Security") == "" {
 		t.Fatal("a TLS terminating proxy must still produce HSTS")
+	}
+
+	spoofed := httptest.NewRequest(http.MethodGet, "/", nil)
+	spoofed.RemoteAddr = "203.0.113.7:4321"
+	spoofed.Header.Set("X-Forwarded-Proto", "https")
+	untrusted := httptest.NewRecorder()
+	handler.ServeHTTP(untrusted, spoofed)
+	if untrusted.Header().Get("Strict-Transport-Security") != "" {
+		t.Fatal("an untrusted peer must not enable HSTS with a spoofed forwarding header")
 	}
 }
 

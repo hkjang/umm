@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -54,8 +55,38 @@ func TestCloseIsIdempotentAndDeregisters(t *testing.T) {
 	if subscribers, spaces, _, _ := hub.Stats(); subscribers != 0 || spaces != 0 {
 		t.Fatalf("expected an empty registry, got %d subscribers across %d spaces", subscribers, spaces)
 	}
-	// Publishing to a space nobody watches must not panic on the closed channel.
+	// Publishing to a space nobody watches must remain a no-op.
 	hub.Publish(spaceID)
+	select {
+	case _, open := <-subscription.C():
+		if !open {
+			t.Fatal("Close must not close the signal channel while a publisher may still hold a reference")
+		}
+	default:
+	}
+}
+
+func TestPublishAndCloseCanRaceSafely(t *testing.T) {
+	hub := New(nil)
+	spaceID := uuid.New()
+	for range 1000 {
+		subscription := hub.Subscribe(spaceID)
+		start := make(chan struct{})
+		var workers sync.WaitGroup
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			<-start
+			hub.Publish(spaceID)
+		}()
+		go func() {
+			defer workers.Done()
+			<-start
+			subscription.Close()
+		}()
+		close(start)
+		workers.Wait()
+	}
 }
 
 func TestParsePayload(t *testing.T) {

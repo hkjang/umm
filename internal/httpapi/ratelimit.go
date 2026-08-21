@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -144,22 +146,10 @@ func rateLimitKey(r *http.Request) string {
 }
 
 func clientIP(r *http.Request) string {
-	// middleware.RealIP has already rewritten RemoteAddr when a trusted proxy
-	// header was present.
-	host := r.RemoteAddr
-	if index := lastIndexByte(host, ':'); index > 0 {
-		host = host[:index]
+	if address, ok := remoteAddressIP(r.RemoteAddr); ok {
+		return address.String()
 	}
-	return host
-}
-
-func lastIndexByte(value string, target byte) int {
-	for i := len(value) - 1; i >= 0; i-- {
-		if value[i] == target {
-			return i
-		}
-	}
-	return -1
+	return strings.TrimSpace(r.RemoteAddr)
 }
 
 // rateLimit protects the API from a single caller monopolising the service.
@@ -179,8 +169,9 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 }
 
 // aiQuota guards the endpoints that spend money at the AI gateway. The per
-// minute burst is in memory; the daily cap is counted from ai_calls so it holds
-// across restarts and replicas.
+// minute burst is in memory; the daily cap reserves a slot in PostgreSQL before
+// the gateway call, so concurrent requests cannot cross the limit even when
+// they arrive at different replicas.
 func (s *Server) aiQuota(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet || r.Method == http.MethodHead {
@@ -198,13 +189,29 @@ func (s *Server) aiQuota(next http.Handler) http.Handler {
 			return
 		}
 		if policy.AIDailyLimit > 0 {
-			var used int
-			if s.Store.Pool.QueryRow(r.Context(), `SELECT count(*) FROM ai_calls WHERE user_id=$1 AND created_at>=now()-interval '24 hours'`, p.User.ID).Scan(&used) == nil && used >= policy.AIDailyLimit {
+			reservationID, used, dailyAllowed, err := s.Store.ReserveAIDailyQuota(r.Context(), p.User.ID, policy.AIDailyLimit)
+			if err != nil {
+				slog.Error("AI quota reservation failed", "error", err, "user_id", p.User.ID)
+				writeRetryAfter(w, 5*time.Second)
+				writeProblem(w, r, http.StatusServiceUnavailable, "ai-quota-unavailable", "AI 사용 한도를 확인하지 못했습니다",
+					"사용량 보호를 위해 요청을 시작하지 않았습니다. 잠시 후 다시 시도해 주세요.",
+					map[string]any{"retryAfterSeconds": 5})
+				return
+			}
+			if !dailyAllowed {
+				writeRetryAfter(w, time.Minute)
 				writeProblem(w, r, http.StatusTooManyRequests, "ai-daily-limit", "오늘의 AI 사용량을 모두 썼습니다",
 					"하루 AI 생성 한도 "+strconv.Itoa(policy.AIDailyLimit)+"회를 모두 사용했습니다. 내일 다시 시도하거나 관리자에게 한도 조정을 요청해 주세요.",
 					map[string]any{"dailyLimit": policy.AIDailyLimit, "used": used})
 				return
 			}
+			defer func() {
+				releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if releaseErr := s.Store.ReleaseAIDailyQuota(releaseCtx, reservationID); releaseErr != nil {
+					slog.Warn("AI quota reservation release failed", "error", releaseErr, "user_id", p.User.ID, "reservation_id", reservationID)
+				}
+			}()
 		}
 		next.ServeHTTP(w, r)
 	})

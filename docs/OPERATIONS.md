@@ -40,9 +40,12 @@ ENCRYPTION_KEY
 ```text
 ENCRYPTION_KEY_PREVIOUS       # 쉼표로 구분한 이전 32-byte 키; 회전 기간에만 사용
 UMM_HTTP_ADDR                 # 기본 :8080
+UMM_TRUSTED_PROXY_CIDRS       # 쉼표로 구분한 신뢰할 reverse proxy IP/CIDR
 OTEL_EXPORTER_OTLP_ENDPOINT   # 설정할 때만 OTLP trace exporter 활성화
 OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 ```
+
+`UMM_TRUSTED_PROXY_CIDRS`의 기본값은 빈 목록입니다. 이때 서비스는 `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`를 모두 제거하고 실제 socket peer를 로그인 잠금·요청 제한 주소로 사용합니다. TLS 종료 proxy가 직접 연결될 때만 그 proxy의 실제 네트워크를 지정하세요. 예를 들어 Docker/Kubernetes 내부 proxy 대역이 `10.42.0.0/16`이면 `UMM_TRUSTED_PROXY_CIDRS=10.42.0.0/16`으로 설정합니다. `0.0.0.0/0`과 `::/0`은 클라이언트가 주소와 scheme을 위조하게 만들므로 사용하지 마세요. Proxy도 외부 forwarding header를 제거하고 자신이 확인한 값을 덮어쓰거나 append해야 합니다.
 
 ## 최초 설정 순서
 
@@ -66,6 +69,7 @@ docker stop umm
 Schema migration은 기동 시 forward 방향으로만 자동 적용됩니다. 되돌려야 할 때를 위해 `migrations/down/`에 되돌리기 스크립트를 둡니다. 자동으로는 절대 실행되지 않습니다 — 컬럼을 지우는 일은 그 안의 데이터를 지우는 일이므로, 백업을 확보한 운영자가 의도적으로 실행해야 합니다.
 
 ```bash
+psql "$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/down/008_atomic_ai_quota.down.sql
 psql "$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/down/007_scale_and_security.down.sql
 ```
 
@@ -93,7 +97,7 @@ CI는 `scripts/restore-smoke.sh`로 PostgreSQL custom-format dump를 별도 `umm
 
 - `/api/v1/metrics`는 `metrics:read` scope 또는 관리자 세션으로 Prometheus request count, latency histogram, in-flight, build 정보를 제공합니다.
 - 실시간 협업 상태는 `umm_realtime_subscribers`, `umm_realtime_spaces`, `umm_realtime_signals_total`, `umm_realtime_listener_up`으로 노출됩니다. `umm_realtime_listener_up`이 0이면 PostgreSQL `LISTEN` 연결이 끊긴 상태이며 SSE가 폴백 폴링으로 동작 중이라는 뜻입니다 — 협업은 계속되지만 데이터베이스 부하가 올라가므로 알림을 걸어 두세요. 같은 값은 관리자 → 운영 현황에서도 볼 수 있습니다.
-- 만료된 세션·OAuth state·재시도 기록·로그인 실패 기록은 15분마다 자동 정리됩니다. 별도 cron이 필요하지 않습니다.
+- 만료된 세션·OAuth state·재시도 기록·로그인 실패 기록·AI 쿼터 예약은 15분마다 자동 정리됩니다. 별도 cron이 필요하지 않습니다.
 - 표준 `OTEL_EXPORTER_OTLP_ENDPOINT` 또는 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`가 있을 때만 OTLP HTTP trace exporter가 활성화됩니다.
 - 웹훅은 HTTPS 기본 포트만 허용하며 DNS 확인과 연결 시점 모두 사설·loopback·link-local·reserved IP를 거부합니다. 도메인 변경과 SSE/webhook outbox는 같은 PostgreSQL 트랜잭션으로 커밋되고, 재시작 시 대기 항목과 2분 넘게 처리 중인 항목을 워커가 복구합니다. 실패는 세 번 재시도하고 연속 10회 실패 시 subscription을 자동 중지합니다.
 - 전달 시도는 at-least-once 방식입니다. 수신 측은 `X-Umm-Timestamp + "." + raw_body`에 대한 `X-Umm-Signature-256: sha256=<hex>` HMAC을 검증하고 오래된 timestamp를 거부하며, `X-Umm-Delivery`를 멱등 키로 저장해 중복을 안전하게 무시해야 합니다.

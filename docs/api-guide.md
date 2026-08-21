@@ -92,10 +92,11 @@ Canvas 목록·수정 이력·댓글·백링크처럼 본문을 반환하는 조
 | :--- | :--- | :--- |
 | 호출자별 API 요청 한도 초과 | `429` + `Retry-After` | `rate-limited` |
 | AI 생성 분당 한도 초과 | `429` + `Retry-After` | `ai-rate-limited` |
-| AI 생성 하루 한도 초과 | `429` | `ai-daily-limit` |
+| AI 생성 하루 한도 초과 | `429` + `Retry-After` | `ai-daily-limit` |
+| AI 쿼터 저장소 일시 오류 | `503` + `Retry-After` | `ai-quota-unavailable` |
 | 로그인 실패 반복으로 잠김 | `429` + `Retry-After` | `login-locked` |
 
-한도 값은 관리자 설정에서 조정합니다. `429`는 재시도 가능한 응답이므로 오프라인 queue도 보존한 뒤 다시 시도합니다.
+한도 값은 관리자 설정에서 조정합니다. 일일 AI 한도는 Gateway 호출 전에 PostgreSQL에서 원자적으로 예약하므로 replica가 여러 개여도 동시에 한도를 넘지 않습니다. 쿼터를 확인할 수 없으면 비용 보호를 위해 AI 호출을 시작하지 않고 `503`으로 종료합니다. `429`와 `503`은 재시도 가능한 응답이므로 오프라인 queue도 보존한 뒤 다시 시도합니다.
 
 ### 🪝 서명 웹훅
 

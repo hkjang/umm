@@ -390,7 +390,7 @@ paths:
       tags: [AI]
       summary: Quietly develop selected thoughts with the configured internal AI Gateway
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [noteIds, mode], properties: { noteIds: { type: array, minItems: 1, maxItems: 20, items: { type: string, format: uuid } }, mode: { type: string, enum: [summarize, questions, expand, challenge, actions] } } } } } }
-      responses: { '200': { description: Generated thought aid }, '400': { $ref: '#/components/responses/Error' } }
+      responses: { '200': { description: Generated thought aid }, '400': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' }, '503': { $ref: '#/components/responses/Error' } }
   /preferences:
     get:
       operationId: get_preferences
@@ -618,7 +618,7 @@ paths:
       tags: [Dream]
       summary: Generate a distinct alternative from the same source notes
       x-required-scope: dreams:read
-      responses: { '200': { description: Replaced Dream candidate, content: { application/json: { schema: { $ref: '#/components/schemas/DreamCandidate' } } } } }
+      responses: { '200': { description: Replaced Dream candidate, content: { application/json: { schema: { $ref: '#/components/schemas/DreamCandidate' } } } }, '429': { $ref: '#/components/responses/Error' }, '503': { $ref: '#/components/responses/Error' } }
   /dreams/{dreamId}/develop:
     parameters:
       - { in: path, name: dreamId, required: true, schema: { type: string, format: uuid } }
@@ -628,7 +628,7 @@ paths:
       summary: Expand, challenge or turn a Dream into actions
       x-required-scope: dreams:read
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mode], properties: { mode: { type: string, enum: [expand, challenge, actions] } } } } } }
-      responses: { '200': { description: Developed Dream text, content: { application/json: { schema: { type: object, required: [mode, content, model, inputTokens, outputTokens], properties: { mode: { type: string }, content: { type: string }, model: { type: string }, inputTokens: { type: integer }, outputTokens: { type: integer } } } } } } }
+      responses: { '200': { description: Developed Dream text, content: { application/json: { schema: { type: object, required: [mode, content, model, inputTokens, outputTokens], properties: { mode: { type: string }, content: { type: string }, model: { type: string }, inputTokens: { type: integer }, outputTokens: { type: integer } } } } } }, '429': { $ref: '#/components/responses/Error' }, '503': { $ref: '#/components/responses/Error' } }
   /dreams/{dreamId}/developed-note:
     parameters:
       - { in: path, name: dreamId, required: true, schema: { type: string, format: uuid } }

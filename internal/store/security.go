@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // LoginIdentities returns the throttle keys a login attempt counts against.
@@ -93,6 +96,71 @@ func (s *Store) ClearLoginFailures(ctx context.Context, identities []string) {
 	_, _ = s.Pool.Exec(ctx, `DELETE FROM login_attempts WHERE identity=ANY($1)`, identities)
 }
 
+// aiQuotaReservationTTL is longer than the maximum AI gateway request budget
+// plus the HTTP write-timeout buffer. A crashed instance therefore releases a
+// slot automatically without allowing another request to overtake one that may
+// still be spending tokens.
+const aiQuotaReservationTTL = 35 * time.Minute
+
+// ReserveAIDailyQuota atomically claims one AI request slot for a user. The
+// per-user advisory lock is shared by every application instance, closing the
+// count-then-act race that could otherwise overspend the configured daily cap.
+func (s *Store) ReserveAIDailyQuota(ctx context.Context, userID uuid.UUID, limit int) (uuid.UUID, int, bool, error) {
+	if limit <= 0 {
+		return uuid.Nil, 0, true, nil
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, 0, false, fmt.Errorf("begin AI quota reservation: %w", err)
+	}
+	defer tx.Rollback(context.Background())
+
+	lockKey := "umm:ai-daily:" + userID.String()
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, lockKey); err != nil {
+		return uuid.Nil, 0, false, fmt.Errorf("lock AI quota: %w", err)
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM ai_quota_reservations WHERE user_id=$1 AND expires_at<=now()`, userID); err != nil {
+		return uuid.Nil, 0, false, fmt.Errorf("expire AI quota reservations: %w", err)
+	}
+
+	var used int
+	err = tx.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM ai_calls WHERE user_id=$1 AND created_at>=now()-interval '24 hours') +
+		  (SELECT count(*) FROM ai_quota_reservations WHERE user_id=$1 AND expires_at>now())`, userID).Scan(&used)
+	if err != nil {
+		return uuid.Nil, 0, false, fmt.Errorf("count AI quota usage: %w", err)
+	}
+	if used >= limit {
+		if err = tx.Commit(ctx); err != nil {
+			return uuid.Nil, used, false, fmt.Errorf("commit AI quota check: %w", err)
+		}
+		return uuid.Nil, used, false, nil
+	}
+
+	reservationID := uuid.New()
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO ai_quota_reservations(id,user_id,expires_at)
+		VALUES($1,$2,now()+($3 * interval '1 second'))`,
+		reservationID, userID, int(aiQuotaReservationTTL/time.Second)); err != nil {
+		return uuid.Nil, used, false, fmt.Errorf("insert AI quota reservation: %w", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return uuid.Nil, used, false, fmt.Errorf("commit AI quota reservation: %w", err)
+	}
+	return reservationID, used + 1, true, nil
+}
+
+// ReleaseAIDailyQuota removes a completed request's temporary claim. The
+// resulting ai_calls row remains as the durable 24-hour usage record.
+func (s *Store) ReleaseAIDailyQuota(ctx context.Context, reservationID uuid.UUID) error {
+	if reservationID == uuid.Nil {
+		return nil
+	}
+	_, err := s.Pool.Exec(ctx, `DELETE FROM ai_quota_reservations WHERE id=$1`, reservationID)
+	return err
+}
+
 // StartJanitor removes rows whose lifetime has expired. Before v0.8.0 expired
 // sessions and OAuth states were never deleted, so both tables grew for the life
 // of the deployment.
@@ -120,6 +188,7 @@ func (s *Store) Sweep(ctx context.Context) {
 		`DELETE FROM oauth_states WHERE expires_at<now()`,
 		`DELETE FROM idempotency_records WHERE expires_at<=now()`,
 		`DELETE FROM login_attempts WHERE last_failed_at<now()-interval '1 day' AND (locked_until IS NULL OR locked_until<now())`,
+		`DELETE FROM ai_quota_reservations WHERE expires_at<=now()`,
 	}
 	for _, statement := range statements {
 		if _, err := s.Pool.Exec(ctx, statement); err != nil {
