@@ -293,6 +293,9 @@ func (s *Server) regenerateDream(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	view, err := s.Dreams.Regenerate(r.Context(), p.User.ID, id)
 	if err != nil {
+		if writeAIQuotaProblem(w, r, err) {
+			return
+		}
 		writeError(w, 400, err.Error())
 		return
 	}
@@ -318,6 +321,9 @@ func (s *Server) developDream(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	result, err := s.Dreams.Develop(r.Context(), p.User.ID, id, body.Mode)
 	if err != nil {
+		if writeAIQuotaProblem(w, r, err) {
+			return
+		}
 		writeError(w, 400, err.Error())
 		return
 	}

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math"
 	"net/http"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/hkjang/umm/internal/auth"
+	"github.com/hkjang/umm/internal/dream"
+	"github.com/hkjang/umm/internal/store"
 )
 
 // securityPolicy holds the operator tunable half of the security settings.
@@ -29,10 +32,7 @@ func (p securityPolicy) normalized() securityPolicy {
 	p.LoginLockoutMinutes = clampSetting(p.LoginLockoutMinutes, 1, 24*60, 15)
 	p.APIRatePerMinute = clampSetting(p.APIRatePerMinute, 30, 100000, 600)
 	p.AIRatePerMinute = clampSetting(p.AIRatePerMinute, 1, 600, 6)
-	// A daily AI cap of zero is a valid choice: it means unlimited.
-	if p.AIDailyLimit < 0 || p.AIDailyLimit > 100000 {
-		p.AIDailyLimit = 80
-	}
+	p.AIDailyLimit = store.NormalizeAIDailyLimit(p.AIDailyLimit)
 	return p
 }
 
@@ -168,10 +168,9 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 	})
 }
 
-// aiQuota guards the endpoints that spend money at the AI gateway. The per
-// minute burst is in memory; the daily cap reserves a slot in PostgreSQL before
-// the gateway call, so concurrent requests cannot cross the limit even when
-// they arrive at different replicas.
+// aiQuota guards the interactive endpoints from short bursts. The Dream
+// service enforces the durable daily quota immediately before every gateway
+// call, including calls made by the scheduled worker.
 func (s *Server) aiQuota(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet || r.Method == http.MethodHead {
@@ -188,33 +187,33 @@ func (s *Server) aiQuota(next http.Handler) http.Handler {
 				map[string]any{"retryAfterSeconds": int(wait.Seconds()), "limitPerMinute": policy.AIRatePerMinute})
 			return
 		}
-		if policy.AIDailyLimit > 0 {
-			reservationID, used, dailyAllowed, err := s.Store.ReserveAIDailyQuota(r.Context(), p.User.ID, policy.AIDailyLimit)
-			if err != nil {
-				slog.Error("AI quota reservation failed", "error", err, "user_id", p.User.ID)
-				writeRetryAfter(w, 5*time.Second)
-				writeProblem(w, r, http.StatusServiceUnavailable, "ai-quota-unavailable", "AI 사용 한도를 확인하지 못했습니다",
-					"사용량 보호를 위해 요청을 시작하지 않았습니다. 잠시 후 다시 시도해 주세요.",
-					map[string]any{"retryAfterSeconds": 5})
-				return
-			}
-			if !dailyAllowed {
-				writeRetryAfter(w, time.Minute)
-				writeProblem(w, r, http.StatusTooManyRequests, "ai-daily-limit", "오늘의 AI 사용량을 모두 썼습니다",
-					"하루 AI 생성 한도 "+strconv.Itoa(policy.AIDailyLimit)+"회를 모두 사용했습니다. 내일 다시 시도하거나 관리자에게 한도 조정을 요청해 주세요.",
-					map[string]any{"dailyLimit": policy.AIDailyLimit, "used": used})
-				return
-			}
-			defer func() {
-				releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				if releaseErr := s.Store.ReleaseAIDailyQuota(releaseCtx, reservationID); releaseErr != nil {
-					slog.Warn("AI quota reservation release failed", "error", releaseErr, "user_id", p.User.ID, "reservation_id", reservationID)
-				}
-			}()
-		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func writeAIQuotaProblem(w http.ResponseWriter, r *http.Request, err error) bool {
+	var quota *dream.AIQuotaError
+	_ = errors.As(err, &quota)
+	if errors.Is(err, dream.ErrAIDailyLimit) {
+		limit, used := 0, 0
+		if quota != nil {
+			limit, used = quota.Limit, quota.Used
+		}
+		writeRetryAfter(w, time.Minute)
+		writeProblem(w, r, http.StatusTooManyRequests, "ai-daily-limit", "오늘의 AI 사용량을 모두 썼습니다",
+			"하루 AI 생성 한도 "+strconv.Itoa(limit)+"회를 모두 사용했습니다. 내일 다시 시도하거나 관리자에게 한도 조정을 요청해 주세요.",
+			map[string]any{"dailyLimit": limit, "used": used})
+		return true
+	}
+	if errors.Is(err, dream.ErrAIQuotaUnavailable) {
+		slog.Error("AI quota persistence failed", "error", err, "user_id", principal(r).User.ID)
+		writeRetryAfter(w, 5*time.Second)
+		writeProblem(w, r, http.StatusServiceUnavailable, "ai-quota-unavailable", "AI 사용 한도를 확인하지 못했습니다",
+			"사용량 보호를 위해 요청을 시작하지 않았습니다. 잠시 후 다시 시도해 주세요.",
+			map[string]any{"retryAfterSeconds": 5})
+		return true
+	}
+	return false
 }
 
 func writeRetryAfter(w http.ResponseWriter, wait time.Duration) {

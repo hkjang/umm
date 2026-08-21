@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -31,6 +32,15 @@ func LoginIdentities(username, clientIP string) []string {
 // per-address one so account lockout cannot be weaponised as a denial of
 // service against a known user.
 const usernameFailureMultiplier = 3
+
+// NormalizeAIDailyLimit applies the same guardrails to callers in the HTTP and
+// background-worker paths. Zero deliberately disables the daily limit.
+func NormalizeAIDailyLimit(limit int) int {
+	if limit < 0 || limit > 100000 {
+		return 80
+	}
+	return limit
+}
 
 func failureBudget(identity string, maxFailures int) int {
 	if strings.HasPrefix(identity, "user:") {
@@ -96,11 +106,22 @@ func (s *Store) ClearLoginFailures(ctx context.Context, identities []string) {
 	_, _ = s.Pool.Exec(ctx, `DELETE FROM login_attempts WHERE identity=ANY($1)`, identities)
 }
 
-// aiQuotaReservationTTL is longer than the maximum AI gateway request budget
-// plus the HTTP write-timeout buffer. A crashed instance therefore releases a
-// slot automatically without allowing another request to overtake one that may
-// still be spending tokens.
+// aiQuotaReservationTTL bounds an abandoned claim between reservation and
+// durable consumption. A consumed claim is extended to the full 24-hour window
+// before the gateway can spend tokens.
 const aiQuotaReservationTTL = 35 * time.Minute
+
+// AIDailyLimit reads the shared policy used by both interactive and scheduled
+// AI generation.
+func (s *Store) AIDailyLimit(ctx context.Context) (int, error) {
+	var policy struct {
+		Limit int `json:"ai_daily_limit"`
+	}
+	if err := s.GetSetting(ctx, "security", &policy); err != nil {
+		return 0, err
+	}
+	return NormalizeAIDailyLimit(policy.Limit), nil
+}
 
 // ReserveAIDailyQuota atomically claims one AI request slot for a user. The
 // per-user advisory lock is shared by every application instance, closing the
@@ -124,10 +145,7 @@ func (s *Store) ReserveAIDailyQuota(ctx context.Context, userID uuid.UUID, limit
 	}
 
 	var used int
-	err = tx.QueryRow(ctx, `
-		SELECT
-		  (SELECT count(*) FROM ai_calls WHERE user_id=$1 AND created_at>=now()-interval '24 hours') +
-		  (SELECT count(*) FROM ai_quota_reservations WHERE user_id=$1 AND expires_at>now())`, userID).Scan(&used)
+	err = tx.QueryRow(ctx, `SELECT count(*) FROM ai_quota_reservations WHERE user_id=$1 AND expires_at>now()`, userID).Scan(&used)
 	if err != nil {
 		return uuid.Nil, 0, false, fmt.Errorf("count AI quota usage: %w", err)
 	}
@@ -151,13 +169,34 @@ func (s *Store) ReserveAIDailyQuota(ctx context.Context, userID uuid.UUID, limit
 	return reservationID, used + 1, true, nil
 }
 
-// ReleaseAIDailyQuota removes a completed request's temporary claim. The
-// resulting ai_calls row remains as the durable 24-hour usage record.
+// ConsumeAIDailyQuota converts a pending claim into the durable 24-hour usage
+// record before an external gateway can spend tokens. Enforcement therefore
+// does not depend on the best-effort ai_calls observability log.
+func (s *Store) ConsumeAIDailyQuota(ctx context.Context, reservationID uuid.UUID) error {
+	if reservationID == uuid.Nil {
+		return nil
+	}
+	command, err := s.Pool.Exec(ctx, `
+		UPDATE ai_quota_reservations
+		SET consumed_at=COALESCE(consumed_at,now()),
+		    expires_at=CASE WHEN consumed_at IS NULL THEN now()+interval '24 hours' ELSE expires_at END
+		WHERE id=$1 AND expires_at>now()`, reservationID)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() == 0 {
+		return errors.New("AI quota reservation is missing or expired")
+	}
+	return nil
+}
+
+// ReleaseAIDailyQuota removes a claim when generation is abandoned before the
+// gateway is contacted. Consumed claims are never released by this method.
 func (s *Store) ReleaseAIDailyQuota(ctx context.Context, reservationID uuid.UUID) error {
 	if reservationID == uuid.Nil {
 		return nil
 	}
-	_, err := s.Pool.Exec(ctx, `DELETE FROM ai_quota_reservations WHERE id=$1`, reservationID)
+	_, err := s.Pool.Exec(ctx, `DELETE FROM ai_quota_reservations WHERE id=$1 AND consumed_at IS NULL`, reservationID)
 	return err
 }
 

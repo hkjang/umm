@@ -26,7 +26,7 @@ User API/MCP key (one-time plaintext display)
 
 - Browser session: random 256-bit token의 digest만 DB 저장, HttpOnly, SameSite=Lax, HTTPS 인지 시 Secure cookie. 사용자는 개인 설정에서 활성 세션 목록을 확인하고 개별 또는 일괄 종료할 수 있음
 - Login throttling: 실패 횟수를 PostgreSQL에 기록해 인스턴스 간에 공유. 주소별 임계값을 넘으면 잠금, 계정별 임계값은 그 3배로 두어 아이디를 아는 사람이 남의 계정을 잠그는 것을 방지
-- Rate limits: 호출자별 API 요청 한도와 AI 생성 전용 분당·일일 한도. 일일 한도는 Gateway 호출 전에 PostgreSQL advisory lock과 만료형 예약 행으로 원자적으로 선점하고 완료 후 `ai_calls`를 내역으로 사용하므로, 동시 요청·재시작·여러 인스턴스를 넘어 유지됨. 초과 시 `429`와 `Retry-After` 반환
+- Rate limits: 호출자별 API 요청 한도와 AI 생성 전용 분당·일일 한도. 일일 한도는 대화형 요청과 자동 Dream의 실제 Gateway 호출 직전에 PostgreSQL advisory lock으로 원자 선점하고 24시간 소비 원장으로 먼저 영속화하므로, 요청 취소·`ai_calls` 로그 실패·동시 요청·재시작·여러 인스턴스를 넘어 유지됨. 초과 시 `429`와 `Retry-After` 반환
 - OIDC: Authorization Code flow, state 일회 사용/10분 만료, provider Discovery, ID token 서명·issuer·audience 검증
 - Roles: `user`, `team_lead`, `admin`
 - API/MCP: Bearer key와 세부 scope. MCP는 browser cookie를 허용하지 않음

@@ -142,8 +142,8 @@ func (s *Server) router() chi.Router {
 			protected.Post("/dreams/{dreamID}/feedback", s.dreamFeedback)
 			protected.Post("/dreams/{dreamID}/accept", s.acceptDream)
 			protected.Post("/dreams/{dreamID}/developed-note", s.saveDevelopedDream)
-			// Everything that spends tokens at the AI gateway goes through the
-			// per-user burst and daily quota.
+			// Interactive generation gets a per-user burst guard here; the Dream
+			// service applies the shared daily quota at the gateway boundary.
 			protected.Group(func(paid chi.Router) {
 				paid.Use(s.aiQuota)
 				paid.Post("/ai/assist", s.aiAssist)

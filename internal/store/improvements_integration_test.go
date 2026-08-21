@@ -671,8 +671,6 @@ func TestAIDailyQuotaReservationIsAtomicAcrossStoresIntegration(t *testing.T) {
 	if _, err = first.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
 		t.Fatal(err)
 	}
-	marker := "quota-test-" + userID.String()
-	defer first.Pool.Exec(ctx, `DELETE FROM ai_calls WHERE model=$1`, marker)
 	defer first.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
 
 	type result struct {
@@ -723,19 +721,26 @@ func TestAIDailyQuotaReservationIsAtomicAcrossStoresIntegration(t *testing.T) {
 	if err != nil || !replacementAllowed || used != 1 {
 		t.Fatalf("released slot was not reusable: allowed=%v used=%d err=%v", replacementAllowed, used, err)
 	}
-	if err = second.ReleaseAIDailyQuota(ctx, replacement); err != nil {
+	if err = second.ConsumeAIDailyQuota(ctx, replacement); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err = first.Pool.Exec(ctx, `INSERT INTO ai_calls(user_id,model,status) VALUES($1,$2,'completed')`, userID, marker); err != nil {
-		t.Fatal(err)
-	}
 	_, used, allowedAfterCall, err := first.ReserveAIDailyQuota(ctx, userID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if allowedAfterCall || used != 1 {
-		t.Fatalf("durable AI call did not consume the quota: allowed=%v used=%d", allowedAfterCall, used)
+		t.Fatalf("durable quota ledger did not retain usage: allowed=%v used=%d", allowedAfterCall, used)
+	}
+	var consumed, calls int
+	if err = first.Pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM ai_quota_reservations WHERE user_id=$1 AND consumed_at IS NOT NULL AND expires_at>now()+interval '23 hours'),
+		  (SELECT count(*) FROM ai_calls WHERE user_id=$1)`, userID).Scan(&consumed, &calls); err != nil {
+		t.Fatal(err)
+	}
+	if consumed != 1 || calls != 0 {
+		t.Fatalf("quota usage must survive independently of ai_calls logging: consumed=%d calls=%d", consumed, calls)
 	}
 }
 
@@ -795,5 +800,72 @@ func TestHybridSearchUsesTheActualFallbackVectorSpaceIntegration(t *testing.T) {
 	}
 	if !strings.Contains(page.Notes[0].Reason, "의미상 유사") {
 		t.Fatalf("search compared the fallback query in the wrong vector space: %#v", page.Notes[0])
+	}
+}
+
+func TestLoadEmbeddingsUsesOneFallbackVectorSpaceIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "gateway unavailable", http.StatusBadGateway)
+	}))
+	defer gateway.Close()
+	db.embeddings.provider = intelligence.Provider{Remote: &intelligence.RemoteConfig{
+		BaseURL: gateway.URL,
+		Model:   "remote-model",
+		Timeout: time.Second,
+	}}
+	db.embeddings.loadedAt = time.Now()
+
+	userID, spaceID := uuid.New(), uuid.New()
+	firstID, secondID := uuid.New(), uuid.New()
+	username := "fallback_load_" + userID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'fallback load')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO notes(id,space_id,author_id,content) VALUES
+		($1,$2,$3,'first fallback note'),($4,$2,$3,'second fallback note')`, firstID, spaceID, userID, secondID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO note_embeddings(note_id,algorithm,model,dimensions,vector,content_version)
+		VALUES($1,'gateway:remote-model','remote-model',2,$2,1)`, firstID, []float32{1, 0}); err != nil {
+		t.Fatal(err)
+	}
+
+	notes := []Note{
+		{ID: firstID, Content: "first fallback note", Version: 1},
+		{ID: secondID, Content: "second fallback note", Version: 1},
+	}
+	db.ensureEmbeddings(ctx, notes)
+	vectors := db.loadEmbeddings(ctx, notes)
+	if len(vectors) != 2 || len(vectors[firstID]) != intelligence.Dimensions || len(vectors[secondID]) != intelligence.Dimensions {
+		t.Fatalf("outage fallback omitted vectors: %#v", vectors)
+	}
+	var localRows, algorithms int
+	if err = db.Pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE algorithm=$2),count(DISTINCT algorithm)
+		FROM note_embeddings WHERE note_id=ANY($1)`, []uuid.UUID{firstID, secondID}, intelligence.LocalAlgorithm).Scan(&localRows, &algorithms); err != nil {
+		t.Fatal(err)
+	}
+	if localRows != 2 || algorithms != 1 {
+		t.Fatalf("fallback comparison set was not normalized locally: local=%d algorithms=%d", localRows, algorithms)
 	}
 }

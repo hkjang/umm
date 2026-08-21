@@ -510,6 +510,9 @@ func (s *Server) aiAssist(w http.ResponseWriter, r *http.Request) {
 	result, err := s.Dreams.Assist(r.Context(), p.User.ID, body.NoteIDs, body.Mode)
 	if err != nil {
 		slog.Warn("AI assist failed", "user_id", p.User.ID, "mode", body.Mode, "error", err)
+		if writeAIQuotaProblem(w, r, err) {
+			return
+		}
 		if errors.Is(err, dream.ErrAIResponseTokenLimit) {
 			writeError(w, http.StatusBadGateway, "AI 모델이 최종 답변을 만들기 전에 Token Limit에 도달했습니다. 관리자에게 Dream Layer의 응답 Token Limit을 높여 달라고 요청해 주세요.")
 			return

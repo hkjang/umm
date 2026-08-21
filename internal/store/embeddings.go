@@ -87,7 +87,8 @@ type embeddingTarget struct {
 
 // UpsertEmbedding refreshes a single note's vector after a write.
 func (s *Store) UpsertEmbedding(ctx context.Context, noteID uuid.UUID, content string, version int) error {
-	return s.writeEmbeddings(ctx, []embeddingTarget{{ID: noteID, Content: content, Version: version}})
+	_, err := s.writeEmbeddings(ctx, []embeddingTarget{{ID: noteID, Content: content, Version: version}})
+	return err
 }
 
 // ensureEmbeddings brings a batch of notes up to date. Before v0.8.0 this issued
@@ -121,15 +122,28 @@ func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
 		}
 		stale = append(stale, embeddingTarget{ID: n.ID, Content: n.Content, Version: n.Version})
 	}
-	_ = s.writeEmbeddings(ctx, stale)
+	actualAlgorithm, _ := s.writeEmbeddings(ctx, stale)
+	if algorithm != intelligence.LocalAlgorithm && actualAlgorithm == intelligence.LocalAlgorithm {
+		// A gateway outage can leave older notes with remote vectors and newer
+		// notes with local fallbacks. Rewrite the whole comparison set locally so
+		// Canvas counts, related notes and clusters never mix or omit vector spaces.
+		all := make([]embeddingTarget, len(notes))
+		for index, note := range notes {
+			all[index] = embeddingTarget{ID: note.ID, Content: note.Content, Version: note.Version}
+		}
+		_, _ = s.writeEmbeddingsWithProvider(ctx, all, intelligence.Provider{})
+	}
 }
 
-func (s *Store) writeEmbeddings(ctx context.Context, targets []embeddingTarget) error {
+func (s *Store) writeEmbeddings(ctx context.Context, targets []embeddingTarget) (string, error) {
+	return s.writeEmbeddingsWithProvider(ctx, targets, s.EmbeddingProvider(ctx))
+}
+
+func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embeddingTarget, provider intelligence.Provider) (string, error) {
 	if len(targets) == 0 {
-		return nil
+		return provider.Algorithm(), nil
 	}
-	provider := s.EmbeddingProvider(ctx)
-	model := provider.Model()
+	actualAlgorithm := provider.Algorithm()
 	var firstErr error
 	for start := 0; start < len(targets); start += embeddingBatchSize {
 		batch := targets[start:min(start+embeddingBatchSize, len(targets))]
@@ -138,7 +152,9 @@ func (s *Store) writeEmbeddings(ctx context.Context, targets []embeddingTarget) 
 			texts[i] = target.Content
 		}
 		vectors, algorithm := provider.Embed(ctx, texts)
+		model := provider.Model()
 		if algorithm == intelligence.LocalAlgorithm {
+			actualAlgorithm = intelligence.LocalAlgorithm
 			model = ""
 		}
 		for i, target := range batch {
@@ -159,33 +175,54 @@ func (s *Store) writeEmbeddings(ctx context.Context, targets []embeddingTarget) 
 			}
 		}
 	}
-	return firstErr
+	return actualAlgorithm, firstErr
 }
 
-// loadEmbeddings returns only vectors produced by the active algorithm. Mixing
-// vector spaces would silently return meaningless similarity scores.
+// loadEmbeddings chooses one current algorithm for the entire comparison set.
+// The most complete set wins, with the configured provider breaking ties. This
+// lets an outage-wide local fallback remain usable without ever mixing it with
+// remote vectors.
 func (s *Store) loadEmbeddings(ctx context.Context, notes []Note) map[uuid.UUID][]float32 {
-	out := map[uuid.UUID][]float32{}
 	if len(notes) == 0 {
-		return out
+		return map[uuid.UUID][]float32{}
 	}
 	ids := make([]uuid.UUID, len(notes))
+	versions := make(map[uuid.UUID]int, len(notes))
 	for i, n := range notes {
 		ids[i] = n.ID
+		versions[n.ID] = n.Version
 	}
-	rows, err := s.Pool.Query(ctx, `SELECT note_id,vector FROM note_embeddings WHERE note_id=ANY($1) AND algorithm=$2`, ids, s.EmbeddingProvider(ctx).Algorithm())
+	rows, err := s.Pool.Query(ctx, `SELECT note_id,algorithm,vector,content_version FROM note_embeddings WHERE note_id=ANY($1)`, ids)
 	if err != nil {
-		return out
+		return map[uuid.UUID][]float32{}
 	}
 	defer rows.Close()
+	byAlgorithm := map[string]map[uuid.UUID][]float32{}
 	for rows.Next() {
 		var id uuid.UUID
+		var algorithm string
 		var vector []float32
-		if rows.Scan(&id, &vector) == nil {
-			out[id] = vector
+		var contentVersion int
+		if rows.Scan(&id, &algorithm, &vector, &contentVersion) == nil && contentVersion >= versions[id] {
+			if byAlgorithm[algorithm] == nil {
+				byAlgorithm[algorithm] = map[uuid.UUID][]float32{}
+			}
+			byAlgorithm[algorithm][id] = vector
 		}
 	}
-	return out
+	preferred := s.EmbeddingProvider(ctx).Algorithm()
+	chosen := ""
+	best := -1
+	for algorithm, vectors := range byAlgorithm {
+		count := len(vectors)
+		if count > best || (count == best && algorithm == preferred) || (count == best && chosen != preferred && algorithm < chosen) {
+			chosen, best = algorithm, count
+		}
+	}
+	if chosen == "" {
+		return map[uuid.UUID][]float32{}
+	}
+	return byAlgorithm[chosen]
 }
 
 // EmbedQuery vectorises a search query and reports the algorithm that actually
