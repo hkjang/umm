@@ -120,6 +120,31 @@ func (h *Hub) Publish(spaceID uuid.UUID) {
 	}
 }
 
+// setListening records a listener transition and wakes every open stream. The
+// wake-up has no event payload: each stream re-queries from its own cursor and
+// also re-arms its safety ticker for the new listener state. Coalescing with an
+// already-pending event is safe because that event causes the same catch-up
+// query and interval refresh.
+func (h *Hub) setListening(listening bool) {
+	if previous := h.listening.Swap(listening); previous == listening {
+		return
+	}
+	h.mu.RLock()
+	targets := make([]*Subscription, 0)
+	for _, set := range h.subscribers {
+		for sub := range set {
+			targets = append(targets, sub)
+		}
+	}
+	h.mu.RUnlock()
+	for _, sub := range targets {
+		select {
+		case sub.signal <- struct{}{}:
+		default:
+		}
+	}
+}
+
 // Run holds one connection in LISTEN mode until the context is cancelled,
 // reconnecting with backoff whenever PostgreSQL or the network drops it.
 func (h *Hub) Run(ctx context.Context) {
@@ -154,8 +179,8 @@ func (h *Hub) listen(ctx context.Context) error {
 	if _, err = conn.Exec(ctx, "LISTEN "+Channel); err != nil {
 		return err
 	}
-	h.listening.Store(true)
-	defer h.listening.Store(false)
+	h.setListening(true)
+	defer h.setListening(false)
 	slog.Info("collaboration listener ready", "channel", Channel)
 	for {
 		notification, waitErr := conn.Conn().WaitForNotification(ctx)

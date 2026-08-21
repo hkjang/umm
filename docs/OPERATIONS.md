@@ -20,7 +20,7 @@ docker image inspect umm:v0.8.1
 
 PostgreSQL user는 대상 database에 schema/table/extension을 생성할 권한이 필요합니다(`pgcrypto`, `citext`, `pg_trgm`). 시작 시 embedded migration이 transaction으로 실행됩니다.
 
-인스턴스는 여유가 있을 때 협업 이벤트 수신용 PostgreSQL 연결 하나를 상시 점유합니다. 연결 풀 자동 최대값은 host CPU 수와 무관하게 인스턴스당 16이며 제공 compose도 이를 명시합니다. Replica 수와 PostgreSQL `max_connections`를 함께 계산해 DSN의 `pool_max_conns`를 조정하세요. 더 작은 값을 명시해도 내부 `pool_min_conns`가 최대값을 넘어 시작에 실패하지 않도록 cap합니다. `pool_max_conns`가 1 또는 2이면 전용 `LISTEN`을 비활성화하고 SSE가 1초 안전 폴링을 사용해 최대 두 연결을 readiness·인증·transaction 요청에 남깁니다. 상한 3부터 listener를 시작하면서 request 연결 두 자리를 보존합니다. 알림 목록은 한 request 연결에서 unread count와 page를 순차 실행하고 Dream 채택·발전의 권한 확인도 열린 transaction 안에서 수행하지만, 동시 처리량과 worker 여유를 위해 운영에서는 인스턴스당 최소 4 이상을 권장합니다.
+인스턴스는 여유가 있을 때 협업 이벤트 수신용 PostgreSQL 연결 하나를 상시 점유합니다. 연결 풀 자동 최대값은 host CPU 수와 무관하게 인스턴스당 16이며 제공 compose도 이를 명시합니다. Replica 수와 PostgreSQL `max_connections`를 함께 계산해 DSN의 `pool_max_conns`를 조정하세요. 더 작은 값을 명시해도 내부 `pool_min_conns`가 최대값을 넘어 시작에 실패하지 않도록 cap합니다. `pool_max_conns`가 1 또는 2이면 전용 `LISTEN`을 비활성화하고 SSE가 1초 안전 폴링을 사용해 최대 두 연결을 readiness·인증·transaction 요청에 남깁니다. 상한 3부터 listener를 시작하면서 request 연결 두 자리를 보존합니다. 실행 중 listener가 끊기거나 복구되면 상태 전환 신호가 열린 SSE를 즉시 깨워 1초 폴링 또는 30초 safety net으로 타이머를 다시 맞추므로, 단절 직전 설정된 긴 deadline을 기다리지 않습니다. 알림 목록은 한 request 연결에서 unread count와 page를 순차 실행하고 Dream 채택·발전의 권한 확인도 열린 transaction 안에서 수행하지만, 동시 처리량과 worker 여유를 위해 운영에서는 인스턴스당 최소 4 이상을 권장합니다.
 
 정적 파일은 content hash가 붙은 Vite bundle만 `immutable`로 장기 캐시합니다. `/manifest.webmanifest`, `/umm-sw.js`, `/umm-icon.svg`, `/asset-manifest.json`은 `no-cache`로 재검증되므로 배포 뒤 proxy/CDN이 이 고정 URL에 임의의 1년 immutable 정책을 덧씌우지 않도록 구성하세요.
 
@@ -98,7 +98,7 @@ CI는 `scripts/restore-smoke.sh`로 PostgreSQL custom-format dump를 별도 `umm
 ## 관측성과 자동화
 
 - `/api/v1/metrics`는 `metrics:read` scope 또는 관리자 세션으로 Prometheus request count, latency histogram, in-flight, build 정보를 제공합니다.
-- 실시간 협업 상태는 `umm_realtime_subscribers`, `umm_realtime_spaces`, `umm_realtime_signals_total`, `umm_realtime_listener_up`으로 노출됩니다. `umm_realtime_listener_up`이 0이면 PostgreSQL `LISTEN` 연결이 끊긴 상태이며 SSE가 폴백 폴링으로 동작 중이라는 뜻입니다 — 협업은 계속되지만 데이터베이스 부하가 올라가므로 알림을 걸어 두세요. 같은 값은 관리자 → 운영 현황에서도 볼 수 있습니다.
+- 실시간 협업 상태는 `umm_realtime_subscribers`, `umm_realtime_spaces`, `umm_realtime_signals_total`, `umm_realtime_listener_up`으로 노출됩니다. `umm_realtime_listener_up`이 0이면 PostgreSQL `LISTEN` 연결이 끊긴 상태이며 SSE가 상태 전환 즉시 1초 폴백 폴링으로 동작 중이라는 뜻입니다 — 협업은 계속되지만 데이터베이스 부하가 올라가므로 알림을 걸어 두세요. 같은 값은 관리자 → 운영 현황에서도 볼 수 있습니다.
 - 만료된 세션·OAuth state·재시도 기록·로그인 실패 기록·AI 쿼터 예약은 15분마다 자동 정리됩니다. 별도 cron이 필요하지 않습니다.
 - 표준 `OTEL_EXPORTER_OTLP_ENDPOINT` 또는 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`가 있을 때만 OTLP HTTP trace exporter가 활성화됩니다.
 - 웹훅은 HTTPS 기본 포트만 허용하며 DNS 확인과 연결 시점 모두 사설·loopback·link-local·reserved IP를 거부합니다. 도메인 변경과 SSE/webhook outbox는 같은 PostgreSQL 트랜잭션으로 커밋되고, 재시작 시 대기 항목과 2분 넘게 처리 중인 항목을 워커가 복구합니다. 실패는 세 번 재시도하고 연속 10회 실패 시 subscription을 자동 중지합니다. 외부 오류는 잘못된 UTF-8을 제거하고 rune 경계 안에서 500 byte로 제한하므로 다국어 오류도 delivery 종료와 실패 횟수 갱신을 막지 않습니다.

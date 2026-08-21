@@ -50,6 +50,56 @@ func TestPublishCoalescesWithoutBlocking(t *testing.T) {
 	}
 }
 
+func TestListeningTransitionsWakeEverySubscriber(t *testing.T) {
+	hub := New(nil)
+	first := hub.Subscribe(uuid.New())
+	defer first.Close()
+	second := hub.Subscribe(uuid.New())
+	defer second.Close()
+
+	assertWoken := func(name string, subscription *Subscription) {
+		t.Helper()
+		select {
+		case <-subscription.C():
+		case <-time.After(time.Second):
+			t.Fatalf("%s was not woken by the listener transition", name)
+		}
+	}
+
+	hub.setListening(true)
+	if !hub.Listening() {
+		t.Fatal("listener did not become healthy")
+	}
+	assertWoken("first subscriber", first)
+	assertWoken("second subscriber", second)
+
+	// Storing the same state must not cause unnecessary catch-up queries.
+	hub.setListening(true)
+	select {
+	case <-first.C():
+		t.Fatal("unchanged listener state woke a subscriber")
+	default:
+	}
+
+	// A pending event may absorb the state signal. The stream still wakes once
+	// and observes the current unhealthy state when it resets its poll timer.
+	hub.Publish(first.spaceID)
+	hub.setListening(false)
+	if hub.Listening() {
+		t.Fatal("listener did not become unavailable")
+	}
+	assertWoken("first subscriber after disconnect", first)
+	assertWoken("second subscriber after disconnect", second)
+	select {
+	case <-first.C():
+		t.Fatal("coalesced event and state transition produced two wake-ups")
+	default:
+	}
+	if _, _, delivered, _ := hub.Stats(); delivered != 1 {
+		t.Fatalf("listener-state wake-ups changed the event delivery counter: %d", delivered)
+	}
+}
+
 func TestCloseIsIdempotentAndDeregisters(t *testing.T) {
 	hub := New(nil)
 	spaceID := uuid.New()
@@ -190,6 +240,65 @@ func TestRunReservesTwoRequestConnectionsIntegration(t *testing.T) {
 		}
 		second.Release()
 		first.Release()
+
+		// Kill the dedicated backend after a healthy stream has subscribed.
+		// The disconnect and the subsequent reconnect must each wake it so the
+		// HTTP layer can immediately re-arm its fallback ticker.
+		subscription := hub.Subscribe(uuid.New())
+		defer subscription.Close()
+		applicationName := pool.Config().ConnConfig.RuntimeParams["application_name"]
+		var listenerPID int
+		lookupCtx, lookupCancel := context.WithTimeout(context.Background(), time.Second)
+		err = pool.QueryRow(lookupCtx, `
+			SELECT pid
+			FROM pg_stat_activity
+			WHERE application_name=$1 AND query=$2 AND pid<>pg_backend_pid()
+			ORDER BY backend_start DESC
+			LIMIT 1`, applicationName, "LISTEN "+Channel).Scan(&listenerPID)
+		lookupCancel()
+		if err != nil {
+			cancel()
+			<-done
+			t.Fatalf("listener backend was not visible: %v", err)
+		}
+		terminateCtx, terminateCancel := context.WithTimeout(context.Background(), time.Second)
+		var terminated bool
+		err = pool.QueryRow(terminateCtx, `SELECT pg_terminate_backend($1)`, listenerPID).Scan(&terminated)
+		terminateCancel()
+		if err != nil || !terminated {
+			cancel()
+			<-done
+			t.Fatalf("listener backend was not terminated: terminated=%v err=%v", terminated, err)
+		}
+		select {
+		case <-subscription.C():
+		case <-time.After(time.Second):
+			cancel()
+			<-done
+			t.Fatal("listener disconnect did not wake the subscriber")
+		}
+		if hub.Listening() {
+			cancel()
+			<-done
+			t.Fatal("terminated listener still reported healthy after its disconnect signal")
+		}
+		reconnectDeadline := time.Now().Add(3 * time.Second)
+		for !hub.Listening() && time.Now().Before(reconnectDeadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !hub.Listening() {
+			cancel()
+			<-done
+			t.Fatal("listener did not reconnect after its backend was terminated")
+		}
+		select {
+		case <-subscription.C():
+		case <-time.After(time.Second):
+			cancel()
+			<-done
+			t.Fatal("listener recovery did not wake the subscriber")
+		}
+
 		cancel()
 		select {
 		case <-done:
@@ -207,6 +316,7 @@ func poolWithMaxConnections(t *testing.T, dsn string, maximum int) *pgxpool.Pool
 	}
 	query := parsed.Query()
 	query.Set("pool_max_conns", strconv.Itoa(maximum))
+	query.Set("application_name", "umm_realtime_test_"+uuid.NewString())
 	parsed.RawQuery = query.Encode()
 	pool, err := pgxpool.New(context.Background(), parsed.String())
 	if err != nil {

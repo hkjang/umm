@@ -108,6 +108,11 @@ func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request) {
 			if !drainAll() {
 				return
 			}
+			// Listener state transitions use the same coalesced wake-up as
+			// committed events. Refreshing here switches a disconnected stream
+			// from the 30-second safety net to one-second polling immediately,
+			// and restores the slow interval as soon as LISTEN reconnects.
+			ticker.Reset(sseFallbackInterval(s.Events))
 		case <-ticker.C:
 			ticker.Reset(sseFallbackInterval(s.Events))
 			if !drainAll() {
