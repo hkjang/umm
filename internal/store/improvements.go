@@ -105,6 +105,12 @@ type Comment struct {
 	UpdatedAt  time.Time  `json:"updatedAt"`
 }
 
+// Hybrid search is intentionally approximate after PostgreSQL has considered
+// the full accessible corpus. Keeping the lexical candidate set bounded avoids
+// loading every match for a broad query into the API process while still
+// allowing an old or deep-body match to compete on relevance.
+const hybridLexicalCandidateLimit = 500
+
 func normalized(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
@@ -159,12 +165,15 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 		options.Offset = 0
 	}
 	rows, err := s.Pool.Query(ctx, `
-		WITH eligible AS MATERIALIZED (
+		WITH eligible AS NOT MATERIALIZED (
 		  SELECT n.id,n.space_id,sp.name AS space_name,n.title,left(n.content,2000) AS content,n.kind,n.updated_at,e.vector,
 		    NOT EXISTS(
 		      SELECT 1 FROM unnest($6::text[]) AS term(pattern)
 		      WHERE concat_ws(' ',n.title,n.content,sp.name) NOT ILIKE term.pattern ESCAPE E'\\'
-		    ) AS lexical_match
+		    ) AS lexical_match,
+		    (SELECT count(*) FROM unnest($6::text[]) AS term(pattern) WHERE n.title ILIKE term.pattern ESCAPE E'\\') AS title_matches,
+		    (SELECT count(*) FROM unnest($6::text[]) AS term(pattern) WHERE n.content ILIKE term.pattern ESCAPE E'\\') AS content_matches,
+		    (SELECT count(*) FROM unnest($6::text[]) AS term(pattern) WHERE sp.name ILIKE term.pattern ESCAPE E'\\') AS space_matches
 		  FROM notes n
 		  JOIN spaces sp ON sp.id=n.space_id
 		  LEFT JOIN note_embeddings e ON e.note_id=n.id AND e.content_version=n.version
@@ -174,15 +183,19 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 		    AND ($3='' OR n.kind=$3)
 		    AND ($4::timestamptz IS NULL OR n.updated_at >= $4)
 		    AND ($5::timestamptz IS NULL OR n.updated_at <= $5)
-		), candidates AS (
+		), lexical_candidates AS (
 		  SELECT * FROM eligible WHERE lexical_match
+		  ORDER BY title_matches DESC,content_matches DESC,space_matches DESC,updated_at DESC,id DESC
+		  LIMIT $7
+		), candidates AS (
+		  SELECT * FROM lexical_candidates
 		  UNION ALL
 		  SELECT * FROM (
 		    SELECT * FROM eligible WHERE NOT lexical_match ORDER BY updated_at DESC,id DESC LIMIT 2000
 		  ) recent_semantic
 		)
 		SELECT id,space_id,space_name,title,content,kind,updated_at,vector,lexical_match FROM candidates`,
-		userID, options.SpaceID, strings.TrimSpace(options.Kind), options.UpdatedFrom, options.UpdatedTo, patterns)
+		userID, options.SpaceID, strings.TrimSpace(options.Kind), options.UpdatedFrom, options.UpdatedTo, patterns, hybridLexicalCandidateLimit)
 	if err != nil {
 		return HybridSearchPage{}, err
 	}
@@ -320,7 +333,11 @@ func (s *Store) TodayReview(ctx context.Context, userID uuid.UUID) (TodayReview,
 		LEFT JOIN note_reviews nr ON nr.note_id=n.id AND nr.user_id=$1
 		WHERE n.deleted_at IS NULL AND n.archived=false
 		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
-		  AND NOT EXISTS(SELECT 1 FROM note_edges e WHERE e.source_note_id=n.id OR e.target_note_id=n.id)
+		  AND NOT EXISTS(
+		    SELECT 1 FROM note_edges e
+		    JOIN notes linked ON linked.id=CASE WHEN e.source_note_id=n.id THEN e.target_note_id ELSE e.source_note_id END
+		    WHERE (e.source_note_id=n.id OR e.target_note_id=n.id) AND linked.deleted_at IS NULL
+		  )
 		ORDER BY n.updated_at DESC,n.id DESC LIMIT 6`, userID)
 	if err != nil {
 		return out, err
@@ -585,7 +602,7 @@ func (s *Store) ResolveComment(ctx context.Context, userID, commentID uuid.UUID,
 	err = tx.QueryRow(ctx, `
 		UPDATE note_comments c SET resolved_at=CASE WHEN $3 THEN now() ELSE NULL END,resolved_by=CASE WHEN $3 THEN $2 ELSE NULL END,updated_at=now()
 		FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
-		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL AND (c.author_id=$2 OR sp.owner_id=$2 OR sm.permission IN ('edit','manage'))
+		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.permission IN ('edit','manage'))
 		RETURNING c.note_id,n.space_id`, commentID, userID, resolved).Scan(&noteID, &spaceID)
 	if err != nil {
 		return Comment{}, uuid.Nil, err

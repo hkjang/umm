@@ -2,11 +2,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestTodayReviewStateIsIsolatedPerUserIntegration(t *testing.T) {
@@ -129,6 +131,52 @@ func TestHybridSearchKeepsOlderLexicalMatchesIntegration(t *testing.T) {
 	t.Fatalf("older exact match %s was omitted from %#v", noteID, page.Notes)
 }
 
+func TestHybridSearchRanksAcrossBoundedLexicalCandidatesIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	userID, spaceID, exactID := uuid.New(), uuid.New(), uuid.New()
+	username := "bounded_search_" + userID.String()
+	needle := "bounded-rank-" + exactID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'bounded lexical search')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,title,content,created_at,updated_at) VALUES($1,$2,$3,$4,'',now()-interval '10 years',now()-interval '10 years')`, exactID, spaceID, userID, needle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(space_id,author_id,content,created_at,updated_at) SELECT $1,$2,$3||' decoy '||value,now(),now() FROM generate_series(1,$4) AS value`, spaceID, userID, needle, hybridLexicalCandidateLimit+1); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+
+	page, err := db.SearchNotesHybrid(ctx, userID, SearchOptions{Query: needle, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Notes) == 0 || page.Notes[0].ID != exactID {
+		t.Fatalf("old exact-title match was not ranked into the bounded candidate set: %#v", page.Notes)
+	}
+}
+
 func TestCreateCommentDoesNotNotifyRemovedNoteAuthorIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
@@ -234,6 +282,109 @@ func TestTodayReviewExcludesActivityFromDeletedNotesIntegration(t *testing.T) {
 		if activity.ID == comment.ID || activity.NoteID == noteID {
 			t.Fatalf("activity from deleted note was returned: %#v", activity)
 		}
+	}
+}
+
+func TestTodayReviewTreatsDeletedCounterpartAsOrphanIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	userID, spaceID, survivorID, deletedID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	username := "orphan_owner_" + userID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO user_preferences(user_id) VALUES($1)`, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'deleted neighbor')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$3,$4,'survivor'),($2,$3,$4,'deleted neighbor')`, survivorID, deletedID, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO note_edges(space_id,source_note_id,target_note_id,created_by) VALUES($1,$2,$3,$4)`, spaceID, survivorID, deletedID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `UPDATE notes SET deleted_at=now() WHERE id=$1`, deletedID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+
+	review, err := db.TodayReview(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reviewContains(review.Orphans, survivorID, false) {
+		t.Fatalf("note linked only to a deleted counterpart was not returned as orphan: %#v", review.Orphans)
+	}
+}
+
+func TestViewCommentAuthorCannotResolveThreadIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	ownerID, viewerID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	ownerName, viewerName := "resolve_owner_"+ownerID.String(), "resolve_viewer_"+viewerID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, viewerID, viewerName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'comment resolution permissions')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'view')`, spaceID, viewerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'shared note')`, noteID, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, viewerID)
+
+	comment, _, err := db.CreateComment(ctx, viewerID, noteID, nil, "viewer-authored thread", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = db.ResolveComment(ctx, viewerID, comment.ID, true); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("view-only author resolved a thread: %v", err)
+	}
+	resolved, _, err := db.ResolveComment(ctx, ownerID, comment.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.ResolvedAt == nil || resolved.ResolvedBy == nil || *resolved.ResolvedBy != ownerID {
+		t.Fatalf("space owner could not resolve the thread: %#v", resolved)
 	}
 }
 
