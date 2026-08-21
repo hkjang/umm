@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -337,5 +339,57 @@ func TestInjectNonceLabelsEveryScriptTag(t *testing.T) {
 	}
 	if !strings.Contains(out, `content="abc123"`) || strings.Contains(out, nonceMarker) {
 		t.Fatalf("the marker must be replaced so the bundle can read the nonce, got %q", out)
+	}
+}
+
+func TestSPAOnlyCachesContentHashedAssetsAsImmutable(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"index.html":                      `<html><body><script src="/assets/index-AbCd1234.js"></script></body></html>`,
+		"manifest.webmanifest":            `{"name":"umm"}`,
+		"umm-sw.js":                       `self.addEventListener('fetch', () => {})`,
+		"umm-icon.svg":                    `<svg></svg>`,
+		"asset-manifest.json":             `{}`,
+		"assets/index-AbCd1234.js":        `console.log('hashed')`,
+		"assets/IconMessage-Bwyt-6W_.js":  `console.log('url-safe hash')`,
+		"assets/font-D06yvloL.woff2":      `hashed font`,
+		"assets/stable-in-assets-file.js": `console.log('stable')`,
+	}
+	for name, body := range files {
+		path := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	handler := (&Server{WebDir: dir}).spa()
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "/assets/index-AbCd1234.js", want: "public, max-age=31536000, immutable"},
+		{path: "/assets/IconMessage-Bwyt-6W_.js", want: "public, max-age=31536000, immutable"},
+		{path: "/assets/font-D06yvloL.woff2", want: "public, max-age=31536000, immutable"},
+		{path: "/manifest.webmanifest", want: "no-cache"},
+		{path: "/umm-sw.js", want: "no-cache"},
+		{path: "/umm-icon.svg", want: "no-cache"},
+		{path: "/asset-manifest.json", want: "no-cache"},
+		{path: "/assets/stable-in-assets-file.js", want: "no-cache"},
+		{path: "/today", want: "no-cache"},
+	}
+	for _, test := range tests {
+		t.Run(test.path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, test.path, nil))
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d", response.Code)
+			}
+			if got := response.Header().Get("Cache-Control"); got != test.want {
+				t.Fatalf("Cache-Control = %q, want %q", got, test.want)
+			}
+		})
 	}
 }

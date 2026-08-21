@@ -294,6 +294,11 @@ func (s *Server) prometheusMetrics(w http.ResponseWriter, r *http.Request) {
 // per-response CSP nonce can be attached to it.
 var scriptTagPattern = regexp.MustCompile(`(?i)<script(\s|>)`)
 
+// Vite's production bundle names end in an eight-character content hash.
+// Stable PWA metadata and service-worker URLs live outside this convention and
+// must revalidate on every release.
+var contentHashedAssetPattern = regexp.MustCompile(`-[A-Za-z0-9_-]{8}\.[A-Za-z0-9]+$`)
+
 // nonceMarker lets the document expose its nonce to the bundle, which passes it
 // to Mantine so runtime style elements are labelled too.
 const nonceMarker = "__CSP_NONCE__"
@@ -339,7 +344,8 @@ func (s *Server) spa() http.Handler {
 		}
 		candidate := filepath.Join(dir, clean)
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			if strings.Contains(filepath.Base(candidate), ".") {
+			webPath := filepath.ToSlash(clean)
+			if strings.HasPrefix(webPath, "assets/") && contentHashedAssetPattern.MatchString(filepath.Base(webPath)) {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			} else {
 				w.Header().Set("Cache-Control", "no-cache")

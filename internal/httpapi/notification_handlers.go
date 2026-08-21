@@ -28,6 +28,11 @@ func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := parsePageLimit(r, 30, 100)
+	var unread int64
+	if err := s.Store.Pool.QueryRow(r.Context(), `SELECT count(*) FROM notifications n WHERE `+accessibleNotificationPredicate+` AND n.read_at IS NULL`, p.User.ID).Scan(&unread); err != nil {
+		writeError(w, 500, "읽지 않은 알림 수를 불러오지 못했습니다.")
+		return
+	}
 	rows, err := s.Store.Pool.Query(r.Context(), `SELECT n.id,n.kind,n.title,n.body,n.resource_type,n.resource_id,n.resource_space_id,n.metadata,n.read_at,n.created_at FROM notifications n WHERE `+accessibleNotificationPredicate+` ORDER BY n.created_at DESC,n.id DESC LIMIT $2 OFFSET $3`, p.User.ID, limit+1, offset)
 	if err != nil {
 		writeError(w, 500, "알림을 불러오지 못했습니다.")
@@ -35,11 +40,6 @@ func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	items := []map[string]any{}
-	var unread int64
-	if err := s.Store.Pool.QueryRow(r.Context(), `SELECT count(*) FROM notifications n WHERE `+accessibleNotificationPredicate+` AND n.read_at IS NULL`, p.User.ID).Scan(&unread); err != nil {
-		writeError(w, 500, "읽지 않은 알림 수를 불러오지 못했습니다.")
-		return
-	}
 	for rows.Next() {
 		var id uuid.UUID
 		var kind, title, body, resourceType string

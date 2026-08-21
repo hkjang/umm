@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -104,6 +106,76 @@ func TestNotificationAccessRevocationIntegration(t *testing.T) {
 	}
 	if persisted != 3 {
 		t.Fatalf("test expected access filtering without deletion, persisted=%d", persisted)
+	}
+}
+
+func TestNotificationsCompleteWithOneRequestConnectionIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("pool_max_conns", "2")
+	parsed.RawQuery = query.Encode()
+
+	ctx := context.Background()
+	db, err := store.Open(ctx, parsed.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if db.Pool.Config().MaxConns != 2 {
+		t.Fatalf("test requires a two-connection pool, got %d", db.Pool.Config().MaxConns)
+	}
+
+	userID := uuid.New()
+	username := "notification_pool_" + userID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, userID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO notifications(user_id,kind,title,body,resource_type) VALUES($1,'dream','pool-safe notification','one connection remains','dream')`, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	authService := &auth.Service{Store: db}
+	session, err := authService.CreateSession(ctx, userID, auth.SessionOrigin{UserAgent: "integration-test", ClientIP: "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{Store: db}
+	handler := authService.Middleware(auth.Require(http.HandlerFunc(server.listNotifications)))
+
+	listenerConnection, err := db.Pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listenerConnection.Release()
+	requestContext, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/notifications", nil).WithContext(requestContext)
+	request.AddCookie(&http.Cookie{Name: auth.CookieName, Value: session})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("notification list exhausted the last request connection: status=%d body=%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Notifications []map[string]any `json:"notifications"`
+		Unread        int64            `json:"unread"`
+	}
+	if err = json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Notifications) != 1 || payload.Unread != 1 {
+		t.Fatalf("unexpected notification response: %#v", payload)
 	}
 }
 

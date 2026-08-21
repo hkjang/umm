@@ -65,7 +65,7 @@
 
 ### 1-1. 푸시 기반 실시간 협업 (Realtime Hub)
 - `space_events`의 AFTER INSERT 트리거가 `pg_notify`를 호출합니다. PostgreSQL은 알림을 **커밋 시점에** 전달하므로, 롤백된 변경이 다른 사람에게 보이는 상태는 만들어질 수 없습니다.
-- 인스턴스마다 전용 연결 하나가 `LISTEN umm_space_events`를 유지하고, 도착한 알림을 프로세스 안의 구독자에게 팬아웃합니다. 구독자 수와 무관하게 데이터베이스 부하는 일정합니다.
+- 인스턴스마다 전용 연결 하나가 `LISTEN umm_space_events`를 유지하고, 도착한 알림을 프로세스 안의 구독자에게 팬아웃합니다. 구독자 수와 무관하게 데이터베이스 부하는 일정합니다. 목록과 unread count를 함께 반환하는 알림 endpoint도 count와 rows를 순차 실행해 request 연결 하나만 사용하므로 리스너가 한 자리를 차지한 작은 pool에서 자기 자신을 기다리지 않습니다.
 - 알림은 페이로드를 신뢰하지 않습니다. 깨어난 리더는 자신이 마지막으로 보낸 sequence 이후를 다시 조회하므로, 알림이 합쳐지거나 유실되어도 이벤트를 건너뛰지 않습니다.
 - 리스너가 끊기면 지수 백오프로 재연결하고, 그동안 SSE 리더는 예전 1초 폴링으로 자동 전환됩니다. 협업이 멈추는 구간이 없습니다.
 
@@ -77,7 +77,7 @@
 ### 2. 낙관적 동시성 제어 (Optimistic Concurrency Control)
 - 각 생각 노드는 단조 증가하는 `version` 번호를 가집니다.
 - 다중 사용자가 동시에 작업하더라도 버전 충돌을 감지하고 409 Problem Details에 최신 서버 메모를 포함합니다. 브라우저는 내 변경과 서버 변경을 나란히 보여 주고 선택·병합한 뒤 새 버전으로 저장합니다.
-- 오프라인 변경은 PWA local queue에 멱등 키와 함께 보관됩니다. 재연결 시 안전한 순서로 replay하고 같은 메모의 연속 PUT은 마지막 상태로 합칩니다. 서비스 워커의 `/` 앱 셸 캐시는 성공한 `text/html` 탐색 응답만 갱신하므로 manifest·asset JSON·SVG를 주소창에서 직접 열어도 오프라인 셸이 비-HTML 응답으로 바뀌지 않습니다.
+- 오프라인 변경은 PWA local queue에 멱등 키와 함께 보관됩니다. 재연결 시 안전한 순서로 replay하고 같은 메모의 연속 PUT은 마지막 상태로 합칩니다. 서비스 워커의 `/` 앱 셸 캐시는 성공한 `text/html` 탐색 응답만 갱신하므로 manifest·asset JSON·SVG를 주소창에서 직접 열어도 오프라인 셸이 비-HTML 응답으로 바뀌지 않습니다. 8자 content hash가 붙은 `assets/` bundle만 1년 immutable이고, manifest·service worker·아이콘·asset manifest 같은 고정 URL은 `no-cache`로 매 배포 재검증합니다.
 
 ### 3. 분산 큐 & DB 트랜잭션 (SKIP LOCKED)
 - 외부 메시지 브로커(RabbitMQ, Redis 등) 없이 PostgreSQL의 `FOR UPDATE SKIP LOCKED`를 활용하여 Dream 백그라운드 작업을 분산 워커 간 중복 없이 안전하게 임대(Lease) 처리합니다.

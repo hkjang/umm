@@ -20,7 +20,9 @@ docker image inspect umm:v0.8.1
 
 PostgreSQL user는 대상 database에 schema/table/extension을 생성할 권한이 필요합니다(`pgcrypto`, `citext`, `pg_trgm`). 시작 시 embedded migration이 transaction으로 실행됩니다.
 
-인스턴스는 협업 이벤트 수신용 PostgreSQL 연결 하나를 상시 점유합니다. 연결 풀 자동 최대값은 host CPU 수와 무관하게 인스턴스당 16이며 제공 compose도 이를 명시합니다. Replica 수와 PostgreSQL `max_connections`를 함께 계산해 DSN의 `pool_max_conns`를 조정하세요. 더 작은 값을 명시해도 내부 `pool_min_conns`가 최대값을 넘어 시작에 실패하지 않도록 cap하지만, `pool_max_conns=1`은 실시간 listener와 일반 요청이 한 연결을 다투므로 운영 권장값이 아닙니다.
+인스턴스는 협업 이벤트 수신용 PostgreSQL 연결 하나를 상시 점유합니다. 연결 풀 자동 최대값은 host CPU 수와 무관하게 인스턴스당 16이며 제공 compose도 이를 명시합니다. Replica 수와 PostgreSQL `max_connections`를 함께 계산해 DSN의 `pool_max_conns`를 조정하세요. 더 작은 값을 명시해도 내부 `pool_min_conns`가 최대값을 넘어 시작에 실패하지 않도록 cap하지만, `pool_max_conns=1`은 실시간 listener와 일반 요청이 한 연결을 다투므로 운영 권장값이 아닙니다. 알림 목록의 unread count와 page 조회는 한 request 연결에서 순차 실행되어 상한 2에서도 교착하지 않지만, listener·동시 요청·worker 여유를 위해 운영에서는 인스턴스당 최소 4 이상을 권장합니다.
+
+정적 파일은 content hash가 붙은 Vite bundle만 `immutable`로 장기 캐시합니다. `/manifest.webmanifest`, `/umm-sw.js`, `/umm-icon.svg`, `/asset-manifest.json`은 `no-cache`로 재검증되므로 배포 뒤 proxy/CDN이 이 고정 URL에 임의의 1년 immutable 정책을 덧씌우지 않도록 구성하세요.
 
 32-byte encryption key는 연결망 밖의 승인된 비밀 관리 절차로 생성합니다. 예: `openssl rand -base64 32`. Shell history, compose file, ticket, Git에 실제 값을 남기지 마세요.
 
