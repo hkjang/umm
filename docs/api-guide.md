@@ -46,6 +46,9 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | `POST` | `/dreams/{id}/accept` | 후보를 Dream 메모와 출처 연결선으로 확정 | `dreams:read`, `notes:write` |
 | `POST` | `/dreams/{id}/regenerate` | 같은 출처에서 중복되지 않는 다른 관점 생성 | `dreams:read` |
 | `POST` | `/dreams/{id}/develop` | 확장·반대 관점·실행 항목으로 발전 | `dreams:read` |
+| `POST` | `/dreams/{id}/developed-note` | 발전 결과를 새 메모와 `expanded` 연결선으로 원자 저장(동일 재시도 무중복) | `dreams:read`, `notes:write` |
+
+`GET /notifications`의 각 항목에는 `resourceType`과 `resourceId`가 포함됩니다. Dream 알림은 `/dreams?focus={resourceId}`, 공간 공유 알림은 `/space/{resourceId}`로 연결할 수 있습니다.
 
 ### ⚡ 실시간 이벤트 스트림 (SSE)
 - **경로**: `GET /api/v1/spaces/{spaceID}/events`

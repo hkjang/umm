@@ -151,6 +151,7 @@ button, a, input, textarea, [tabindex] { -webkit-tap-highlight-color: transparen
 .settings-page { height: calc(100dvh - var(--app-shell-header-offset, 66px)); min-height: 0; background: #f8f6f0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 34px 34px 64px; scrollbar-gutter: stable; }
 .settings-page .mantine-Card-root, .admin-content .mantine-Card-root { border-color: #e0dbd0; box-shadow: 0 1px 2px rgba(58,51,39,.025); }
 .dream-review-card { scroll-margin: 100px; background: linear-gradient(155deg, #fffdf9 0%, #fbf8ff 100%); }
+.dream-review-card-focused { border-color: rgba(118,92,150,.55) !important; box-shadow: 0 0 0 4px rgba(118,92,150,.12), 0 14px 36px rgba(73,52,97,.12); }
 .dream-source { width: 100%; min-height: 92px; padding: 12px 14px; text-align: left; color: inherit; background: rgba(238,231,247,.42); border: 1px solid rgba(118,92,150,.13); border-radius: 10px; cursor: pointer; transition: background 140ms ease, border-color 140ms ease, transform 140ms ease; }
 .dream-source:hover { background: rgba(238,231,247,.8); border-color: rgba(118,92,150,.28); transform: translateY(-1px); }
 .dream-source:focus-visible { outline: 3px solid rgba(118,92,150,.2); outline-offset: 2px; }

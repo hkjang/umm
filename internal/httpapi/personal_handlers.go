@@ -303,4 +303,35 @@ func (s *Server) developDream(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, result)
 }
 
+func (s *Server) saveDevelopedDream(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "dreams:read") || !requireScope(w, r, "notes:write") {
+		return
+	}
+	id, ok := parseID(w, r, "dreamID")
+	if !ok {
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		writeError(w, 400, "Dream 발전 결과 형식이 올바르지 않습니다.")
+		return
+	}
+	p := principal(r)
+	result, err := s.Dreams.MaterializeDevelopment(r.Context(), p.User.ID, id, body.Content)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	status := http.StatusOK
+	if result.Created {
+		status = http.StatusCreated
+		s.Store.Audit(r.Context(), &p.User.ID, "dream.development.save", "dream", id.String(), map[string]any{"noteId": result.Note.ID, "spaceId": result.Note.SpaceID})
+		s.publishSpaceEvent(r, result.Note.SpaceID, "note.created", result.Note.ID, result.Note)
+		s.publishSpaceEvent(r, result.Edge.SpaceID, "edge.created", result.Edge.ID, result.Edge)
+	}
+	writeJSON(w, status, result)
+}
+
 var _ = uuid.Nil

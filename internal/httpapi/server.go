@@ -89,6 +89,7 @@ func (s *Server) Handler() http.Handler {
 			protected.Post("/dreams/{dreamID}/accept", s.acceptDream)
 			protected.Post("/dreams/{dreamID}/regenerate", s.regenerateDream)
 			protected.Post("/dreams/{dreamID}/develop", s.developDream)
+			protected.Post("/dreams/{dreamID}/developed-note", s.saveDevelopedDream)
 			protected.Post("/approvals", s.createApproval)
 			protected.Get("/approvals", s.listApprovals)
 			protected.Post("/approvals/{requestID}/decision", s.decideApproval)

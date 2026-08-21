@@ -54,6 +54,15 @@ type DreamView struct {
 	Sources         []DreamSourceView `json:"sources"`
 }
 
+// DevelopmentMaterialization is the canvas result of saving a developed
+// Dream. Created is false when an identical retry returns the note and edge
+// that were already materialized.
+type DevelopmentMaterialization struct {
+	Note    store.Note `json:"note"`
+	Edge    store.Edge `json:"edge"`
+	Created bool       `json:"created"`
+}
+
 func qualityLabel(score float64) string {
 	switch {
 	case score >= .82:
@@ -124,16 +133,42 @@ func (s *Service) History(ctx context.Context, userID uuid.UUID) ([]DreamView, e
 }
 
 func (s *Service) Dream(ctx context.Context, userID, dreamID uuid.UUID) (DreamView, error) {
-	views, err := s.History(ctx, userID)
+	var view DreamView
+	err := s.Store.Pool.QueryRow(ctx, `
+		SELECT d.dream_id,d.dream_type,d.generated_at,d.exposed_at,d.accepted_at,
+		       d.quality_score,d.status,d.note_id,d.space_id,sp.name,
+		       COALESCE(NULLIF(d.content,''),n.content,''),d.rationale,
+		       d.suggested_action,d.generation,d.dismissed_reason
+		FROM dream_notes d
+		JOIN spaces sp ON sp.id=d.space_id
+		LEFT JOIN notes n ON n.id=d.note_id
+		WHERE d.user_id=$1 AND d.dream_id=$2`, userID, dreamID).
+		Scan(&view.DreamID, &view.Type, &view.GeneratedAt, &view.ExposedAt, &view.AcceptedAt,
+			&view.QualityScore, &view.Status, &view.NoteID, &view.SpaceID, &view.SpaceName,
+			&view.Content, &view.Rationale, &view.SuggestedAction, &view.Generation, &view.DismissedReason)
 	if err != nil {
 		return DreamView{}, err
 	}
-	for _, view := range views {
-		if view.DreamID == dreamID {
-			return view, nil
-		}
+	view.QualityLabel = qualityLabel(view.QualityScore)
+	view.Sources = []DreamSourceView{}
+	rows, err := s.Store.Pool.Query(ctx, `
+		SELECT n.id,n.title,left(n.content,240),ds.rank,ds.similarity_score,ds.cited
+		FROM dream_sources ds
+		JOIN notes n ON n.id=ds.source_note_id AND n.deleted_at IS NULL
+		WHERE ds.dream_id=$1
+		ORDER BY ds.cited DESC,ds.rank`, dreamID)
+	if err != nil {
+		return DreamView{}, err
 	}
-	return DreamView{}, pgx.ErrNoRows
+	defer rows.Close()
+	for rows.Next() {
+		var source DreamSourceView
+		if err = rows.Scan(&source.NoteID, &source.Title, &source.Excerpt, &source.Rank, &source.SimilarityScore, &source.Cited); err != nil {
+			return DreamView{}, err
+		}
+		view.Sources = append(view.Sources, source)
+	}
+	return view, rows.Err()
 }
 
 // Accept materializes a staged Dream candidate as a canvas note. It is
@@ -236,6 +271,104 @@ func (s *Service) noteByID(ctx context.Context, userID, noteID uuid.UUID) (store
 		Scan(&note.ID, &note.SpaceID, &note.AuthorID, &note.Content, &note.Title, &note.Color, &note.Kind, &note.Source, &note.AIExcluded,
 			&note.X, &note.Y, &note.Width, &note.Height, &note.Rotation, &note.Version, &note.CreatedAt, &note.UpdatedAt)
 	return note, err
+}
+
+// MaterializeDevelopment saves a developed result next to an accepted Dream
+// and connects both notes in one transaction. Locking the Dream row also makes
+// identical concurrent requests and network retries idempotent.
+func (s *Service) MaterializeDevelopment(ctx context.Context, userID, dreamID uuid.UUID, content string) (DevelopmentMaterialization, error) {
+	content = strings.TrimSpace(content)
+	if content == "" || len([]rune(content)) > 2000 {
+		return DevelopmentMaterialization{}, errors.New("발전 결과는 1~2000자여야 합니다")
+	}
+	tx, err := s.Store.Pool.Begin(ctx)
+	if err != nil {
+		return DevelopmentMaterialization{}, err
+	}
+	defer tx.Rollback(ctx)
+	var spaceID, sourceID uuid.UUID
+	var sourceX, sourceY float64
+	err = tx.QueryRow(ctx, `
+		SELECT d.space_id,n.id,n.x,n.y
+		FROM dream_notes d
+		JOIN notes n ON n.id=d.note_id AND n.deleted_at IS NULL
+		WHERE d.dream_id=$1 AND d.user_id=$2 AND d.status='kept'
+		FOR UPDATE OF d`, dreamID, userID).Scan(&spaceID, &sourceID, &sourceX, &sourceY)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DevelopmentMaterialization{}, errors.New("먼저 Dream을 캔버스에 남겨 주세요")
+	}
+	if err != nil {
+		return DevelopmentMaterialization{}, err
+	}
+	var canEdit bool
+	if err = tx.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM spaces sp
+			LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$1
+			WHERE sp.id=$2 AND (sp.owner_id=$1 OR sm.permission IN ('edit','manage'))
+		)`, userID, spaceID).Scan(&canEdit); err != nil {
+		return DevelopmentMaterialization{}, err
+	}
+	if !canEdit {
+		return DevelopmentMaterialization{}, errors.New("Dream을 발전시킬 공간의 편집 권한이 없습니다")
+	}
+	var existing DevelopmentMaterialization
+	err = tx.QueryRow(ctx, `
+		SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
+		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at,
+		       e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation
+		FROM note_edges e
+		JOIN notes n ON n.id=e.target_note_id AND n.deleted_at IS NULL
+		WHERE e.space_id=$1 AND e.source_note_id=$2 AND e.relation='expanded'
+		  AND n.source='dream' AND n.content=$3
+		ORDER BY n.created_at
+		LIMIT 1`, spaceID, sourceID, content).
+		Scan(&existing.Note.ID, &existing.Note.SpaceID, &existing.Note.AuthorID, &existing.Note.Content, &existing.Note.Title,
+			&existing.Note.Color, &existing.Note.Kind, &existing.Note.Source, &existing.Note.AIExcluded,
+			&existing.Note.X, &existing.Note.Y, &existing.Note.Width, &existing.Note.Height, &existing.Note.Rotation,
+			&existing.Note.Version, &existing.Note.CreatedAt, &existing.Note.UpdatedAt,
+			&existing.Edge.ID, &existing.Edge.SpaceID, &existing.Edge.SourceID, &existing.Edge.TargetID, &existing.Edge.Relation)
+	if err == nil {
+		if err = tx.Commit(ctx); err != nil {
+			return DevelopmentMaterialization{}, err
+		}
+		_ = s.Feedback(ctx, userID, dreamID, "expanded")
+		return existing, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return DevelopmentMaterialization{}, err
+	}
+	var siblingCount int
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM note_edges WHERE source_note_id=$1 AND relation='expanded'`, sourceID).Scan(&siblingCount); err != nil {
+		return DevelopmentMaterialization{}, err
+	}
+	result := DevelopmentMaterialization{Created: true}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO notes(space_id,author_id,content,color,kind,source,x,y,width,height)
+		VALUES($1,$2,$3,'lavender','idea','dream',$4,$5,260,180)
+		RETURNING id,space_id,author_id,content,title,color,kind,source,ai_excluded,
+		          x,y,width,height,rotation,version,created_at,updated_at`,
+		spaceID, userID, content, sourceX+300, sourceY+60+float64(siblingCount*48)).
+		Scan(&result.Note.ID, &result.Note.SpaceID, &result.Note.AuthorID, &result.Note.Content, &result.Note.Title,
+			&result.Note.Color, &result.Note.Kind, &result.Note.Source, &result.Note.AIExcluded,
+			&result.Note.X, &result.Note.Y, &result.Note.Width, &result.Note.Height, &result.Note.Rotation,
+			&result.Note.Version, &result.Note.CreatedAt, &result.Note.UpdatedAt)
+	if err != nil {
+		return DevelopmentMaterialization{}, err
+	}
+	result.Edge = store.Edge{SpaceID: spaceID, SourceID: sourceID, TargetID: result.Note.ID, Relation: "expanded"}
+	if err = tx.QueryRow(ctx, `
+		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by)
+		VALUES($1,$2,$3,$4,$5)
+		RETURNING id`, spaceID, sourceID, result.Note.ID, result.Edge.Relation, userID).Scan(&result.Edge.ID); err != nil {
+		return DevelopmentMaterialization{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return DevelopmentMaterialization{}, err
+	}
+	_ = s.Store.UpsertEmbedding(ctx, result.Note.ID, result.Note.Content, result.Note.Version)
+	_ = s.Feedback(ctx, userID, dreamID, "expanded")
+	return result, nil
 }
 
 func (s *Service) Regenerate(ctx context.Context, userID, dreamID uuid.UUID) (DreamView, error) {

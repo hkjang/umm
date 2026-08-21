@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: umm API
-  version: 0.6.0
+  version: 0.6.1
   description: Spatial Thought Memory, key management, workflow and Dream Layer API.
 servers:
   - url: /api/v1
@@ -265,7 +265,17 @@ paths:
     get:
       tags: [Personal]
       summary: List personal Dream and collaboration notifications
-      responses: { '200': { description: Notifications and unread count } }
+      responses:
+        '200':
+          description: Notifications, navigation targets and unread count
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notifications, unread]
+                properties:
+                  notifications: { type: array, items: { $ref: '#/components/schemas/Notification' } }
+                  unread: { type: integer, minimum: 0 }
   /notifications/{notificationId}/read:
     parameters:
       - { in: path, name: notificationId, required: true, schema: { type: string, format: uuid } }
@@ -334,6 +344,18 @@ paths:
       x-required-scope: dreams:read
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mode], properties: { mode: { type: string, enum: [expand, challenge, actions] } } } } } }
       responses: { '200': { description: Developed Dream text, content: { application/json: { schema: { type: object, required: [mode, content, model, inputTokens, outputTokens], properties: { mode: { type: string }, content: { type: string }, model: { type: string }, inputTokens: { type: integer }, outputTokens: { type: integer } } } } } } }
+  /dreams/{dreamId}/developed-note:
+    parameters:
+      - { in: path, name: dreamId, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Dream]
+      summary: Atomically save developed Dream text as a note and expanded edge
+      description: Identical retries return the existing note and edge with created=false.
+      x-required-scope: [dreams:read, notes:write]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [content], properties: { content: { type: string, minLength: 1, maxLength: 2000 } } } } } }
+      responses:
+        '200': { description: Existing materialization returned for an identical retry, content: { application/json: { schema: { $ref: '#/components/schemas/DevelopmentMaterialization' } } } }
+        '201': { description: Developed note and edge created atomically, content: { application/json: { schema: { $ref: '#/components/schemas/DevelopmentMaterialization' } } } }
   /approvals:
     get:
       tags: [Workflow]
@@ -563,6 +585,25 @@ components:
         - type: object
           required: [id, spaceId]
           properties: { id: { type: string, format: uuid }, spaceId: { type: string, format: uuid } }
+    DevelopmentMaterialization:
+      type: object
+      required: [note, edge, created]
+      properties:
+        note: { $ref: '#/components/schemas/Note' }
+        edge: { $ref: '#/components/schemas/Edge' }
+        created: { type: boolean }
+    Notification:
+      type: object
+      required: [id, kind, title, body, resourceType, resourceId, readAt, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string }
+        title: { type: string }
+        body: { type: string }
+        resourceType: { type: string, enum: [dream, space] }
+        resourceId: { type: [string, 'null'], format: uuid }
+        readAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
     Preferences:
       type: object
       required: [dream_enabled, dream_frequency, dream_style, dream_notifications, include_old_notes, theme, locale, edge_style]

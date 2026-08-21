@@ -269,7 +269,7 @@ const DOCS_TO_BUILD = [
     title: 'umm API & MCP 연동 가이드 (API & MCP Guide)',
   },
   {
-    src: path.join(DOCS_DIR, 'architecture.md'),
+    src: path.join(DOCS_DIR, 'ARCHITECTURE.md'),
     outPdf: path.join(DOCS_DIR, 'umm_architecture.pdf'),
     title: 'umm 실행 아키텍처 및 불변 조건 (Architecture)',
   },

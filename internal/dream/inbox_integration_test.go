@@ -18,7 +18,7 @@ func TestDreamInboxAcceptanceIntegration(t *testing.T) {
 	if dsn == "" {
 		t.Skip("POSTGRES_DSN is not set")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	db, err := store.Open(ctx, dsn)
 	if err != nil {
@@ -123,6 +123,32 @@ func TestDreamInboxAcceptanceIntegration(t *testing.T) {
 	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM note_edges WHERE target_note_id=$1 AND relation='dreamed'`, accepted.ID).Scan(&edgeCount); err != nil || edgeCount != 2 {
 		t.Fatalf("only the two cited source edges should be materialized: count=%d err=%v", edgeCount, err)
 	}
+	type developmentResult struct {
+		value DevelopmentMaterialization
+		err   error
+	}
+	developmentResults := make(chan developmentResult, 2)
+	developedContent := "승인된 Dream을 예산 한도 검증 체크리스트로 발전시킨 결과"
+	for range 2 {
+		go func() {
+			value, saveErr := service.MaterializeDevelopment(ctx, userID, dreamID, developedContent)
+			developmentResults <- developmentResult{value: value, err: saveErr}
+		}()
+	}
+	developedFirst := <-developmentResults
+	developedSecond := <-developmentResults
+	if developedFirst.err != nil || developedSecond.err != nil || developedFirst.value.Note.ID != developedSecond.value.Note.ID || developedFirst.value.Edge.ID != developedSecond.value.Edge.ID {
+		t.Fatalf("concurrent development save was not idempotent: first=%#v second=%#v", developedFirst, developedSecond)
+	}
+	if developedFirst.value.Created == developedSecond.value.Created {
+		t.Fatalf("exactly one development request should create data: first=%t second=%t", developedFirst.value.Created, developedSecond.value.Created)
+	}
+	if developedFirst.value.Note.Source != "dream" || developedFirst.value.Edge.SourceID != accepted.ID || developedFirst.value.Edge.TargetID != developedFirst.value.Note.ID || developedFirst.value.Edge.Relation != "expanded" {
+		t.Fatalf("unexpected developed note or edge: %#v", developedFirst.value)
+	}
+	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM note_edges WHERE source_note_id=$1 AND target_note_id=$2 AND relation='expanded'`, accepted.ID, developedFirst.value.Note.ID).Scan(&edgeCount); err != nil || edgeCount != 1 {
+		t.Fatalf("developed note and edge were not saved atomically once: count=%d err=%v", edgeCount, err)
+	}
 	_ = service.Feedback(ctx, userID, dreamID, "kept")
 	_ = service.Feedback(ctx, userID, dreamID, "kept")
 	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM dream_feedback WHERE dream_id=$1 AND action='kept'`, dreamID).Scan(&feedbackCount); err != nil || feedbackCount != 1 {
@@ -141,5 +167,15 @@ func TestDreamInboxAcceptanceIntegration(t *testing.T) {
 	var dreamFrequency string
 	if err = db.Pool.QueryRow(ctx, `SELECT dream_frequency FROM user_preferences WHERE user_id=$1`, userID).Scan(&dreamFrequency); err != nil || dreamFrequency != "three_week" {
 		t.Fatalf("frequency feedback was not applied exactly once: frequency=%q err=%v", dreamFrequency, err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO dream_notes(user_id,space_id,dream_type,content,generated_at)
+		SELECT $1,$2,'question','더 최근의 Dream 후보 '||value,now()+(value*interval '1 second')
+		FROM generate_series(1,101) AS value`, userID, space.ID); err != nil {
+		t.Fatalf("create newer Dream history: %v", err)
+	}
+	loaded, err := service.Dream(ctx, userID, dreamID)
+	if err != nil || loaded.DreamID != dreamID || loaded.NoteID == nil || *loaded.NoteID != accepted.ID {
+		t.Fatalf("direct Dream lookup should not be limited by history pagination: dream=%#v err=%v", loaded, err)
 	}
 }
