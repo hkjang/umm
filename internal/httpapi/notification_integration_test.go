@@ -31,7 +31,7 @@ func TestNotificationAccessRevocationIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ownerID, memberID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	ownerID, memberID, spaceID, noteID, dreamID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	ownerName := "notification_owner_" + ownerID.String()
 	memberName := "notification_member_" + memberID.String()
 	if _, err = db.Pool.Exec(ctx, `
@@ -58,10 +58,14 @@ func TestNotificationAccessRevocationIntegration(t *testing.T) {
 	if _, err = db.Pool.Exec(ctx, `UPDATE notifications SET resource_space_id=NULL WHERE user_id=$1 AND resource_type='note' AND resource_id=$2`, memberID, noteID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO dream_notes(dream_id,user_id,space_id,dream_type,content) VALUES($1,$2,$3,'connection','revoked Dream body')`, dreamID, memberID, spaceID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = db.Pool.Exec(ctx, `
 		INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id) VALUES
 		($1,'space_shared','legacy space notification','legacy revoked body','space',$2),
-		($1,'dream','personal notification','safe personal body','dream',$3)`, memberID, spaceID, uuid.New()); err != nil {
+		($1,'dream','legacy Dream notification','revoked Dream notification body','dream',$3),
+		($1,'dream','personal notification','safe personal body','dream',NULL)`, memberID, spaceID, dreamID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,15 +100,15 @@ func TestNotificationAccessRevocationIntegration(t *testing.T) {
 	}
 
 	before := fetch()
-	if len(before.Notifications) != 3 || before.Unread != 3 {
-		t.Fatalf("accessible notifications=%d unread=%d, want 3", len(before.Notifications), before.Unread)
+	if len(before.Notifications) != 4 || before.Unread != 4 {
+		t.Fatalf("accessible notifications=%d unread=%d, want 4", len(before.Notifications), before.Unread)
 	}
 	if _, err = db.Pool.Exec(ctx, `UPDATE notes SET deleted_at=now() WHERE id=$1`, noteID); err != nil {
 		t.Fatal(err)
 	}
 	deleted := fetch()
-	if len(deleted.Notifications) != 2 || deleted.Unread != 2 {
-		t.Fatalf("deleted-note notifications=%d unread=%d, want 2", len(deleted.Notifications), deleted.Unread)
+	if len(deleted.Notifications) != 3 || deleted.Unread != 3 {
+		t.Fatalf("deleted-note notifications=%d unread=%d, want 3", len(deleted.Notifications), deleted.Unread)
 	}
 	for _, item := range deleted.Notifications {
 		if item.Body == "revoked secret body" {
@@ -115,8 +119,8 @@ func TestNotificationAccessRevocationIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored := fetch()
-	if len(restored.Notifications) != 3 || restored.Unread != 3 {
-		t.Fatalf("restored-note notifications=%d unread=%d, want 3", len(restored.Notifications), restored.Unread)
+	if len(restored.Notifications) != 4 || restored.Unread != 4 {
+		t.Fatalf("restored-note notifications=%d unread=%d, want 4", len(restored.Notifications), restored.Unread)
 	}
 	if _, err = db.Pool.Exec(ctx, `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID); err != nil {
 		t.Fatal(err)
@@ -129,7 +133,7 @@ func TestNotificationAccessRevocationIntegration(t *testing.T) {
 	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id=$1`, memberID).Scan(&persisted); err != nil {
 		t.Fatal(err)
 	}
-	if persisted != 3 {
+	if persisted != 4 {
 		t.Fatalf("test expected access filtering without deletion, persisted=%d", persisted)
 	}
 }

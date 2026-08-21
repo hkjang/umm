@@ -7,7 +7,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const notificationSpaceExpression = `COALESCE(n.resource_space_id,CASE WHEN n.resource_type='space' THEN n.resource_id END)`
+const notificationSpaceExpression = `COALESCE(
+	n.resource_space_id,
+	CASE WHEN n.resource_type='space' THEN n.resource_id END
+)`
 
 const accessibleNotificationPredicate = `n.user_id=$1 AND (
 	(n.resource_type='note' AND EXISTS(
@@ -18,7 +21,17 @@ const accessibleNotificationPredicate = `n.user_id=$1 AND (
 		WHERE notification_note.id=n.resource_id AND notification_note.deleted_at IS NULL
 		  AND (notification_space.owner_id=$1 OR notification_member.user_id=$1)
 	)) OR
-	(n.resource_type<>'note' AND (
+	(n.resource_type='dream' AND (
+		n.resource_id IS NULL OR EXISTS(
+			SELECT 1 FROM dream_notes notification_dream
+			JOIN spaces notification_space ON notification_space.id=notification_dream.space_id
+			LEFT JOIN space_members notification_member
+			  ON notification_member.space_id=notification_space.id AND notification_member.user_id=$1
+			WHERE notification_dream.dream_id=n.resource_id AND notification_dream.user_id=$1
+			  AND (notification_space.owner_id=$1 OR notification_member.user_id=$1)
+		)
+	)) OR
+	(n.resource_type NOT IN ('note','dream') AND (
 		` + notificationSpaceExpression + ` IS NULL OR EXISTS(
 			SELECT 1 FROM spaces sp
 			LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$1

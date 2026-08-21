@@ -296,6 +296,7 @@ func (s *Store) TodayReview(ctx context.Context, userID uuid.UUID) (TodayReview,
 		SELECT d.dream_id,d.space_id,sp.name,d.content,d.rationale,d.suggested_action,d.generated_at
 		FROM dream_notes d JOIN spaces sp ON sp.id=d.space_id
 		WHERE d.user_id=$1 AND d.status IN ('created','exposed')
+		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
 		ORDER BY d.generated_at DESC,d.dream_id DESC LIMIT 5`, userID)
 	if err != nil {
 		return out, err

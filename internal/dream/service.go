@@ -23,6 +23,7 @@ import (
 	"github.com/hkjang/umm/internal/intelligence"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/hkjang/umm/internal/textutil"
+	"github.com/jackc/pgx/v5"
 )
 
 type Config struct {
@@ -331,8 +332,9 @@ func (s *Service) generate(ctx context.Context, cfg Config, jobID, userID uuid.U
 	if style != "" && style != "auto" && style != "free" {
 		kind = style
 	}
+	spaceID := sourceSpace(sources)
 	var dreamID uuid.UUID
-	err = s.Store.Pool.QueryRow(ctx, `INSERT INTO dream_notes(user_id,space_id,dream_type,model,prompt_version,quality_score,source_note_count,content,rationale,suggested_action) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING dream_id`, userID, sourceSpace(sources), kind, model, gateway.PromptVersion, score, len(sources), output.Content, output.Rationale, output.SuggestedAction).Scan(&dreamID)
+	err = s.Store.Pool.QueryRow(ctx, `INSERT INTO dream_notes(user_id,space_id,dream_type,model,prompt_version,quality_score,source_note_count,content,rationale,suggested_action) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING dream_id`, userID, spaceID, kind, model, gateway.PromptVersion, score, len(sources), output.Content, output.Rationale, output.SuggestedAction).Scan(&dreamID)
 	if err != nil {
 		return err
 	}
@@ -348,7 +350,7 @@ func (s *Service) generate(ctx context.Context, cfg Config, jobID, userID uuid.U
 		var enabled bool
 		_ = s.Store.Pool.QueryRow(ctx, `SELECT dream_notifications FROM user_preferences WHERE user_id=$1`, userID).Scan(&enabled)
 		if enabled {
-			_, _ = s.Store.Pool.Exec(ctx, `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id) VALUES($1,'dream','어젯밤, 당신의 생각이 꿈을 꾸었습니다.',$2,'dream',$3)`, userID, truncate(output.Content, 180), dreamID)
+			_, _ = s.Store.Pool.Exec(ctx, `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id,resource_space_id) VALUES($1,'dream','어젯밤, 당신의 생각이 꿈을 꾸었습니다.',$2,'dream',$3,$4)`, userID, truncate(output.Content, 180), dreamID, spaceID)
 		}
 	}
 	return nil
@@ -930,22 +932,37 @@ func (s *Service) FeedbackWithReason(ctx context.Context, userID, dreamID uuid.U
 		return errors.New("invalid feedback action")
 	}
 	reason = truncate(strings.TrimSpace(reason), 80)
-	cmd, err := s.Store.Pool.Exec(ctx, `INSERT INTO dream_feedback(dream_id,user_id,action,reason) SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM dream_notes WHERE dream_id=$1 AND user_id=$2) ON CONFLICT(dream_id,user_id,action) DO NOTHING`, dreamID, userID, action, reason)
+	tx, err := s.Store.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var spaceID uuid.UUID
+	var dreamType string
+	if err = tx.QueryRow(ctx, `SELECT space_id,dream_type FROM dream_notes WHERE dream_id=$1 AND user_id=$2 FOR UPDATE`, dreamID, userID).Scan(&spaceID, &dreamType); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errors.New("dream not found")
+		}
+		return err
+	}
+	canAccess, err := canAccessSpaceTx(ctx, tx, userID, spaceID)
+	if err != nil {
+		return err
+	}
+	if !canAccess {
+		return errors.New("dream not found")
+	}
+	cmd, err := tx.Exec(ctx, `INSERT INTO dream_feedback(dream_id,user_id,action,reason) VALUES($1,$2,$3,$4) ON CONFLICT(dream_id,user_id,action) DO NOTHING`, dreamID, userID, action, reason)
 	if err != nil {
 		return err
 	}
 	inserted := cmd.RowsAffected() > 0
-	if !inserted {
-		var exists bool
-		_ = s.Store.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM dream_notes WHERE dream_id=$1 AND user_id=$2)`, dreamID, userID).Scan(&exists)
-		if !exists {
-			return errors.New("dream not found")
-		}
-		if reason != "" {
-			_, _ = s.Store.Pool.Exec(ctx, `UPDATE dream_feedback SET reason=$4,created_at=now() WHERE dream_id=$1 AND user_id=$2 AND action=$3`, dreamID, userID, action, reason)
+	if !inserted && reason != "" {
+		if _, err = tx.Exec(ctx, `UPDATE dream_feedback SET reason=$4,created_at=now() WHERE dream_id=$1 AND user_id=$2 AND action=$3`, dreamID, userID, action, reason); err != nil {
+			return err
 		}
 	}
-	if _, err = s.Store.Pool.Exec(ctx, `UPDATE dream_notes SET
+	if _, err = tx.Exec(ctx, `UPDATE dream_notes SET
 		status=CASE
 		  WHEN $2 IN ('deleted','hidden') THEN 'deleted'
 		  WHEN $2='exposed' AND status='created' THEN 'exposed'
@@ -957,39 +974,40 @@ func (s *Service) FeedbackWithReason(ctx context.Context, userID, dreamID uuid.U
 		return err
 	}
 	if !inserted {
-		return nil
+		return tx.Commit(ctx)
 	}
-	var dreamType string
-	if s.Store.Pool.QueryRow(ctx, `SELECT dream_type FROM dream_notes WHERE dream_id=$1 AND user_id=$2`, dreamID, userID).Scan(&dreamType) == nil {
-		if reason == "too_frequent" {
-			_, _ = s.Store.Pool.Exec(ctx, `UPDATE user_preferences SET
+	if reason == "too_frequent" {
+		if _, err = tx.Exec(ctx, `UPDATE user_preferences SET
 				dream_frequency=CASE dream_frequency WHEN 'daily' THEN 'three_week' WHEN 'three_week' THEN 'weekly' ELSE dream_frequency END,
 				dream_pause_until=CASE WHEN dream_frequency='weekly' THEN GREATEST(dream_pause_until,now()+interval '7 days') ELSE dream_pause_until END,
 				updated_at=now()
-				WHERE user_id=$1`, userID)
-		}
-		delta := 0.0
-		switch action {
-		case "edited", "connected":
-			delta = .08
-		case "expanded":
-			delta = .12
-		case "kept", "moved":
-			delta = .04
-		case "deleted", "hidden":
-			delta = -.12
-		}
-		if reason == "irrelevant" || reason == "incorrect" || reason == "repetitive" {
-			delta = -.18
-		}
-		if reason == "too_frequent" {
-			delta = 0
-		}
-		if delta != 0 {
-			_, _ = s.Store.Pool.Exec(ctx, `INSERT INTO dream_preferences(user_id,dream_type,score,sample_count) VALUES($1,$2,GREATEST(0,LEAST(1,.5+$3)),1) ON CONFLICT(user_id,dream_type) DO UPDATE SET score=GREATEST(0,LEAST(1,dream_preferences.score+$3)),sample_count=dream_preferences.sample_count+1,updated_at=now()`, userID, dreamType, delta)
+				WHERE user_id=$1`, userID); err != nil {
+			return err
 		}
 	}
-	return nil
+	delta := 0.0
+	switch action {
+	case "edited", "connected":
+		delta = .08
+	case "expanded":
+		delta = .12
+	case "kept", "moved":
+		delta = .04
+	case "deleted", "hidden":
+		delta = -.12
+	}
+	if reason == "irrelevant" || reason == "incorrect" || reason == "repetitive" {
+		delta = -.18
+	}
+	if reason == "too_frequent" {
+		delta = 0
+	}
+	if delta != 0 {
+		if _, err = tx.Exec(ctx, `INSERT INTO dream_preferences(user_id,dream_type,score,sample_count) VALUES($1,$2,GREATEST(0,LEAST(1,.5+$3)),1) ON CONFLICT(user_id,dream_type) DO UPDATE SET score=GREATEST(0,LEAST(1,dream_preferences.score+$3)),sample_count=dream_preferences.sample_count+1,updated_at=now()`, userID, dreamType, delta); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) preferredType(ctx context.Context, userID uuid.UUID) string {

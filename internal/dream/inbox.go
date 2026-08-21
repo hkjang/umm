@@ -97,10 +97,11 @@ func (s *Service) HistoryPage(ctx context.Context, userID uuid.UUID, limit, offs
 		       d.suggested_action,d.generation,d.dismissed_reason
 		FROM dream_notes d
 		JOIN spaces sp ON sp.id=d.space_id
-			LEFT JOIN notes n ON n.id=d.note_id
-			WHERE d.user_id=$1
-			ORDER BY d.generated_at DESC,d.dream_id DESC
-			LIMIT $2 OFFSET $3`, userID, limit+1, offset)
+		LEFT JOIN notes n ON n.id=d.note_id
+		WHERE d.user_id=$1
+		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
+		ORDER BY d.generated_at DESC,d.dream_id DESC
+		LIMIT $2 OFFSET $3`, userID, limit+1, offset)
 	if err != nil {
 		return nil, false, err
 	}
@@ -132,9 +133,14 @@ func (s *Service) HistoryPage(ctx context.Context, userID uuid.UUID, limit, offs
 	sourceRows, err := s.Store.Pool.Query(ctx, `
 		SELECT ds.dream_id,n.id,n.title,left(n.content,240),ds.rank,ds.similarity_score,ds.cited
 		FROM dream_sources ds
+		JOIN dream_notes d ON d.dream_id=ds.dream_id
+		JOIN spaces dream_space ON dream_space.id=d.space_id
 		JOIN notes n ON n.id=ds.source_note_id AND n.deleted_at IS NULL
-		WHERE ds.dream_id=ANY($1)
-		ORDER BY ds.dream_id,ds.cited DESC,ds.rank`, ids)
+		JOIN spaces source_space ON source_space.id=n.space_id
+		WHERE ds.dream_id=ANY($1) AND d.user_id=$2
+		  AND (dream_space.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=dream_space.id AND sm.user_id=$2))
+		  AND (source_space.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=source_space.id AND sm.user_id=$2))
+		ORDER BY ds.dream_id,ds.cited DESC,ds.rank`, ids, userID)
 	if err != nil {
 		return nil, false, err
 	}
@@ -162,7 +168,8 @@ func (s *Service) Dream(ctx context.Context, userID, dreamID uuid.UUID) (DreamVi
 		FROM dream_notes d
 		JOIN spaces sp ON sp.id=d.space_id
 		LEFT JOIN notes n ON n.id=d.note_id
-		WHERE d.user_id=$1 AND d.dream_id=$2`, userID, dreamID).
+		WHERE d.user_id=$1 AND d.dream_id=$2
+		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))`, userID, dreamID).
 		Scan(&view.DreamID, &view.Type, &view.GeneratedAt, &view.ExposedAt, &view.AcceptedAt,
 			&view.QualityScore, &view.Status, &view.NoteID, &view.SpaceID, &view.SpaceName,
 			&view.Content, &view.Rationale, &view.SuggestedAction, &view.Generation, &view.DismissedReason)
@@ -174,9 +181,14 @@ func (s *Service) Dream(ctx context.Context, userID, dreamID uuid.UUID) (DreamVi
 	rows, err := s.Store.Pool.Query(ctx, `
 		SELECT n.id,n.title,left(n.content,240),ds.rank,ds.similarity_score,ds.cited
 		FROM dream_sources ds
+		JOIN dream_notes d ON d.dream_id=ds.dream_id
+		JOIN spaces dream_space ON dream_space.id=d.space_id
 		JOIN notes n ON n.id=ds.source_note_id AND n.deleted_at IS NULL
-		WHERE ds.dream_id=$1
-		ORDER BY ds.cited DESC,ds.rank`, dreamID)
+		JOIN spaces source_space ON source_space.id=n.space_id
+		WHERE ds.dream_id=$1 AND d.user_id=$2
+		  AND (dream_space.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=dream_space.id AND sm.user_id=$2))
+		  AND (source_space.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=source_space.id AND sm.user_id=$2))
+		ORDER BY ds.cited DESC,ds.rank`, dreamID, userID)
 	if err != nil {
 		return DreamView{}, err
 	}
@@ -208,6 +220,13 @@ func (s *Service) Accept(ctx context.Context, userID, dreamID uuid.UUID, overrid
 	if err != nil {
 		return store.Note{}, err
 	}
+	canEdit, err := canEditSpaceTx(ctx, tx, userID, spaceID)
+	if err != nil {
+		return store.Note{}, err
+	}
+	if !canEdit {
+		return store.Note{}, errors.New("Dream을 붙일 공간의 편집 권한이 없습니다")
+	}
 	if status == "deleted" {
 		return store.Note{}, errors.New("숨긴 Dream은 채택할 수 없습니다")
 	}
@@ -220,13 +239,6 @@ func (s *Service) Accept(ctx context.Context, userID, dreamID uuid.UUID, overrid
 		}
 		_ = s.Feedback(ctx, userID, dreamID, "kept")
 		return s.noteByID(ctx, userID, *existingNoteID)
-	}
-	canEdit, err := canEditSpaceTx(ctx, tx, userID, spaceID)
-	if err != nil {
-		return store.Note{}, err
-	}
-	if !canEdit {
-		return store.Note{}, errors.New("Dream을 붙일 공간의 편집 권한이 없습니다")
 	}
 	if strings.TrimSpace(override) != "" {
 		content = strings.TrimSpace(override)
@@ -290,27 +302,37 @@ func (s *Service) Accept(ctx context.Context, userID, dreamID uuid.UUID, overrid
 	return note, nil
 }
 
-// canEditSpaceTx keeps the authorization decision on the transaction's
+// spacePermissionTx keeps the authorization decision on the transaction's
 // connection and holds the current membership permission stable until commit.
-func canEditSpaceTx(ctx context.Context, tx pgx.Tx, userID, spaceID uuid.UUID) (bool, error) {
+func spacePermissionTx(ctx context.Context, tx pgx.Tx, userID, spaceID uuid.UUID) (string, bool, error) {
 	var ownerID uuid.UUID
 	if err := tx.QueryRow(ctx, `SELECT owner_id FROM spaces WHERE id=$1 FOR KEY SHARE`, spaceID).Scan(&ownerID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return "", false, nil
 		}
-		return false, err
+		return "", false, err
 	}
 	if ownerID == userID {
-		return true, nil
+		return "manage", true, nil
 	}
 	var permission string
 	if err := tx.QueryRow(ctx, `SELECT permission FROM space_members WHERE space_id=$1 AND user_id=$2 FOR SHARE`, spaceID, userID).Scan(&permission); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, nil
+			return "", false, nil
 		}
-		return false, err
+		return "", false, err
 	}
-	return permission == "edit" || permission == "manage", nil
+	return permission, true, nil
+}
+
+func canAccessSpaceTx(ctx context.Context, tx pgx.Tx, userID, spaceID uuid.UUID) (bool, error) {
+	_, allowed, err := spacePermissionTx(ctx, tx, userID, spaceID)
+	return allowed, err
+}
+
+func canEditSpaceTx(ctx context.Context, tx pgx.Tx, userID, spaceID uuid.UUID) (bool, error) {
+	permission, allowed, err := spacePermissionTx(ctx, tx, userID, spaceID)
+	return allowed && (permission == "edit" || permission == "manage"), err
 }
 
 func (s *Service) noteByID(ctx context.Context, userID, noteID uuid.UUID) (store.Note, error) {
@@ -437,10 +459,14 @@ func (s *Service) Regenerate(ctx context.Context, userID, dreamID uuid.UUID) (Dr
 	rows, err := s.Store.Pool.Query(ctx, `
 		SELECT n.id,n.space_id,n.content,n.x,n.y,n.updated_at
 		FROM dream_sources ds
+		JOIN dream_notes d ON d.dream_id=ds.dream_id AND d.user_id=$2
+		JOIN spaces dream_space ON dream_space.id=d.space_id
 		JOIN notes n ON n.id=ds.source_note_id AND n.deleted_at IS NULL AND n.ai_excluded=false
 		JOIN spaces sp ON sp.id=n.space_id AND sp.ai_excluded=false
 		WHERE ds.dream_id=$1
-		ORDER BY ds.rank`, dreamID)
+		  AND (dream_space.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=dream_space.id AND sm.user_id=$2))
+		  AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2))
+		ORDER BY ds.rank`, dreamID, userID)
 	if err != nil {
 		return DreamView{}, err
 	}
@@ -451,7 +477,11 @@ func (s *Service) Regenerate(ctx context.Context, userID, dreamID uuid.UUID) (Dr
 			sources = append(sources, source)
 		}
 	}
+	rowsErr := rows.Err()
 	rows.Close()
+	if rowsErr != nil {
+		return DreamView{}, rowsErr
+	}
 	if len(sources) < 2 {
 		return DreamView{}, errors.New("Dream을 다시 만들 원본 생각이 부족합니다")
 	}
@@ -489,10 +519,32 @@ func (s *Service) Regenerate(ctx context.Context, userID, dreamID uuid.UUID) (Dr
 		return DreamView{}, err
 	}
 	defer tx.Rollback(ctx)
+	var lockedSpaceID uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT space_id FROM dream_notes
+		WHERE dream_id=$1 AND user_id=$2 AND note_id IS NULL AND status IN ('created','exposed')
+		FOR UPDATE`, dreamID, userID).Scan(&lockedSpaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DreamView{}, errors.New("Dream 상태가 변경되어 다시 생성하지 않았습니다")
+	}
+	if err != nil {
+		return DreamView{}, err
+	}
+	canAccess, err := canAccessSpaceTx(ctx, tx, userID, lockedSpaceID)
+	if err != nil {
+		return DreamView{}, err
+	}
+	if !canAccess {
+		return DreamView{}, errors.New("Dream 공간 접근권한이 변경되어 다시 생성하지 않았습니다")
+	}
 	cmd, err := tx.Exec(ctx, `
 		UPDATE dream_notes SET content=$3,dream_type=$4,rationale=$5,suggested_action=$6,
 		       quality_score=$7,generation=generation+1,model=$8,prompt_version=$9,status='created',exposed_at=NULL
-		WHERE dream_id=$1 AND user_id=$2 AND note_id IS NULL AND status IN ('created','exposed')`,
+		WHERE dream_id=$1 AND user_id=$2 AND note_id IS NULL AND status IN ('created','exposed')
+		  AND EXISTS(
+		    SELECT 1 FROM spaces sp
+		    WHERE sp.id=dream_notes.space_id
+		      AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2)))`,
 		dreamID, userID, output.Content, output.Type, output.Rationale, output.SuggestedAction, score, cfg.Model, gateway.PromptVersion)
 	if err != nil {
 		return DreamView{}, err
@@ -543,7 +595,10 @@ func (s *Service) Develop(ctx context.Context, userID, dreamID uuid.UUID, mode s
 		JOIN dream_notes d ON d.dream_id=ds.dream_id AND d.user_id=$2
 		JOIN notes n ON n.id=ds.source_note_id AND n.deleted_at IS NULL AND n.ai_excluded=false
 		JOIN spaces sp ON sp.id=n.space_id AND sp.ai_excluded=false
+		JOIN spaces dream_space ON dream_space.id=d.space_id
 		WHERE ds.dream_id=$1 AND ds.cited=true
+		  AND (dream_space.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=dream_space.id AND sm.user_id=$2))
+		  AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2))
 		ORDER BY ds.rank`, dreamID, userID)
 	if err != nil {
 		return AssistResult{}, err

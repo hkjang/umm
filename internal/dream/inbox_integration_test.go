@@ -154,6 +154,100 @@ func TestDreamEditPermissionLockSerializesDowngradeIntegration(t *testing.T) {
 	}
 }
 
+func TestRevokedSpaceDreamsAreHiddenAndImmutableIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ownerID, memberID, spaceID := uuid.New(), uuid.New(), uuid.New()
+	sourceID, dreamID := uuid.New(), uuid.New()
+	ownerName, memberName := "revoked_dream_owner_"+ownerID.String(), "revoked_dream_member_"+memberID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, []any{ownerID, ownerName, memberID, memberName}},
+		{`INSERT INTO user_preferences(user_id) VALUES($1)`, []any{memberID}},
+		{`INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'revoked Dream space')`, []any{spaceID, ownerID}},
+		{`INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'edit')`, []any{spaceID, memberID}},
+		{`INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'revoked source body')`, []any{sourceID, spaceID, memberID}},
+		{`INSERT INTO dream_notes(dream_id,user_id,space_id,dream_type,content,rationale,suggested_action,source_note_count)
+		  VALUES($1,$2,$3,'connection','revoked derived body','private rationale','private action',1)`, []any{dreamID, memberID, spaceID}},
+		{`INSERT INTO dream_sources(dream_id,source_note_id,similarity_score,rank,cited) VALUES($1,$2,.9,1,true)`, []any{dreamID, sourceID}},
+	}
+	for _, statement := range statements {
+		if _, err = tx.Exec(ctx, statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, memberID)
+
+	service := &Service{Store: db}
+	views, hasMore, err := service.HistoryPage(ctx, memberID, 30, 0)
+	if err != nil || hasMore || len(views) != 1 || views[0].DreamID != dreamID || len(views[0].Sources) != 1 {
+		t.Fatalf("authorized Dream was not readable before revocation: views=%#v hasMore=%v err=%v", views, hasMore, err)
+	}
+	if view, readErr := service.Dream(ctx, memberID, dreamID); readErr != nil || view.Content != "revoked derived body" || len(view.Sources) != 1 {
+		t.Fatalf("authorized Dream detail mismatch: view=%#v err=%v", view, readErr)
+	}
+	if _, err = db.Pool.Exec(ctx, `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+
+	views, hasMore, err = service.HistoryPage(ctx, memberID, 30, 0)
+	if err != nil || hasMore || len(views) != 0 {
+		t.Fatalf("revoked Dream remained in history: views=%#v hasMore=%v err=%v", views, hasMore, err)
+	}
+	if _, err = service.Dream(ctx, memberID, dreamID); err == nil {
+		t.Fatal("revoked Dream detail remained readable")
+	}
+	if err = service.FeedbackWithReason(ctx, memberID, dreamID, "hidden", "irrelevant"); err == nil {
+		t.Fatal("revoked Dream feedback was accepted")
+	}
+	if _, err = service.Accept(ctx, memberID, dreamID, ""); err == nil {
+		t.Fatal("revoked Dream acceptance was allowed")
+	}
+	if _, err = service.Regenerate(ctx, memberID, dreamID); err == nil {
+		t.Fatal("revoked Dream regeneration was allowed")
+	}
+	if _, err = service.Develop(ctx, memberID, dreamID, "expand"); err == nil {
+		t.Fatal("revoked Dream development was allowed")
+	}
+
+	var status string
+	var feedback, notes int
+	if err = db.Pool.QueryRow(ctx, `SELECT status FROM dream_notes WHERE dream_id=$1`, dreamID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM dream_feedback WHERE dream_id=$1`, dreamID).Scan(&feedback); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM notes WHERE space_id=$1 AND deleted_at IS NULL`, spaceID).Scan(&notes); err != nil {
+		t.Fatal(err)
+	}
+	if status != "created" || feedback != 0 || notes != 1 {
+		t.Fatalf("revoked Dream mutation changed state: status=%q feedback=%d notes=%d", status, feedback, notes)
+	}
+}
+
 func TestDreamInboxAcceptanceIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {

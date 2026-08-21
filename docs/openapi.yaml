@@ -90,7 +90,7 @@ paths:
       operationId: get_today
       tags: [Review]
       summary: Get the daily review dashboard
-      description: Returns due thoughts, unconnected thoughts, recent collaboration activity and onboarding progress. Pending Dreams are included only when the caller also has dreams:read; otherwise dreams is an empty array and its count is zero.
+      description: Returns due thoughts, unconnected thoughts, recent collaboration activity and onboarding progress. Pending Dreams require dreams:read and current owner/member access to their space; otherwise they are omitted and the count reflects only accessible Dreams.
       x-required-scope: notes:read
       responses:
         '200': { description: Daily review, content: { application/json: { schema: { $ref: '#/components/schemas/TodayReview' } } } }
@@ -590,7 +590,7 @@ paths:
     get:
       operationId: get_dreams
       tags: [Dream]
-      summary: List the personal Dream inbox with sources and review status
+      summary: List personal Dreams whose spaces the caller can currently access, with authorized sources and review status
       x-required-scope: dreams:read
       parameters:
         - { $ref: '#/components/parameters/Cursor' }
@@ -602,7 +602,7 @@ paths:
     post:
       operationId: post_dreams_dreamId_feedback
       tags: [Dream]
-      summary: Record idempotent Dream feedback and an optional rejection reason
+      summary: Record idempotent Dream feedback under a transaction-locked current space membership
       x-required-scope: dreams:read
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [action], properties: { action: { type: string, enum: [exposed, kept, edited, connected, expanded, moved, deleted, hidden, regenerated] }, reason: { type: string, enum: [too_obvious, irrelevant, incorrect, repetitive, too_frequent] } } } } } }
       responses: { '200': { description: Feedback recorded } }

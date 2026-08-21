@@ -21,12 +21,16 @@ func TestCipherRoundTripAndTamper(t *testing.T) {
 	if err != nil || plain != "client-secret" {
 		t.Fatalf("round trip failed: %q %v", plain, err)
 	}
-	last := sealed[len(sealed)-1]
-	replacement := byte('A')
-	if last == 'A' {
-		replacement = 'B'
+	parts := strings.SplitN(sealed, ".", 3)
+	if len(parts) != 3 {
+		t.Fatalf("unexpected ciphertext format: %q", sealed)
 	}
-	if _, err = c.Decrypt(sealed[:len(sealed)-1] + string(replacement)); err == nil {
+	tampered, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered[len(tampered)-1] ^= 1
+	if _, err = c.Decrypt(parts[0] + "." + parts[1] + "." + base64.RawURLEncoding.EncodeToString(tampered)); err == nil {
 		t.Fatal("tampered ciphertext must fail")
 	}
 }

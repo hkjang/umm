@@ -670,6 +670,74 @@ func TestContentQueriesRejectRevokedMemberIntegration(t *testing.T) {
 	}
 }
 
+func TestTodayReviewHidesDreamsAfterSpaceAccessIsRevokedIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db := isolatedStore(t, dsn)
+
+	ownerID, memberID := uuid.New(), uuid.New()
+	sharedSpaceID, ownSpaceID := uuid.New(), uuid.New()
+	sharedNoteID := uuid.New()
+	revokedDreamID, ownDreamID := uuid.New(), uuid.New()
+	ownerName, memberName := "today_dream_owner_"+ownerID.String(), "today_dream_member_"+memberID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, []any{ownerID, ownerName, memberID, memberName}},
+		{`INSERT INTO user_preferences(user_id) VALUES($1)`, []any{memberID}},
+		{`INSERT INTO spaces(id,owner_id,name) VALUES($1,$3,'revoked dream space'),($2,$4,'member own space')`, []any{sharedSpaceID, ownSpaceID, ownerID, memberID}},
+		{`INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'edit')`, []any{sharedSpaceID, memberID}},
+		{`INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'revoked source content')`, []any{sharedNoteID, sharedSpaceID, memberID}},
+		{`INSERT INTO dream_notes(dream_id,user_id,space_id,dream_type,content,rationale,suggested_action)
+		  VALUES($1,$3,$4,'connection','revoked derived content','revoked rationale','revoked action'),
+		        ($2,$3,$5,'question','owned derived content','owned rationale','owned action')`, []any{revokedDreamID, ownDreamID, memberID, sharedSpaceID, ownSpaceID}},
+		{`INSERT INTO dream_sources(dream_id,source_note_id,similarity_score,rank) VALUES($1,$2,.9,1)`, []any{revokedDreamID, sharedNoteID}},
+	}
+	for _, statement := range statements {
+		if _, err = tx.Exec(ctx, statement.query, statement.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := db.TodayReview(ctx, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Dreams) != 2 || before.Counts["dreams"] != 2 {
+		t.Fatalf("authorized dreams were not returned before revocation: %#v", before.Dreams)
+	}
+	if _, err = db.Pool.Exec(ctx, `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, sharedSpaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := db.TodayReview(ctx, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Dreams) != 1 || after.Dreams[0].ID != ownDreamID || after.Dreams[0].Content != "owned derived content" || after.Counts["dreams"] != 1 {
+		t.Fatalf("revoked Dream leaked or owned Dream disappeared: dreams=%#v counts=%#v", after.Dreams, after.Counts)
+	}
+	var retained bool
+	if err = db.Pool.QueryRow(ctx, `SELECT status='created' FROM dream_notes WHERE dream_id=$1`, revokedDreamID).Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
+	if !retained {
+		t.Fatal("Today filtering mutated the revoked Dream instead of hiding it")
+	}
+}
+
 func TestTodayReviewExcludesActivityFromDeletedNotesIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
