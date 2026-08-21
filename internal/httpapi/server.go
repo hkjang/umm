@@ -266,7 +266,13 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 }
 
 func (s *Server) prometheusMetrics(w http.ResponseWriter, r *http.Request) {
-	if !requireScope(w, r, "metrics:read") {
+	p := principal(r)
+	allowed := p.AuthType == "session" && p.User.Role == "admin"
+	if p.AuthType == "api_key" {
+		allowed = p.Scopes["metrics:read"]
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "운영 지표는 관리자 세션 또는 metrics:read API 키로만 조회할 수 있습니다.")
 		return
 	}
 	if s.Metrics == nil {

@@ -100,7 +100,7 @@ CI는 `scripts/restore-smoke.sh`로 PostgreSQL custom-format dump를 별도 `umm
 
 ## 관측성과 자동화
 
-- `/api/v1/metrics`는 `metrics:read` scope 또는 관리자 세션으로 Prometheus request count, latency histogram, in-flight, build 정보를 제공합니다.
+- `/api/v1/metrics`는 관리자 브라우저 세션 또는 명시적인 `metrics:read` API 키로만 Prometheus request count, latency histogram, in-flight, build 정보를 제공합니다. 일반 사용자 세션의 내부 wildcard와 관리자가 발급한 다른 scope의 키는 허용되지 않습니다.
 - 실시간 협업 상태는 `umm_realtime_subscribers`, `umm_realtime_spaces`, `umm_realtime_signals_total`, `umm_realtime_listener_up`으로 노출됩니다. `umm_realtime_listener_up`이 0이면 PostgreSQL `LISTEN` 연결이 끊긴 상태이며 SSE가 상태 전환 즉시 1초 폴백 폴링으로 동작 중이라는 뜻입니다 — 협업은 계속되지만 데이터베이스 부하가 올라가므로 알림을 걸어 두세요. 같은 값은 관리자 → 운영 현황에서도 볼 수 있습니다.
 - 만료된 세션·OAuth state·재시도 기록·로그인 실패 기록·AI 쿼터 예약은 15분마다 자동 정리됩니다. 별도 cron이 필요하지 않습니다.
 - 표준 `OTEL_EXPORTER_OTLP_ENDPOINT` 또는 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`가 있을 때만 OTLP HTTP trace exporter가 활성화됩니다.

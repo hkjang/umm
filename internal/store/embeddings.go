@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/intelligence"
+	"github.com/jackc/pgx/v5"
 )
 
 // embeddingSettingsTTL keeps the ai_gateway lookup off the hot path. Thirty
@@ -62,22 +63,8 @@ func (s *Store) EmbeddingProvider(ctx context.Context) intelligence.Provider {
 	}
 	provider := intelligence.Provider{}
 	var settings embeddingSettings
-	if s.GetSetting(ctx, "ai_gateway", &settings) == nil &&
-		strings.TrimSpace(settings.EmbeddingModel) != "" && strings.TrimSpace(settings.BaseURL) != "" {
-		key := settings.APIKey
-		if s.Cipher != nil && strings.HasPrefix(key, "enc:") {
-			if plain, err := s.Cipher.Decrypt(strings.TrimPrefix(key, "enc:")); err == nil {
-				key = plain
-			}
-		}
-		timeout := time.Duration(settings.TimeoutSeconds) * time.Second
-		if settings.TimeoutSeconds <= 0 {
-			timeout = 45 * time.Second
-		}
-		provider.Remote = &intelligence.RemoteConfig{
-			BaseURL: settings.BaseURL, APIKey: key,
-			Model: strings.TrimSpace(settings.EmbeddingModel), Timeout: timeout, SettingsManaged: true,
-		}
+	if s.GetSetting(ctx, "ai_gateway", &settings) == nil {
+		provider = s.embeddingProviderFromSettings(settings)
 	}
 	if !sameEmbeddingProvider(s.embeddings.provider, provider) {
 		s.embeddings.remoteRetryAt = time.Time{}
@@ -85,6 +72,26 @@ func (s *Store) EmbeddingProvider(ctx context.Context) intelligence.Provider {
 	s.embeddings.provider = provider
 	s.embeddings.loadedAt = now
 	return availableEmbeddingProvider(provider, now, s.embeddings.remoteRetryAt)
+}
+
+func (s *Store) embeddingProviderFromSettings(settings embeddingSettings) intelligence.Provider {
+	if strings.TrimSpace(settings.EmbeddingModel) == "" || strings.TrimSpace(settings.BaseURL) == "" {
+		return intelligence.Provider{}
+	}
+	key := settings.APIKey
+	if s.Cipher != nil && strings.HasPrefix(key, "enc:") {
+		if plain, err := s.Cipher.Decrypt(strings.TrimPrefix(key, "enc:")); err == nil {
+			key = plain
+		}
+	}
+	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
+	if settings.TimeoutSeconds <= 0 {
+		timeout = 45 * time.Second
+	}
+	return intelligence.Provider{Remote: &intelligence.RemoteConfig{
+		BaseURL: settings.BaseURL, APIKey: key,
+		Model: strings.TrimSpace(settings.EmbeddingModel), Timeout: timeout, SettingsManaged: true,
+	}}
 }
 
 func availableEmbeddingProvider(provider intelligence.Provider, now, remoteRetryAt time.Time) intelligence.Provider {
@@ -134,14 +141,145 @@ type embeddingTarget struct {
 	Version int
 }
 
+// embeddingPolicyLease keeps the policy rows that authorized a remote
+// embedding request stable until the external call and vector persistence have
+// both finished. It uses the bounded AI lease capacity rather than occupying a
+// request-pool connection for a potentially slow gateway.
+type embeddingPolicyLease struct {
+	tx      pgx.Tx
+	release func()
+}
+
+func (lease *embeddingPolicyLease) rollback() {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_ = lease.tx.Rollback(rollbackCtx)
+	cancel()
+	lease.release()
+}
+
+func (s *Store) beginEmbeddingPolicyLease(ctx context.Context, origin intelligence.Provider) (*embeddingPolicyLease, error) {
+	tx, release, err := s.BeginAILease(ctx)
+	if err != nil {
+		return nil, err
+	}
+	lease := &embeddingPolicyLease{tx: tx, release: release}
+	if err = s.requireCurrentEmbeddingProviderTx(ctx, tx, origin); err != nil {
+		lease.rollback()
+		return nil, err
+	}
+	return lease, nil
+}
+
+// beginEmbeddingNotesLease performs the final note/space exclusion check and
+// holds SHARE locks through dispatch. An exclusion that commits first selects
+// the local provider; when the lease wins, the policy update waits until no
+// captured note body can still be sent to the old policy's gateway.
+func (s *Store) beginEmbeddingNotesLease(ctx context.Context, targets []embeddingTarget, origin intelligence.Provider) (*embeddingPolicyLease, bool, error) {
+	lease, err := s.beginEmbeddingPolicyLease(ctx, origin)
+	if err != nil {
+		return nil, false, err
+	}
+	ids := make([]uuid.UUID, 0, len(targets))
+	expected := make(map[uuid.UUID]struct{}, len(targets))
+	for _, target := range targets {
+		if _, exists := expected[target.ID]; exists {
+			continue
+		}
+		expected[target.ID] = struct{}{}
+		ids = append(ids, target.ID)
+	}
+	rows, err := lease.tx.Query(ctx, `
+		SELECT n.id,n.ai_excluded,sp.ai_excluded
+		FROM notes n
+		JOIN spaces sp ON sp.id=n.space_id
+		WHERE n.id=ANY($1) AND n.deleted_at IS NULL
+		ORDER BY sp.id,n.id
+		FOR SHARE OF sp,n`, ids)
+	if err != nil {
+		lease.rollback()
+		return nil, false, err
+	}
+	found := make(map[uuid.UUID]struct{}, len(expected))
+	allowed := true
+	for rows.Next() {
+		var id uuid.UUID
+		var noteExcluded, spaceExcluded bool
+		if err = rows.Scan(&id, &noteExcluded, &spaceExcluded); err != nil {
+			rows.Close()
+			lease.rollback()
+			return nil, false, err
+		}
+		found[id] = struct{}{}
+		if noteExcluded || spaceExcluded {
+			allowed = false
+		}
+	}
+	rowsErr := rows.Err()
+	rows.Close()
+	if rowsErr != nil {
+		lease.rollback()
+		return nil, false, rowsErr
+	}
+	if len(found) != len(expected) {
+		allowed = false
+	}
+	if !allowed {
+		lease.rollback()
+		return nil, false, nil
+	}
+	return lease, true, nil
+}
+
+// beginEmbeddingSearchLease keeps both the configured destination and a
+// scoped space's exclusion/access decision stable until the query text has
+// left (or failed to leave) the process.
+func (s *Store) beginEmbeddingSearchLease(ctx context.Context, userID uuid.UUID, spaceID *uuid.UUID, origin intelligence.Provider) (*embeddingPolicyLease, bool, error) {
+	lease, err := s.beginEmbeddingPolicyLease(ctx, origin)
+	if err != nil {
+		return nil, false, err
+	}
+	if spaceID == nil {
+		return lease, true, nil
+	}
+	var ownerID uuid.UUID
+	var excluded bool
+	if err = lease.tx.QueryRow(ctx, `SELECT owner_id,ai_excluded FROM spaces WHERE id=$1 FOR SHARE`, *spaceID).Scan(&ownerID, &excluded); err != nil {
+		lease.rollback()
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if excluded {
+		lease.rollback()
+		return nil, false, nil
+	}
+	if ownerID == userID {
+		return lease, true, nil
+	}
+	var memberID uuid.UUID
+	if err = lease.tx.QueryRow(ctx, `SELECT user_id FROM space_members WHERE space_id=$1 AND user_id=$2 FOR SHARE`, *spaceID, userID).Scan(&memberID); err != nil {
+		lease.rollback()
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if memberID != userID {
+		lease.rollback()
+		return nil, false, nil
+	}
+	return lease, true, nil
+}
+
 // UpsertEmbedding refreshes a single note's vector after a write.
 func (s *Store) UpsertEmbedding(ctx context.Context, noteID uuid.UUID, content string, version int) error {
 	provider, err := s.embeddingProviderForNote(ctx, noteID)
 	if err != nil {
 		return err
 	}
-	algorithm, err := s.writeEmbeddingsWithProvider(ctx, []embeddingTarget{{ID: noteID, Content: content, Version: version}}, provider)
-	if err == nil && provider.Algorithm() != intelligence.LocalAlgorithm && algorithm == intelligence.LocalAlgorithm {
+	_, remoteFailed, err := s.writeEmbeddingsWithProvider(ctx, []embeddingTarget{{ID: noteID, Content: content, Version: version}}, provider)
+	if err == nil && remoteFailed {
 		s.deferRemoteEmbeddings(provider)
 	}
 	return err
@@ -238,11 +376,11 @@ func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
 		}
 		stale = append(stale, embeddingTarget{ID: n.ID, Content: n.Content, Version: n.Version})
 	}
-	actualAlgorithm, writeErr := s.writeEmbeddingsWithProvider(ctx, stale, provider)
+	_, remoteFailed, writeErr := s.writeEmbeddingsWithProvider(ctx, stale, provider)
 	if writeErr != nil {
 		return
 	}
-	if algorithm != intelligence.LocalAlgorithm && actualAlgorithm == intelligence.LocalAlgorithm {
+	if remoteFailed {
 		s.deferRemoteEmbeddings(provider)
 		// A gateway outage can leave older notes with remote vectors and newer
 		// notes with local fallbacks. Rewrite the whole comparison set locally so
@@ -251,11 +389,11 @@ func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
 		for index, note := range notes {
 			all[index] = embeddingTarget{ID: note.ID, Content: note.Content, Version: note.Version}
 		}
-		_, _ = s.writeEmbeddings(ctx, all, intelligence.Provider{}, provider)
+		_, _, _ = s.writeEmbeddings(ctx, all, intelligence.Provider{}, provider)
 	}
 }
 
-func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embeddingTarget, provider intelligence.Provider) (string, error) {
+func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embeddingTarget, provider intelligence.Provider) (string, bool, error) {
 	return s.writeEmbeddings(ctx, targets, provider, provider)
 }
 
@@ -264,32 +402,77 @@ func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embed
 // outage-wide local normalization pass uses a local active provider with its
 // original remote provider as origin, so an intervening gateway change fences
 // the rewrite just like the first fallback batch.
-func (s *Store) writeEmbeddings(ctx context.Context, targets []embeddingTarget, provider, origin intelligence.Provider) (string, error) {
+func (s *Store) writeEmbeddings(ctx context.Context, targets []embeddingTarget, provider, origin intelligence.Provider) (string, bool, error) {
 	if len(targets) == 0 {
-		return provider.Algorithm(), nil
+		return provider.Algorithm(), false, nil
 	}
 	actualAlgorithm := provider.Algorithm()
 	activeProvider := provider
+	persistenceOrigin := origin
+	remoteFailed := false
+	if provider.Algorithm() != intelligence.LocalAlgorithm {
+		lease, allowed, err := s.beginEmbeddingNotesLease(ctx, targets, origin)
+		if err != nil {
+			return actualAlgorithm, false, err
+		}
+		if allowed {
+			defer lease.rollback()
+		} else {
+			// Exclusion that committed before the final lease wins. Local vectors
+			// remain useful, but the remote circuit breaker must not be opened for
+			// a deliberate policy fallback.
+			activeProvider = intelligence.Provider{}
+			persistenceOrigin = intelligence.Provider{}
+			actualAlgorithm = intelligence.LocalAlgorithm
+		}
+	}
 	for start := 0; start < len(targets); start += embeddingBatchSize {
 		batch := targets[start:min(start+embeddingBatchSize, len(targets))]
 		texts := make([]string, len(batch))
 		for i, target := range batch {
 			texts[i] = target.Content
 		}
-		vectors, algorithm := activeProvider.Embed(ctx, texts)
-		model := activeProvider.Model()
+		requestedProvider := activeProvider
+		vectors, algorithm := requestedProvider.Embed(ctx, texts)
+		model := requestedProvider.Model()
 		if algorithm == intelligence.LocalAlgorithm {
 			actualAlgorithm = intelligence.LocalAlgorithm
 			model = ""
+			if requestedProvider.Algorithm() != intelligence.LocalAlgorithm {
+				remoteFailed = true
+			}
 			// One failed remote batch is enough evidence for this write. Finish
 			// the remaining batches locally instead of repeating the full timeout.
 			activeProvider = intelligence.Provider{}
 		}
-		if err := s.persistEmbeddingBatch(ctx, batch, vectors, algorithm, model, origin); err != nil {
-			return actualAlgorithm, err
+		if err := s.persistEmbeddingBatch(ctx, batch, vectors, algorithm, model, persistenceOrigin); err != nil {
+			return actualAlgorithm, remoteFailed, err
 		}
 	}
-	return actualAlgorithm, nil
+	return actualAlgorithm, remoteFailed, nil
+}
+
+// requireCurrentEmbeddingProviderTx locks the settings generation that selected
+// a managed remote provider and rejects work captured under an older vector
+// space before it can be dispatched or persisted.
+func (s *Store) requireCurrentEmbeddingProviderTx(ctx context.Context, tx pgx.Tx, origin intelligence.Provider) error {
+	if origin.Remote == nil || !origin.Remote.SettingsManaged {
+		return nil
+	}
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT value FROM app_settings WHERE key='ai_gateway' FOR SHARE`).Scan(&raw); err != nil {
+		return err
+	}
+	var settings embeddingSettings
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return err
+	}
+	current := s.embeddingProviderFromSettings(settings)
+	if !sameEmbeddingProvider(current, origin) {
+		s.InvalidateEmbeddingProvider()
+		return errEmbeddingProviderChanged
+	}
+	return nil
 }
 
 // persistEmbeddingBatch fences remote results against the current settings row.
@@ -302,23 +485,8 @@ func (s *Store) persistEmbeddingBatch(ctx context.Context, batch []embeddingTarg
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if origin.Remote != nil && origin.Remote.SettingsManaged {
-		var raw []byte
-		if err = tx.QueryRow(ctx, `SELECT value FROM app_settings WHERE key='ai_gateway' FOR SHARE`).Scan(&raw); err != nil {
-			return err
-		}
-		var settings embeddingSettings
-		if err = json.Unmarshal(raw, &settings); err != nil {
-			return err
-		}
-		current := intelligence.Provider{}
-		if strings.TrimSpace(settings.BaseURL) != "" && strings.TrimSpace(settings.EmbeddingModel) != "" {
-			current.Remote = &intelligence.RemoteConfig{BaseURL: settings.BaseURL, Model: strings.TrimSpace(settings.EmbeddingModel)}
-		}
-		if current.Algorithm() != origin.Algorithm() {
-			s.InvalidateEmbeddingProvider()
-			return errEmbeddingProviderChanged
-		}
+	if err = s.requireCurrentEmbeddingProviderTx(ctx, tx, origin); err != nil {
+		return err
 	}
 	for i, target := range batch {
 		// A newer content version always wins. At the same version, a current
@@ -392,7 +560,26 @@ func (s *Store) loadEmbeddings(ctx context.Context, notes []Note) map[uuid.UUID]
 // returned label rather than the provider's configured label when selecting
 // stored vectors.
 func (s *Store) EmbedQuery(ctx context.Context, query string) ([]float32, string) {
-	return s.embedQueryWithProvider(ctx, query, s.EmbeddingProvider(ctx))
+	provider := s.EmbeddingProvider(ctx)
+	return s.embedQueryWithPolicy(ctx, uuid.Nil, nil, query, provider)
+}
+
+func (s *Store) embedQueryWithPolicy(ctx context.Context, userID uuid.UUID, spaceID *uuid.UUID, query string, provider intelligence.Provider) ([]float32, string) {
+	if provider.Algorithm() == intelligence.LocalAlgorithm {
+		return s.embedQueryWithProvider(ctx, query, provider)
+	}
+	// An unmanaged provider exists only in tests or specialized embedding
+	// callers. A scoped search still needs its space policy lease; a global one
+	// has no database-managed destination or exclusion row to fence.
+	if provider.Remote != nil && !provider.Remote.SettingsManaged && spaceID == nil {
+		return s.embedQueryWithProvider(ctx, query, provider)
+	}
+	lease, allowed, err := s.beginEmbeddingSearchLease(ctx, userID, spaceID, provider)
+	if err != nil || !allowed {
+		return s.embedQueryWithProvider(ctx, query, intelligence.Provider{})
+	}
+	defer lease.rollback()
+	return s.embedQueryWithProvider(ctx, query, provider)
 }
 
 func (s *Store) embedQueryWithProvider(ctx context.Context, query string, provider intelligence.Provider) ([]float32, string) {

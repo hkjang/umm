@@ -82,9 +82,11 @@ paths:
       operationId: get_metrics
       tags: [Observability]
       summary: Export Prometheus request and build metrics
+      description: Requires an administrator browser session or an API key with the explicit metrics:read scope. A regular browser session and an administrator-owned key without that scope are denied.
       x-required-scope: metrics:read
       responses:
         '200': { description: Prometheus text exposition, content: { text/plain: { schema: { type: string } } } }
+        '403': { description: Administrator session or dedicated metrics scope required }
   /today:
     get:
       operationId: get_today
