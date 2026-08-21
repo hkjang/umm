@@ -170,7 +170,7 @@ paths:
       x-required-scope: notes:write
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 200 }, aiExcluded: { type: boolean, description: Exclude every note in this space from AI processing } } } } }
+        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 200 }, aiExcluded: { type: boolean, description: Exclude every note in this space from AI processing and remote embedding gateways } } } } }
       responses:
         '200': { description: Space updated, content: { application/json: { schema: { $ref: '#/components/schemas/Space' } } } }
     delete:
@@ -826,7 +826,7 @@ components:
     Space:
       type: object
       required: [id, ownerId, name, color, aiExcluded]
-      properties: { id: { type: string, format: uuid }, ownerId: { type: string, format: uuid }, name: { type: string }, color: { type: string }, aiExcluded: { type: boolean, description: Exclude every note in this space from AI processing } }
+      properties: { id: { type: string, format: uuid }, ownerId: { type: string, format: uuid }, name: { type: string }, color: { type: string }, aiExcluded: { type: boolean, description: Exclude every note in this space from AI processing and remote embedding gateways } }
     DreamSource:
       type: object
       required: [noteId, title, excerpt, rank, similarityScore, cited]
@@ -866,7 +866,7 @@ components:
         title: { type: string }
         color: { type: string, enum: [yellow, blue, purple, green, red, gray, lavender] }
         kind: { type: string }
-        aiExcluded: { type: boolean, description: Exclude this note from AI processing }
+        aiExcluded: { type: boolean, description: Exclude this note from AI processing and remote embedding gateways }
         x: { type: number }
         y: { type: number }
         width: { type: number, minimum: 120 }

@@ -833,7 +833,6 @@ func TestLoadEmbeddingsUsesOneFallbackVectorSpaceIntegration(t *testing.T) {
 	db.embeddings.loadedAt = time.Now()
 
 	userID, spaceID := uuid.New(), uuid.New()
-	firstID, secondID := uuid.New(), uuid.New()
 	username := "fallback_load_" + userID.String()
 	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
 		t.Fatal(err)
@@ -842,21 +841,31 @@ func TestLoadEmbeddingsUsesOneFallbackVectorSpaceIntegration(t *testing.T) {
 	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'fallback load')`, spaceID, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Pool.Exec(ctx, `
-		INSERT INTO notes(id,space_id,author_id,content) VALUES
-		($1,$2,$3,'first fallback note'),($4,$2,$3,'second fallback note')`, firstID, spaceID, userID, secondID); err != nil {
+	noteIDs := make([]uuid.UUID, embeddingBatchSize+2)
+	notes := make([]Note, len(noteIDs))
+	batch := &pgx.Batch{}
+	for index := range noteIDs {
+		noteIDs[index] = uuid.New()
+		content := "fallback note " + noteIDs[index].String()
+		notes[index] = Note{ID: noteIDs[index], SpaceID: spaceID, Content: content, Version: 1}
+		batch.Queue(`INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,$4)`, noteIDs[index], spaceID, userID, content)
+	}
+	results := db.Pool.SendBatch(ctx, batch)
+	for range noteIDs {
+		if _, err = results.Exec(); err != nil {
+			_ = results.Close()
+			t.Fatal(err)
+		}
+	}
+	if err = results.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = db.Pool.Exec(ctx, `
 		INSERT INTO note_embeddings(note_id,algorithm,model,dimensions,vector,content_version)
-		VALUES($1,'gateway:remote-model','remote-model',2,$2,1)`, firstID, []float32{1, 0}); err != nil {
+		VALUES($1,'gateway:remote-model','remote-model',2,$2,1)`, noteIDs[0], []float32{1, 0}); err != nil {
 		t.Fatal(err)
 	}
 
-	notes := []Note{
-		{ID: firstID, Content: "first fallback note", Version: 1},
-		{ID: secondID, Content: "second fallback note", Version: 1},
-	}
 	db.ensureEmbeddings(ctx, notes)
 	db.ensureEmbeddings(ctx, notes)
 	if calls := gatewayCalls.Load(); calls != 1 {
@@ -870,16 +879,89 @@ func TestLoadEmbeddingsUsesOneFallbackVectorSpaceIntegration(t *testing.T) {
 		t.Fatalf("gateway was not retried once after the fallback window: %d calls", calls)
 	}
 	vectors := db.loadEmbeddings(ctx, notes)
-	if len(vectors) != 2 || len(vectors[firstID]) != intelligence.Dimensions || len(vectors[secondID]) != intelligence.Dimensions {
+	if len(vectors) != len(notes) || len(vectors[noteIDs[0]]) != intelligence.Dimensions || len(vectors[noteIDs[len(noteIDs)-1]]) != intelligence.Dimensions {
 		t.Fatalf("outage fallback omitted vectors: %#v", vectors)
 	}
 	var localRows, algorithms int
 	if err = db.Pool.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE algorithm=$2),count(DISTINCT algorithm)
-		FROM note_embeddings WHERE note_id=ANY($1)`, []uuid.UUID{firstID, secondID}, intelligence.LocalAlgorithm).Scan(&localRows, &algorithms); err != nil {
+		FROM note_embeddings WHERE note_id=ANY($1)`, noteIDs, intelligence.LocalAlgorithm).Scan(&localRows, &algorithms); err != nil {
 		t.Fatal(err)
 	}
-	if localRows != 2 || algorithms != 1 {
+	if localRows != len(notes) || algorithms != 1 {
 		t.Fatalf("fallback comparison set was not normalized locally: local=%d algorithms=%d", localRows, algorithms)
+	}
+}
+
+func TestAIExcludedNotesNeverReachRemoteEmbeddingGatewayIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var gatewayCalls atomic.Int64
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		gatewayCalls.Add(1)
+		http.Error(w, "excluded content reached gateway", http.StatusInternalServerError)
+	}))
+	defer gateway.Close()
+	db.embeddings.provider = intelligence.Provider{Remote: &intelligence.RemoteConfig{
+		BaseURL: gateway.URL,
+		Model:   "remote-model",
+		Timeout: time.Second,
+	}}
+	db.embeddings.loadedAt = time.Now()
+
+	userID := uuid.New()
+	spaceExcludedID, mixedSpaceID := uuid.New(), uuid.New()
+	spaceNoteID, privateNoteID, publicNoteID := uuid.New(), uuid.New(), uuid.New()
+	username := "embedding_privacy_" + userID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO spaces(id,owner_id,name,ai_excluded) VALUES
+		($1,$3,'excluded space',true),($2,$3,'mixed space',false)`, spaceExcludedID, mixedSpaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO notes(id,space_id,author_id,content,ai_excluded) VALUES
+		($1,$4,$6,'space private secret',false),
+		($2,$5,$6,'note private secret',true),
+		($3,$5,$6,'ordinary thought',false)`, spaceNoteID, privateNoteID, publicNoteID, spaceExcludedID, mixedSpaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = db.UpsertEmbedding(ctx, spaceNoteID, "space private secret", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.UpsertEmbedding(ctx, privateNoteID, "note private secret", 1); err != nil {
+		t.Fatal(err)
+	}
+	db.ensureEmbeddings(ctx, []Note{
+		{ID: privateNoteID, SpaceID: mixedSpaceID, Content: "note private secret", AIExcluded: true, Version: 1},
+		{ID: publicNoteID, SpaceID: mixedSpaceID, Content: "ordinary thought", Version: 1},
+	})
+	if calls := gatewayCalls.Load(); calls != 0 {
+		t.Fatalf("AI-excluded content reached the remote embedding gateway %d times", calls)
+	}
+	var localRows int
+	if err = db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM note_embeddings
+		WHERE note_id=ANY($1) AND algorithm=$2`, []uuid.UUID{spaceNoteID, privateNoteID, publicNoteID}, intelligence.LocalAlgorithm).Scan(&localRows); err != nil {
+		t.Fatal(err)
+	}
+	if localRows != 3 {
+		t.Fatalf("AI exclusions did not keep the comparison set local: %d rows", localRows)
 	}
 }

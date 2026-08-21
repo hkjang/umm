@@ -168,7 +168,7 @@ func (s *Server) router() chi.Router {
 				admin.Get("/ai-evals", s.listAIEvals)
 				admin.Post("/ai-evals", s.createAIEval)
 				admin.Delete("/ai-evals/{caseID}", s.deleteAIEval)
-				admin.Post("/ai-evals/{caseID}/run", s.runAIEval)
+				admin.With(s.aiQuota).Post("/ai-evals/{caseID}/run", s.runAIEval)
 			})
 		})
 	})

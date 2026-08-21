@@ -143,7 +143,7 @@ func (s *Server) runAIEval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	result, runErr := s.Dreams.Evaluate(r.Context(), request)
+	result, runErr := s.Dreams.Evaluate(r.Context(), p.User.ID, request)
 	status := "failed"
 	errorMessage := ""
 	if result.Passed {
@@ -161,6 +161,9 @@ func (s *Server) runAIEval(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "ai_eval.run", "ai_eval_case", id.String(), map[string]any{"runId": runID, "status": status, "score": result.Score})
 	if runErr != nil {
+		if writeAIQuotaProblem(w, r, runErr) {
+			return
+		}
 		writeProblem(w, r, 502, "ai-eval-gateway", "AI 평가 실행 실패", "Gateway 응답을 받지 못했지만 실패 기록은 저장했습니다: "+runErr.Error(), map[string]any{"runId": runID})
 		return
 	}

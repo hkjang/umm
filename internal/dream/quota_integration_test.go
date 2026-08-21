@@ -129,3 +129,74 @@ func TestRecordAICallOutlivesRequestCancellationIntegration(t *testing.T) {
 		t.Fatalf("canceled request lost %d AI call logs", 1-calls)
 	}
 }
+
+func TestEvaluationHonorsTheInitiatingUsersDailyQuotaIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	limit, err := db.AIDailyLimit(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limit == 0 {
+		t.Skip("daily AI quota is disabled in this integration database")
+	}
+
+	userID := uuid.New()
+	username := "eval_quota_" + userID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name,role) VALUES($1,$2::citext,$2::text,'admin')`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, userID)
+
+	var gatewayCalls atomic.Int64
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		gatewayCalls.Add(1)
+		http.Error(w, "quota should block this request", http.StatusInternalServerError)
+	}))
+	defer gateway.Close()
+	var previousDream Config
+	if err = db.GetSetting(ctx, "dream", &previousDream); err != nil {
+		t.Fatal(err)
+	}
+	defer db.PutSetting(context.Background(), "dream", previousDream, userID)
+	var previousGateway GatewayConfig
+	if err = db.GetSetting(ctx, "ai_gateway", &previousGateway); err != nil {
+		t.Fatal(err)
+	}
+	defer db.PutSetting(context.Background(), "ai_gateway", previousGateway, userID)
+	if err = db.PutSetting(ctx, "dream", Config{Model: "eval-quota-model", TokenLimit: 512}, userID); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.PutSetting(ctx, "ai_gateway", GatewayConfig{BaseURL: gateway.URL, TimeoutSeconds: 2}, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO ai_quota_reservations(user_id,created_at,expires_at,consumed_at)
+		SELECT $1,now()-interval '1 minute',now()+interval '23 hours',now()-interval '1 minute'
+		FROM generate_series(1,$2)`, userID, limit); err != nil {
+		t.Fatal(err)
+	}
+
+	service := &Service{Store: db}
+	_, err = service.Evaluate(ctx, userID, EvalRequest{
+		DreamType:  "connection",
+		InputNotes: []string{"첫 번째 평가 생각", "두 번째 평가 생각"},
+	})
+	if !errors.Is(err, ErrAIDailyLimit) {
+		t.Fatalf("evaluation bypassed the daily quota: %v", err)
+	}
+	if calls := gatewayCalls.Load(); calls != 0 {
+		t.Fatalf("quota-blocked evaluation contacted the gateway %d times", calls)
+	}
+}

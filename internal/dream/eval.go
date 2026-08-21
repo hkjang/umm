@@ -28,7 +28,7 @@ type EvalResult struct {
 	LatencyMS     int64          `json:"latencyMs"`
 }
 
-func (s *Service) Evaluate(ctx context.Context, request EvalRequest) (EvalResult, error) {
+func (s *Service) Evaluate(ctx context.Context, userID uuid.UUID, request EvalRequest) (EvalResult, error) {
 	if len(request.InputNotes) < 2 {
 		return EvalResult{}, errors.New("evaluation requires at least two input notes")
 	}
@@ -44,7 +44,7 @@ func (s *Service) Evaluate(ctx context.Context, request EvalRequest) (EvalResult
 	for _, content := range request.InputNotes {
 		sources = append(sources, sourceNote{ID: uuid.New(), Content: strings.TrimSpace(content)})
 	}
-	raw, inputTokens, outputTokens, model, latency, err := s.callGateway(ctx, cfg, gateway, sources, request.DreamType)
+	raw, inputTokens, outputTokens, model, latency, err := s.callGatewayWithGuidance(ctx, userID, cfg, gateway, sources, request.DreamType, "")
 	if err != nil {
 		return EvalResult{Model: model, PromptVersion: gateway.PromptVersion, InputTokens: inputTokens, OutputTokens: outputTokens, LatencyMS: latency.Milliseconds()}, err
 	}

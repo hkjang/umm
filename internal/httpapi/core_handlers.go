@@ -102,7 +102,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "아이디 또는 비밀번호가 올바르지 않습니다.")
 		return
 	}
-	s.Store.ClearLoginFailures(r.Context(), identities)
+	if accountIdentity := store.LoginAccountIdentity(body.Username); accountIdentity != "" {
+		s.Store.ClearLoginFailures(r.Context(), []string{accountIdentity})
+	}
 	auth.SetSessionCookie(w, r, token)
 	s.Store.Audit(r.Context(), &u.ID, "auth.local.login", "user", u.ID.String(), map[string]any{})
 	writeJSON(w, 200, u)

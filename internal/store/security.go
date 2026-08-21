@@ -22,10 +22,20 @@ func LoginIdentities(username, clientIP string) []string {
 	if ip := strings.TrimSpace(clientIP); ip != "" {
 		identities = append(identities, "ip:"+ip)
 	}
-	if name := strings.ToLower(strings.TrimSpace(username)); name != "" {
-		identities = append(identities, "user:"+name)
+	if account := LoginAccountIdentity(username); account != "" {
+		identities = append(identities, account)
 	}
 	return identities
+}
+
+// LoginAccountIdentity is the only throttle key cleared after a successful
+// password login. Address failures remain independent, so authenticating as a
+// different valid account cannot reset a credential-stuffing source's history.
+func LoginAccountIdentity(username string) string {
+	if name := strings.ToLower(strings.TrimSpace(username)); name != "" {
+		return "user:" + name
+	}
+	return ""
 }
 
 // usernameFailureMultiplier raises the per-account threshold above the
@@ -98,7 +108,8 @@ func (s *Store) RegisterLoginFailure(ctx context.Context, identities []string, m
 	}
 }
 
-// ClearLoginFailures resets the counters after a successful authentication.
+// ClearLoginFailures resets only the explicitly supplied counters. Successful
+// password authentication supplies the account identity, never the source IP.
 func (s *Store) ClearLoginFailures(ctx context.Context, identities []string) {
 	if len(identities) == 0 {
 		return

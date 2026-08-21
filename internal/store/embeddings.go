@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -130,8 +131,53 @@ type embeddingTarget struct {
 
 // UpsertEmbedding refreshes a single note's vector after a write.
 func (s *Store) UpsertEmbedding(ctx context.Context, noteID uuid.UUID, content string, version int) error {
-	_, err := s.writeEmbeddings(ctx, []embeddingTarget{{ID: noteID, Content: content, Version: version}})
+	provider, err := s.embeddingProviderForNote(ctx, noteID)
+	if err != nil {
+		return err
+	}
+	algorithm, err := s.writeEmbeddingsWithProvider(ctx, []embeddingTarget{{ID: noteID, Content: content, Version: version}}, provider)
+	if provider.Algorithm() != intelligence.LocalAlgorithm && algorithm == intelligence.LocalAlgorithm {
+		s.deferRemoteEmbeddings(provider)
+	}
 	return err
+}
+
+// embeddingProviderForNote fails closed to local embeddings when either the
+// note or its containing space opts out of AI processing. The lookup happens
+// before content can be handed to a configured remote provider.
+func (s *Store) embeddingProviderForNote(ctx context.Context, noteID uuid.UUID) (intelligence.Provider, error) {
+	var excluded bool
+	err := s.Pool.QueryRow(ctx, `
+		SELECT n.ai_excluded OR sp.ai_excluded
+		FROM notes n JOIN spaces sp ON sp.id=n.space_id
+		WHERE n.id=$1 AND n.deleted_at IS NULL`, noteID).Scan(&excluded)
+	if err != nil {
+		return intelligence.Provider{}, fmt.Errorf("read embedding exclusion: %w", err)
+	}
+	if excluded {
+		return intelligence.Provider{}, nil
+	}
+	return s.EmbeddingProvider(ctx), nil
+}
+
+func (s *Store) embeddingProviderForNotes(ctx context.Context, notes []Note) intelligence.Provider {
+	spaceSet := make(map[uuid.UUID]struct{}, len(notes))
+	for _, note := range notes {
+		if note.AIExcluded || note.SpaceID == uuid.Nil {
+			return intelligence.Provider{}
+		}
+		spaceSet[note.SpaceID] = struct{}{}
+	}
+	spaceIDs := make([]uuid.UUID, 0, len(spaceSet))
+	for spaceID := range spaceSet {
+		spaceIDs = append(spaceIDs, spaceID)
+	}
+	var spaceExcluded bool
+	var found int
+	if err := s.Pool.QueryRow(ctx, `SELECT COALESCE(bool_or(ai_excluded),false),count(*) FROM spaces WHERE id=ANY($1)`, spaceIDs).Scan(&spaceExcluded, &found); err != nil || spaceExcluded || found != len(spaceIDs) {
+		return intelligence.Provider{}
+	}
+	return s.EmbeddingProvider(ctx)
 }
 
 // ensureEmbeddings brings a batch of notes up to date. Before v0.8.0 this issued
@@ -141,7 +187,7 @@ func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
 	if len(notes) == 0 {
 		return
 	}
-	provider := s.EmbeddingProvider(ctx)
+	provider := s.embeddingProviderForNotes(ctx, notes)
 	algorithm := provider.Algorithm()
 	ids := make([]uuid.UUID, len(notes))
 	for i, n := range notes {
@@ -180,20 +226,12 @@ func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
 	}
 }
 
-func (s *Store) writeEmbeddings(ctx context.Context, targets []embeddingTarget) (string, error) {
-	provider := s.EmbeddingProvider(ctx)
-	algorithm, err := s.writeEmbeddingsWithProvider(ctx, targets, provider)
-	if provider.Algorithm() != intelligence.LocalAlgorithm && algorithm == intelligence.LocalAlgorithm {
-		s.deferRemoteEmbeddings(provider)
-	}
-	return algorithm, err
-}
-
 func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embeddingTarget, provider intelligence.Provider) (string, error) {
 	if len(targets) == 0 {
 		return provider.Algorithm(), nil
 	}
 	actualAlgorithm := provider.Algorithm()
+	activeProvider := provider
 	var firstErr error
 	for start := 0; start < len(targets); start += embeddingBatchSize {
 		batch := targets[start:min(start+embeddingBatchSize, len(targets))]
@@ -201,11 +239,14 @@ func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embed
 		for i, target := range batch {
 			texts[i] = target.Content
 		}
-		vectors, algorithm := provider.Embed(ctx, texts)
-		model := provider.Model()
+		vectors, algorithm := activeProvider.Embed(ctx, texts)
+		model := activeProvider.Model()
 		if algorithm == intelligence.LocalAlgorithm {
 			actualAlgorithm = intelligence.LocalAlgorithm
 			model = ""
+			// One failed remote batch is enough evidence for this write. Finish
+			// the remaining batches locally instead of repeating the full timeout.
+			activeProvider = intelligence.Provider{}
 		}
 		for i, target := range batch {
 			// A stored row is replaced when the note content moved on or when the

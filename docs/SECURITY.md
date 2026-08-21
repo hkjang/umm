@@ -25,8 +25,8 @@ User API/MCP key (one-time plaintext display)
 ## 인증과 권한
 
 - Browser session: random 256-bit token의 digest만 DB 저장, HttpOnly, SameSite=Lax, HTTPS 인지 시 Secure cookie. 사용자는 개인 설정에서 활성 세션 목록을 확인하고 개별 또는 일괄 종료할 수 있음
-- Login throttling: 실패 횟수를 PostgreSQL에 기록해 인스턴스 간에 공유. 주소별 임계값을 넘으면 잠금, 계정별 임계값은 그 3배로 두어 아이디를 아는 사람이 남의 계정을 잠그는 것을 방지
-- Rate limits: 호출자별 API 요청 한도와 AI 생성 전용 분당·일일 한도. 일일 한도는 대화형 요청과 자동 Dream의 실제 Gateway 호출 직전에 PostgreSQL advisory lock으로 원자 선점하고 24시간 소비 원장으로 먼저 영속화하므로, 요청 취소·`ai_calls` 로그 실패·동시 요청·재시작·여러 인스턴스를 넘어 유지됨. 초과 시 `429`와 `Retry-After` 반환
+- Login throttling: 실패 횟수를 PostgreSQL에 기록해 인스턴스 간에 공유. 주소별 임계값을 넘으면 잠금, 계정별 임계값은 그 3배로 두어 아이디를 아는 사람이 남의 계정을 잠그는 것을 방지. 로그인 성공은 계정 key만 초기화하고 주소 key는 유지해 다른 정상 계정으로 IP 제한을 지우는 우회를 차단
+- Rate limits: 호출자별 API 요청 한도와 AI 생성 전용 분당·일일 한도. 일일 한도는 대화형 요청·자동 Dream·관리자 AI 평가의 실제 Gateway 호출 직전에 PostgreSQL advisory lock으로 원자 선점하고 24시간 소비 원장으로 먼저 영속화하므로, 요청 취소·`ai_calls` 로그 실패·동시 요청·재시작·여러 인스턴스를 넘어 유지됨. 초과 시 `429`와 `Retry-After` 반환
 - OIDC: Authorization Code flow, state 일회 사용/10분 만료, provider Discovery, ID token 서명·issuer·audience 검증
 - Roles: `user`, `team_lead`, `admin`
 - API/MCP: Bearer key와 세부 scope. MCP는 browser cookie를 허용하지 않음
@@ -36,6 +36,7 @@ User API/MCP key (one-time plaintext display)
 - Export: 관리자가 `export` 검토를 켠 경우 승인 후 24시간 동안만 허용
 - Admin secret: API 응답에서 항상 마스킹, 감사 로그에 원문 미기록
 - Browser write: `Origin`과 `Sec-Fetch-Site`를 확인해 로그인과 인증된 변경 요청의 cross-site 전송 차단
+- AI exclusion: 메모 또는 공간의 AI 제외 flag를 원격 임베딩 batch 구성 전에 확인하며, 제외 콘텐츠는 외부 Gateway 대신 서버 내부 로컬 vector만 사용
 - Offline retry: atomic Canvas mutation에 한정한 `Idempotency-Key`, 사용자·키별 advisory lock, 실행 중 갱신되는 2분 pending lease, 도메인/SSE/outbox/응답 원자 커밋과 24시간 성공 replay로 동시 중복·post-commit 기록 유실·crash 고착 방지
 - Aggregate scope: `notes:read`만 가진 API key의 Today 응답에서는 `dreams:read` 데이터와 개수를 제거해 집계 endpoint를 통한 scope 우회를 차단
 - One-time secrets: API key와 webhook signing key 생성·회전 응답은 멱등 캐시 대상에서 제외해 평문 자격 증명을 PostgreSQL에 남기지 않음

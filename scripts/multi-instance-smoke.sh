@@ -96,19 +96,27 @@ if [[ "$(jq -r '.id' <<<"$first")" != "$(jq -r '.id' <<<"$second")" ]]; then
 fi
 echo "==> an idempotent retry on B replayed the response recorded on A"
 
-# 3. Failed sign-ins must accumulate in the database, not in one process.
-locked=0
-for _ in $(seq 1 12); do
+# 3. Failed sign-ins must accumulate by source address across instances. A
+#    successful login to a different account must not erase that IP history.
+max_failures="$(curl -fsS -b "$cookie" "$api_a/admin/settings" | jq -r '.security.login_max_failures')"
+[[ "$max_failures" =~ ^[0-9]+$ && "$max_failures" -gt 1 ]] || { echo "invalid login failure policy" >&2; exit 1; }
+victim="victim-$marker"
+for _ in $(seq 1 $((max_failures - 1))); do
   target="$api_a"; (( RANDOM % 2 )) && target="$api_b"
   status="$(curl -s -o "$work/login.json" -w '%{http_code}' -H 'Content-Type: application/json' \
-    -d "{\"username\":\"$BOOTSTRAP_ADMIN\",\"password\":\"wrong-password\"}" "$target/auth/login")"
-  if [[ "$status" == "429" ]]; then locked=1; break; fi
+    -d "{\"username\":\"$victim\",\"password\":\"wrong-password\"}" "$target/auth/login")"
+  [[ "$status" == "401" ]] || { echo "source locked before its configured budget" >&2; exit 1; }
 done
-if (( locked != 1 )); then
-  echo "repeated failures spread across both instances never triggered the shared lockout" >&2
-  exit 1
-fi
-echo "==> the login lockout is shared across instances"
+curl -fsS -c "$cookie" -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$BOOTSTRAP_ADMIN\",\"password\":\"$BOOTSTRAP_ADMIN_PASSWORD\"}" \
+  "$api_b/auth/login" >/dev/null
+trigger_status="$(curl -s -o "$work/login-trigger.json" -w '%{http_code}' -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$victim\",\"password\":\"wrong-password\"}" "$api_a/auth/login")"
+[[ "$trigger_status" == "401" ]] || { echo "the threshold attempt returned $trigger_status instead of 401" >&2; exit 1; }
+locked_status="$(curl -s -o "$work/login-locked.json" -w '%{http_code}' -H 'Content-Type: application/json' \
+  -d "{\"username\":\"$victim\",\"password\":\"wrong-password\"}" "$api_b/auth/login")"
+[[ "$locked_status" == "429" ]] || { echo "a cross-account success reset the shared IP throttle" >&2; exit 1; }
+echo "==> the shared IP lockout survives a cross-account success"
 
 # Leave the account usable for anything that runs after this script.
 if [[ -n "${POSTGRES_CONTAINER:-}" ]]; then
