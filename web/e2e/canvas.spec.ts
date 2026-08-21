@@ -31,6 +31,45 @@ test.describe('canvas', () => {
     await expect(page.getByRole('group', { name: new RegExp(`${marker} 둘`) })).toBeVisible();
   });
 
+  test('keeps only failed import sections in the draft for retry', async ({ page }) => {
+    const marker = unique('부분-가져오기');
+    const noteRoute = '**/api/v1/spaces/*/notes';
+    let posts = 0;
+    await page.route(noteRoute, async (route) => {
+      if (route.request().method() !== 'POST') {
+        await route.continue();
+        return;
+      }
+      posts += 1;
+      if (posts === 2) {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/problem+json',
+          body: JSON.stringify({ title: 'temporary failure', status: 503 }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.getByRole('button', { name: '내보내기' }).click();
+    await page.getByRole('menuitem', { name: '마크다운 가져오기' }).click();
+    const editor = page.getByRole('textbox', { name: '가져올 내용' });
+    await editor.fill(`# ${marker} 성공\n첫 본문\n\n# ${marker} 재시도\n남길 본문`);
+    await page.getByRole('button', { name: '가져오기', exact: true }).click();
+
+    await expect(page.getByRole('group', { name: new RegExp(`${marker} 성공`) })).toBeVisible();
+    await expect(editor).toHaveValue(`# ${marker} 재시도\n\n남길 본문`);
+    await expect(
+      page.getByText('1개의 생각을 가져오지 못했습니다. 입력란에 남겨 두었으니 다시 시도해 주세요.'),
+    ).toBeVisible();
+
+    await page.unroute(noteRoute);
+    await page.getByRole('button', { name: '가져오기', exact: true }).click();
+    await expect(page.getByRole('group', { name: new RegExp(`${marker} 재시도`) })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: '마크다운 가져오기' })).toHaveCount(0);
+  });
+
   test('queues a thought while offline and syncs it on reconnect', async ({ page, context }) => {
     const thought = unique('오프라인');
     await context.setOffline(true);

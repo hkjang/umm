@@ -332,6 +332,8 @@ export const en: Dictionary = {
   '{count}개의 생각을 캔버스에 붙였습니다.': 'Added {count} thoughts to the canvas.',
   '가져오기 완료': 'Import complete',
   '가져올 생각을 찾지 못했습니다.': 'No thoughts were found to import.',
+  '{count}개의 생각을 가져오지 못했습니다. 입력란에 남겨 두었으니 다시 시도해 주세요.':
+    '{count} thoughts could not be imported. They remain in the editor so you can try again.',
   '가져오는 중 {done}/{total}': 'Importing {done}/{total}',
   '공유된 생각': 'Shared thought',
 

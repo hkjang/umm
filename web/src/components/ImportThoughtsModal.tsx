@@ -2,12 +2,18 @@ import { Alert, Button, FileInput, Group, Modal, Progress, Stack, Text, Textarea
 import { IconFileImport, IconUpload } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from '../i18n';
-import { maxImportedThoughts, splitMarkdownThoughts, type ImportedThought } from '../lib/markdown-import';
+import {
+  formatImportedThoughts,
+  maxImportedThoughts,
+  splitMarkdownThoughts,
+  type ImportedThought,
+  type ImportThoughtsResult,
+} from '../lib/markdown-import';
 
 interface Props {
   opened: boolean;
   onClose: () => void;
-  onImport: (thoughts: ImportedThought[], onProgress: (done: number) => void) => Promise<number>;
+  onImport: (thoughts: ImportedThought[], onProgress: (done: number) => void) => Promise<ImportThoughtsResult>;
 }
 
 /**
@@ -40,10 +46,20 @@ export default function ImportThoughtsModal({ opened, onClose, onImport }: Props
     setError('');
     setDone(0);
     try {
-      const created = await onImport(thoughts, setDone);
+      const result = await onImport(thoughts, setDone);
+      if (result.failed.length > 0) {
+        setText(formatImportedThoughts(result.failed));
+        setError(
+          t('{count}개의 생각을 가져오지 못했습니다. 입력란에 남겨 두었으니 다시 시도해 주세요.', {
+            count: result.failed.length,
+          }),
+        );
+        setDone(0);
+        return result.created;
+      }
       setText('');
       onClose();
-      return created;
+      return result.created;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t('가져올 생각을 찾지 못했습니다.'));
     } finally {

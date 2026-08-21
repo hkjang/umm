@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -818,7 +819,9 @@ func TestLoadEmbeddingsUsesOneFallbackVectorSpaceIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	var gatewayCalls atomic.Int64
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		gatewayCalls.Add(1)
 		http.Error(w, "gateway unavailable", http.StatusBadGateway)
 	}))
 	defer gateway.Close()
@@ -855,6 +858,17 @@ func TestLoadEmbeddingsUsesOneFallbackVectorSpaceIntegration(t *testing.T) {
 		{ID: secondID, Content: "second fallback note", Version: 1},
 	}
 	db.ensureEmbeddings(ctx, notes)
+	db.ensureEmbeddings(ctx, notes)
+	if calls := gatewayCalls.Load(); calls != 1 {
+		t.Fatalf("current local fallbacks retried the unavailable gateway %d times", calls)
+	}
+	db.embeddings.mu.Lock()
+	db.embeddings.remoteRetryAt = time.Now().Add(-time.Second)
+	db.embeddings.mu.Unlock()
+	db.ensureEmbeddings(ctx, notes)
+	if calls := gatewayCalls.Load(); calls != 2 {
+		t.Fatalf("gateway was not retried once after the fallback window: %d calls", calls)
+	}
 	vectors := db.loadEmbeddings(ctx, notes)
 	if len(vectors) != 2 || len(vectors[firstID]) != intelligence.Dimensions || len(vectors[secondID]) != intelligence.Dimensions {
 		t.Fatalf("outage fallback omitted vectors: %#v", vectors)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { importLayout, maxImportedThoughts, splitMarkdownThoughts } from './markdown-import';
+import { formatImportedThoughts, importLayout, maxImportedThoughts, splitMarkdownThoughts } from './markdown-import';
 
 describe('splitMarkdownThoughts', () => {
   it('cuts a document at its headings and keeps them as titles', () => {
@@ -42,6 +42,15 @@ describe('splitMarkdownThoughts', () => {
 
   it('handles CRLF line endings', () => {
     expect(splitMarkdownThoughts('# A\r\nbody\r\n\r\n# B\r\nbody')).toHaveLength(2);
+  });
+
+  it('round-trips failed thoughts into a retryable draft', () => {
+    const failed = [
+      { title: 'First', content: 'body one' },
+      { title: '', content: 'plain thought' },
+      { title: 'Heading only', content: 'Heading only' },
+    ];
+    expect(splitMarkdownThoughts(formatImportedThoughts(failed))).toEqual(failed);
   });
 });
 

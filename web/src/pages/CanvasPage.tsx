@@ -83,7 +83,7 @@ import PostItNode, { type PostItData } from '../components/PostItNode';
 import { useAuth } from '../auth-context';
 import { msg, useTranslation } from '../i18n';
 import ImportThoughtsModal from '../components/ImportThoughtsModal';
-import { importLayout, type ImportedThought } from '../lib/markdown-import';
+import { importLayout, type ImportedThought, type ImportThoughtsResult } from '../lib/markdown-import';
 import { showError, showInfo, showSuccess } from '../ui-notifications';
 
 const nodeTypes = { postit: PostItNode };
@@ -593,10 +593,12 @@ function CanvasInner() {
   // Imported thoughts are created one at a time so the progress bar reflects
   // real work and one rejected note cannot lose the rest of the batch.
   const importThoughts = useCallback(
-    async (thoughts: ImportedThought[], onProgress: (done: number) => void) => {
-      if (!activeSpace || thoughts.length === 0) return 0;
+    async (thoughts: ImportedThought[], onProgress: (done: number) => void): Promise<ImportThoughtsResult> => {
+      if (thoughts.length === 0) return { created: 0, failed: [] };
+      if (!activeSpace) return { created: 0, failed: thoughts };
       const viewport = flow.screenToFlowPosition({ x: 140, y: 180 });
       const created: ThoughtNote[] = [];
+      const failed: ImportedThought[] = [];
       for (const [index, thought] of thoughts.entries()) {
         const position = importLayout(index, viewport.x, viewport.y);
         try {
@@ -618,6 +620,7 @@ function CanvasInner() {
           );
         } catch {
           // A single rejected note must not abandon the ones that follow.
+          failed.push(thought);
         }
         onProgress(index + 1);
       }
@@ -625,7 +628,7 @@ function CanvasInner() {
         syncNotes([...Object.values(notesRef.current), ...created]);
         showSuccess(t('{count}개의 생각을 캔버스에 붙였습니다.', { count: created.length }), t('가져오기 완료'));
       }
-      return created.length;
+      return { created: created.length, failed };
     },
     [activeSpace, flow, t],
   );

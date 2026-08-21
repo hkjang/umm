@@ -3,6 +3,11 @@ export interface ImportedThought {
   content: string;
 }
 
+export interface ImportThoughtsResult {
+  created: number;
+  failed: ImportedThought[];
+}
+
 /** Bounds one import so a large vault cannot flood a canvas in a single click. */
 export const maxImportedThoughts = 200;
 
@@ -69,6 +74,17 @@ export function splitMarkdownThoughts(source: string): ImportedThought[] {
     if (thoughts.length >= maxImportedThoughts) break;
   }
   return thoughts.filter((thought) => thought.content !== '');
+}
+
+/** Rebuilds a retryable Markdown draft from thoughts that were not imported. */
+export function formatImportedThoughts(thoughts: ImportedThought[]) {
+  return thoughts
+    .map((thought) => {
+      if (!thought.title) return thought.content;
+      if (thought.content === thought.title) return `# ${thought.title}`;
+      return `# ${thought.title}\n\n${thought.content}`;
+    })
+    .join('\n\n---\n\n');
 }
 
 /** Lays imported thoughts out in a readable grid starting at the given origin. */

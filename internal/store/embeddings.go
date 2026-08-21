@@ -19,6 +19,12 @@ const embeddingSettingsTTL = 30 * time.Second
 // trips; too large and a single slow note blocks a whole canvas load.
 const embeddingBatchSize = 64
 
+// embeddingFallbackRetryInterval turns a remote failure into a short circuit
+// breaker. Canvas reads keep using the complete local fallback set during the
+// window instead of paying the remote timeout again on every page load. An
+// administrator changing the gateway configuration clears the window early.
+const embeddingFallbackRetryInterval = 5 * time.Minute
+
 // Decrypter is the subset of cryptoutil.Cipher the store needs to read the
 // gateway credential. It stays an interface so the store keeps no hard
 // dependency on key management.
@@ -34,9 +40,10 @@ type embeddingSettings struct {
 }
 
 type embeddingCache struct {
-	mu       sync.Mutex
-	provider intelligence.Provider
-	loadedAt time.Time
+	mu            sync.Mutex
+	provider      intelligence.Provider
+	loadedAt      time.Time
+	remoteRetryAt time.Time
 }
 
 // EmbeddingProvider resolves the active embedding backend. With no configured
@@ -44,8 +51,9 @@ type embeddingCache struct {
 func (s *Store) EmbeddingProvider(ctx context.Context) intelligence.Provider {
 	s.embeddings.mu.Lock()
 	defer s.embeddings.mu.Unlock()
-	if !s.embeddings.loadedAt.IsZero() && time.Since(s.embeddings.loadedAt) < embeddingSettingsTTL {
-		return s.embeddings.provider
+	now := time.Now()
+	if !s.embeddings.loadedAt.IsZero() && now.Sub(s.embeddings.loadedAt) < embeddingSettingsTTL {
+		return availableEmbeddingProvider(s.embeddings.provider, now, s.embeddings.remoteRetryAt)
 	}
 	provider := intelligence.Provider{}
 	var settings embeddingSettings
@@ -66,9 +74,43 @@ func (s *Store) EmbeddingProvider(ctx context.Context) intelligence.Provider {
 			Model: strings.TrimSpace(settings.EmbeddingModel), Timeout: timeout,
 		}
 	}
+	if !sameEmbeddingProvider(s.embeddings.provider, provider) {
+		s.embeddings.remoteRetryAt = time.Time{}
+	}
 	s.embeddings.provider = provider
-	s.embeddings.loadedAt = time.Now()
+	s.embeddings.loadedAt = now
+	return availableEmbeddingProvider(provider, now, s.embeddings.remoteRetryAt)
+}
+
+func availableEmbeddingProvider(provider intelligence.Provider, now, remoteRetryAt time.Time) intelligence.Provider {
+	if provider.Algorithm() != intelligence.LocalAlgorithm && now.Before(remoteRetryAt) {
+		return intelligence.Provider{}
+	}
 	return provider
+}
+
+func sameEmbeddingProvider(left, right intelligence.Provider) bool {
+	if left.Remote == nil || right.Remote == nil {
+		return left.Remote == nil && right.Remote == nil
+	}
+	return left.Remote.BaseURL == right.Remote.BaseURL &&
+		left.Remote.APIKey == right.Remote.APIKey &&
+		left.Remote.Model == right.Remote.Model &&
+		left.Remote.Timeout == right.Remote.Timeout
+}
+
+func (s *Store) deferRemoteEmbeddings(provider intelligence.Provider) {
+	if provider.Algorithm() == intelligence.LocalAlgorithm {
+		return
+	}
+	s.embeddings.mu.Lock()
+	defer s.embeddings.mu.Unlock()
+	// A late response from an old configuration must not suppress a newly
+	// configured gateway on this instance.
+	if !sameEmbeddingProvider(s.embeddings.provider, provider) {
+		return
+	}
+	s.embeddings.remoteRetryAt = time.Now().Add(embeddingFallbackRetryInterval)
 }
 
 // InvalidateEmbeddingProvider drops the cached settings so an administrator's
@@ -76,6 +118,7 @@ func (s *Store) EmbeddingProvider(ctx context.Context) intelligence.Provider {
 func (s *Store) InvalidateEmbeddingProvider() {
 	s.embeddings.mu.Lock()
 	s.embeddings.loadedAt = time.Time{}
+	s.embeddings.remoteRetryAt = time.Time{}
 	s.embeddings.mu.Unlock()
 }
 
@@ -98,7 +141,8 @@ func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
 	if len(notes) == 0 {
 		return
 	}
-	algorithm := s.EmbeddingProvider(ctx).Algorithm()
+	provider := s.EmbeddingProvider(ctx)
+	algorithm := provider.Algorithm()
 	ids := make([]uuid.UUID, len(notes))
 	for i, n := range notes {
 		ids[i] = n.ID
@@ -122,8 +166,9 @@ func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
 		}
 		stale = append(stale, embeddingTarget{ID: n.ID, Content: n.Content, Version: n.Version})
 	}
-	actualAlgorithm, _ := s.writeEmbeddings(ctx, stale)
+	actualAlgorithm, _ := s.writeEmbeddingsWithProvider(ctx, stale, provider)
 	if algorithm != intelligence.LocalAlgorithm && actualAlgorithm == intelligence.LocalAlgorithm {
+		s.deferRemoteEmbeddings(provider)
 		// A gateway outage can leave older notes with remote vectors and newer
 		// notes with local fallbacks. Rewrite the whole comparison set locally so
 		// Canvas counts, related notes and clusters never mix or omit vector spaces.
@@ -136,7 +181,12 @@ func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
 }
 
 func (s *Store) writeEmbeddings(ctx context.Context, targets []embeddingTarget) (string, error) {
-	return s.writeEmbeddingsWithProvider(ctx, targets, s.EmbeddingProvider(ctx))
+	provider := s.EmbeddingProvider(ctx)
+	algorithm, err := s.writeEmbeddingsWithProvider(ctx, targets, provider)
+	if provider.Algorithm() != intelligence.LocalAlgorithm && algorithm == intelligence.LocalAlgorithm {
+		s.deferRemoteEmbeddings(provider)
+	}
+	return algorithm, err
 }
 
 func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embeddingTarget, provider intelligence.Provider) (string, error) {
@@ -230,7 +280,11 @@ func (s *Store) loadEmbeddings(ctx context.Context, notes []Note) map[uuid.UUID]
 // returned label rather than the provider's configured label when selecting
 // stored vectors.
 func (s *Store) EmbedQuery(ctx context.Context, query string) ([]float32, string) {
-	vectors, algorithm := s.EmbeddingProvider(ctx).Embed(ctx, []string{query})
+	provider := s.EmbeddingProvider(ctx)
+	vectors, algorithm := provider.Embed(ctx, []string{query})
+	if provider.Algorithm() != intelligence.LocalAlgorithm && algorithm == intelligence.LocalAlgorithm {
+		s.deferRemoteEmbeddings(provider)
+	}
 	if len(vectors) == 0 {
 		return nil, algorithm
 	}
