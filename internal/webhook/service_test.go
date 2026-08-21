@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/cryptoutil"
@@ -212,5 +215,56 @@ func TestDurableQueueSurvivesServiceRestartIntegration(t *testing.T) {
 	}
 	if retained != 0 {
 		t.Fatalf("terminal delivery retention kept %d rows older than %d days", retained, deliveryRetentionDays)
+	}
+}
+
+func TestFinishFailurePersistsBoundedUTF8Integration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	userID, subscriptionID, deliveryID := uuid.New(), uuid.New(), uuid.New()
+	username := "webhook_utf8_" + userID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO webhook_subscriptions(id,owner_id,name,url,secret_ciphertext,events) VALUES($1,$2,'UTF-8 failure','https://example.com/webhook','unused',ARRAY['note.created'])`, subscriptionID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO webhook_deliveries(id,subscription_id,event_id,event_type,payload,status,claimed_at) VALUES($1,$2,$3,'note.created','{}','processing',now())`, deliveryID, subscriptionID, uuid.New()); err != nil {
+		t.Fatal(err)
+	}
+
+	rawError := strings.Repeat("a", 499) + "한" + string([]byte{0xff}) + "tail"
+	service := New(db, nil)
+	if err = service.finishFailure(ctx, delivery{ID: deliveryID, SubscriptionID: subscriptionID}, http.StatusBadGateway, errors.New(rawError), 2, true); err != nil {
+		t.Fatal(err)
+	}
+
+	var status, deliveryError, lastError string
+	var attemptCount, responseStatus, failureCount int
+	if err = db.Pool.QueryRow(ctx, `
+		SELECT d.status,d.error,d.attempt_count,d.response_status,s.failure_count,s.last_error
+		FROM webhook_deliveries d JOIN webhook_subscriptions s ON s.id=d.subscription_id
+		WHERE d.id=$1`, deliveryID).Scan(&status, &deliveryError, &attemptCount, &responseStatus, &failureCount, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Repeat("a", 499)
+	if status != "failed" || deliveryError != want || lastError != want || attemptCount != 2 || responseStatus != http.StatusBadGateway || failureCount != 1 {
+		t.Fatalf("persisted failure status=%q error=%q last_error=%q attempts=%d response=%d failures=%d", status, deliveryError, lastError, attemptCount, responseStatus, failureCount)
+	}
+	if !utf8.ValidString(deliveryError) || len(deliveryError) > 500 {
+		t.Fatalf("delivery error must be valid UTF-8 within 500 bytes: len=%d valid=%v", len(deliveryError), utf8.ValidString(deliveryError))
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/cryptoutil"
 	"github.com/hkjang/umm/internal/store"
+	"github.com/hkjang/umm/internal/textutil"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -315,9 +316,7 @@ func (s *Service) finishFailure(ctx context.Context, item delivery, status int, 
 	if deliveryErr != nil {
 		message = deliveryErr.Error()
 	}
-	if len(message) > 500 {
-		message = message[:500]
-	}
+	message = textutil.LimitUTF8Bytes(message, 500)
 	var responseStatus any
 	if status > 0 {
 		responseStatus = status

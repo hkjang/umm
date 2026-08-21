@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestProviderDefaultsToLocalAlgorithm(t *testing.T) {
@@ -94,6 +95,25 @@ func TestProviderFallsBackAndReportsLocal(t *testing.T) {
 	}
 	if _, err := provider.EmbedStrict(context.Background(), []string{"생각"}); err == nil {
 		t.Fatal("EmbedStrict must surface the gateway error for the settings screen")
+	}
+}
+
+func TestProviderBoundsGatewayErrorOnUTF8Boundary(t *testing.T) {
+	body := strings.Repeat("a", 299) + "한tail"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer server.Close()
+
+	provider := Provider{Remote: &RemoteConfig{BaseURL: server.URL, Model: "text-embed", Timeout: time.Second}}
+	_, err := provider.EmbedStrict(context.Background(), []string{"생각"})
+	if err == nil {
+		t.Fatal("EmbedStrict must surface the gateway error")
+	}
+	want := "embedding gateway status 502: " + strings.Repeat("a", 299)
+	if err.Error() != want || !utf8.ValidString(err.Error()) {
+		t.Fatalf("gateway error = %q, want valid UTF-8 %q", err, want)
 	}
 }
 

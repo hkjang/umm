@@ -22,6 +22,7 @@ import (
 	"github.com/hkjang/umm/internal/cryptoutil"
 	"github.com/hkjang/umm/internal/intelligence"
 	"github.com/hkjang/umm/internal/store"
+	"github.com/hkjang/umm/internal/textutil"
 )
 
 type Config struct {
@@ -477,7 +478,7 @@ func requestChat(ctx context.Context, client *http.Client, endpoint, key string,
 		return result, errors.New("AI gateway response is too large")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return result, fmt.Errorf("AI gateway status %d: %s", resp.StatusCode, truncate(string(responseBody), 300))
+		return result, fmt.Errorf("AI gateway status %d: %s", resp.StatusCode, textutil.LimitUTF8Bytes(string(responseBody), 300))
 	}
 	if json.Unmarshal(responseBody, &result) != nil || len(result.Choices) == 0 {
 		return result, errors.New("invalid AI gateway response")
@@ -803,6 +804,7 @@ func inferType(v string) string {
 	return "connection"
 }
 func truncate(v string, n int) string {
+	v = strings.ToValidUTF8(v, "")
 	r := []rune(v)
 	if len(r) <= n {
 		return v

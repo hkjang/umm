@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/store"
+	"github.com/hkjang/umm/internal/textutil"
 	"github.com/jackc/pgx/v5"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -95,15 +95,7 @@ func OriginOf(r *http.Request) SessionOrigin {
 }
 
 func boundedUserAgent(agent string) string {
-	agent = strings.ToValidUTF8(strings.TrimSpace(agent), "")
-	if len(agent) <= 300 {
-		return agent
-	}
-	end := 300
-	for end > 0 && !utf8.RuneStart(agent[end]) {
-		end--
-	}
-	return agent[:end]
+	return textutil.LimitUTF8Bytes(strings.TrimSpace(agent), 300)
 }
 
 func (s *Service) PasswordLogin(ctx context.Context, username, password string, origin SessionOrigin) (store.User, string, error) {

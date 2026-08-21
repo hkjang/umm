@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hkjang/umm/internal/textutil"
 )
 
 // LocalAlgorithm identifies the offline character n-gram embedding. It is the
@@ -153,10 +155,7 @@ func (p Provider) embedRemote(ctx context.Context, texts []string) ([][]float32,
 		return nil, errors.New("embedding response is too large")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		snippet := string(body)
-		if len(snippet) > 300 {
-			snippet = snippet[:300]
-		}
+		snippet := textutil.LimitUTF8Bytes(string(body), 300)
 		return nil, fmt.Errorf("embedding gateway status %d: %s", response.StatusCode, snippet)
 	}
 	var parsed embeddingResponse

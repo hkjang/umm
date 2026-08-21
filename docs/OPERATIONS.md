@@ -101,7 +101,7 @@ CI는 `scripts/restore-smoke.sh`로 PostgreSQL custom-format dump를 별도 `umm
 - 실시간 협업 상태는 `umm_realtime_subscribers`, `umm_realtime_spaces`, `umm_realtime_signals_total`, `umm_realtime_listener_up`으로 노출됩니다. `umm_realtime_listener_up`이 0이면 PostgreSQL `LISTEN` 연결이 끊긴 상태이며 SSE가 폴백 폴링으로 동작 중이라는 뜻입니다 — 협업은 계속되지만 데이터베이스 부하가 올라가므로 알림을 걸어 두세요. 같은 값은 관리자 → 운영 현황에서도 볼 수 있습니다.
 - 만료된 세션·OAuth state·재시도 기록·로그인 실패 기록·AI 쿼터 예약은 15분마다 자동 정리됩니다. 별도 cron이 필요하지 않습니다.
 - 표준 `OTEL_EXPORTER_OTLP_ENDPOINT` 또는 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`가 있을 때만 OTLP HTTP trace exporter가 활성화됩니다.
-- 웹훅은 HTTPS 기본 포트만 허용하며 DNS 확인과 연결 시점 모두 사설·loopback·link-local·reserved IP를 거부합니다. 도메인 변경과 SSE/webhook outbox는 같은 PostgreSQL 트랜잭션으로 커밋되고, 재시작 시 대기 항목과 2분 넘게 처리 중인 항목을 워커가 복구합니다. 실패는 세 번 재시도하고 연속 10회 실패 시 subscription을 자동 중지합니다.
+- 웹훅은 HTTPS 기본 포트만 허용하며 DNS 확인과 연결 시점 모두 사설·loopback·link-local·reserved IP를 거부합니다. 도메인 변경과 SSE/webhook outbox는 같은 PostgreSQL 트랜잭션으로 커밋되고, 재시작 시 대기 항목과 2분 넘게 처리 중인 항목을 워커가 복구합니다. 실패는 세 번 재시도하고 연속 10회 실패 시 subscription을 자동 중지합니다. 외부 오류는 잘못된 UTF-8을 제거하고 rune 경계 안에서 500 byte로 제한하므로 다국어 오류도 delivery 종료와 실패 횟수 갱신을 막지 않습니다.
 - 전달 시도는 at-least-once 방식입니다. 수신 측은 `X-Umm-Timestamp + "." + raw_body`에 대한 `X-Umm-Signature-256: sha256=<hex>` HMAC을 검증하고 오래된 timestamp를 거부하며, `X-Umm-Delivery`를 멱등 키로 저장해 중복을 안전하게 무시해야 합니다.
 - terminal delivery의 복사 payload는 즉시 제거되며 상태·HTTP code·오류 metadata는 30일 후 정리됩니다. 더 긴 감사 보존이 필요하면 수신 시스템에서 delivery UUID와 필요한 비민감 metadata를 별도로 보관하세요.
 
