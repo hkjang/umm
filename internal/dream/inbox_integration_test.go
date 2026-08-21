@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -245,6 +246,321 @@ func TestRevokedSpaceDreamsAreHiddenAndImmutableIntegration(t *testing.T) {
 	}
 	if status != "created" || feedback != 0 || notes != 1 {
 		t.Fatalf("revoked Dream mutation changed state: status=%q feedback=%d notes=%d", status, feedback, notes)
+	}
+}
+
+func TestDreamDevelopmentHoldsAccessThroughGatewayCallIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not set")
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("pool_max_conns", "2")
+	parsed.RawQuery = query.Encode()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	db, err := store.Open(ctx, parsed.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ownerID, memberID, spaceID := uuid.New(), uuid.New(), uuid.New()
+	firstSourceID, secondSourceID, dreamID := uuid.New(), uuid.New(), uuid.New()
+	ownerName, memberName := "develop_fence_owner_"+ownerID.String(), "develop_fence_member_"+memberID.String()
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO users(id,username,display_name) VALUES
+		($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, memberID, memberName); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, memberID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO user_preferences(user_id) VALUES($1)`, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'develop access fence')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'edit')`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO notes(id,space_id,author_id,content) VALUES
+		($1,$3,$4,'첫 번째 권한 경계 원본 생각'),($2,$3,$4,'두 번째 권한 경계 원본 생각')`, firstSourceID, secondSourceID, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO dream_notes(dream_id,user_id,space_id,dream_type,content,source_note_count)
+		VALUES($1,$2,$3,'connection','공유 공간 Dream 본문',2)`, dreamID, memberID, spaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO dream_sources(dream_id,source_note_id,rank,cited) VALUES
+		($1,$2,1,true),($1,$3,2,true)`, dreamID, firstSourceID, secondSourceID); err != nil {
+		t.Fatal(err)
+	}
+
+	gatewayStarted := make(chan struct{}, 1)
+	releaseGateway := make(chan struct{})
+	var gatewayCalls atomic.Int32
+	gatewayServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		gatewayCalls.Add(1)
+		gatewayStarted <- struct{}{}
+		<-releaseGateway
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": "현재 공유 권한 아래에서 만든 발전 결과입니다."}}},
+			"usage":   map[string]any{"prompt_tokens": 20, "completion_tokens": 10},
+		})
+	}))
+	defer gatewayServer.Close()
+
+	var previousDream Config
+	if db.GetSetting(ctx, "dream", &previousDream) == nil {
+		defer db.PutSetting(context.Background(), "dream", previousDream, memberID)
+	}
+	var previousGateway GatewayConfig
+	if db.GetSetting(ctx, "ai_gateway", &previousGateway) == nil {
+		defer db.PutSetting(context.Background(), "ai_gateway", previousGateway, memberID)
+	}
+	if err = db.PutSetting(ctx, "dream", Config{Model: "develop-fence-model", TokenLimit: 256}, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.PutSetting(ctx, "ai_gateway", GatewayConfig{BaseURL: gatewayServer.URL, TimeoutSeconds: 5}, memberID); err != nil {
+		t.Fatal(err)
+	}
+
+	service := &Service{Store: db}
+	type developResult struct {
+		value AssistResult
+		err   error
+	}
+	developDone := make(chan developResult, 1)
+	go func() {
+		value, developErr := service.Develop(ctx, memberID, dreamID, "expand")
+		developDone <- developResult{value: value, err: developErr}
+	}()
+	select {
+	case <-gatewayStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Dream development did not reach the gateway")
+	}
+
+	removeDone := make(chan error, 1)
+	go func() {
+		_, removeErr := db.Pool.Exec(context.Background(), `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID)
+		removeDone <- removeErr
+	}()
+	select {
+	case removeErr := <-removeDone:
+		t.Fatalf("membership removal bypassed the active Dream access lease: %v", removeErr)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(releaseGateway)
+
+	select {
+	case result := <-developDone:
+		if result.err != nil || result.value.Content != "현재 공유 권한 아래에서 만든 발전 결과입니다." {
+			t.Fatalf("authorized development failed: result=%#v err=%v", result.value, result.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Dream development did not finish after the gateway was released")
+	}
+	select {
+	case removeErr := <-removeDone:
+		if removeErr != nil {
+			t.Fatal(removeErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("membership removal did not resume after Dream development released its lease")
+	}
+
+	if _, err = service.Develop(ctx, memberID, dreamID, "expand"); err == nil {
+		t.Fatal("development after completed membership revocation was allowed")
+	}
+	if gatewayCalls.Load() != 1 {
+		t.Fatalf("revoked development reached the gateway: calls=%d", gatewayCalls.Load())
+	}
+}
+
+func TestAIAssistHoldsSourceAccessThroughGatewayCallIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not set")
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("pool_max_conns", "2")
+	parsed.RawQuery = query.Encode()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	db, err := store.Open(ctx, parsed.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ownerID, memberID, spaceID, sourceID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	ownerName, memberName := "assist_fence_owner_"+ownerID.String(), "assist_fence_member_"+memberID.String()
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO users(id,username,display_name) VALUES
+		($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, memberID, memberName); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, memberID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO user_preferences(user_id) VALUES($1)`, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'AI Assist access fence')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'edit')`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'공유 공간 AI Assist 원본 생각')`, sourceID, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+
+	gatewayStarted := make(chan struct{}, 1)
+	releaseGateway := make(chan struct{})
+	var gatewayCalls atomic.Int32
+	gatewayServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		gatewayCalls.Add(1)
+		gatewayStarted <- struct{}{}
+		<-releaseGateway
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": "현재 공유 권한 아래에서 만든 AI Assist 결과입니다."}}},
+			"usage":   map[string]any{"prompt_tokens": 12, "completion_tokens": 8},
+		})
+	}))
+	defer gatewayServer.Close()
+
+	var previousDream Config
+	if db.GetSetting(ctx, "dream", &previousDream) == nil {
+		defer db.PutSetting(context.Background(), "dream", previousDream, memberID)
+	}
+	var previousGateway GatewayConfig
+	if db.GetSetting(ctx, "ai_gateway", &previousGateway) == nil {
+		defer db.PutSetting(context.Background(), "ai_gateway", previousGateway, memberID)
+	}
+	if err = db.PutSetting(ctx, "dream", Config{Model: "assist-fence-model", TokenLimit: 256}, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.PutSetting(ctx, "ai_gateway", GatewayConfig{BaseURL: gatewayServer.URL, TimeoutSeconds: 5}, memberID); err != nil {
+		t.Fatal(err)
+	}
+
+	service := &Service{Store: db}
+	type assistCallResult struct {
+		value AssistResult
+		err   error
+	}
+	assistDone := make(chan assistCallResult, 1)
+	go func() {
+		value, assistErr := service.Assist(ctx, memberID, []uuid.UUID{sourceID}, "expand")
+		assistDone <- assistCallResult{value: value, err: assistErr}
+	}()
+	select {
+	case <-gatewayStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("AI Assist did not reach the gateway")
+	}
+
+	removeDone := make(chan error, 1)
+	go func() {
+		_, removeErr := db.Pool.Exec(context.Background(), `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID)
+		removeDone <- removeErr
+	}()
+	select {
+	case removeErr := <-removeDone:
+		t.Fatalf("membership removal bypassed the active AI Assist source lease: %v", removeErr)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(releaseGateway)
+
+	select {
+	case result := <-assistDone:
+		if result.err != nil || result.value.Content != "현재 공유 권한 아래에서 만든 AI Assist 결과입니다." {
+			t.Fatalf("authorized AI Assist failed: result=%#v err=%v", result.value, result.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("AI Assist did not finish after the gateway was released")
+	}
+	select {
+	case removeErr := <-removeDone:
+		if removeErr != nil {
+			t.Fatal(removeErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("membership removal did not resume after AI Assist released its source lease")
+	}
+
+	if _, err = service.Assist(ctx, memberID, []uuid.UUID{sourceID}, "expand"); err == nil {
+		t.Fatal("AI Assist after completed membership revocation was allowed")
+	}
+	if gatewayCalls.Load() != 1 {
+		t.Fatalf("revoked AI Assist reached the gateway: calls=%d", gatewayCalls.Load())
+	}
+}
+
+func TestDreamSourceSelectionRejectsRevokedMembershipIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not set")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ownerID, memberID, spaceID := uuid.New(), uuid.New(), uuid.New()
+	ownerName, memberName := "source_owner_"+ownerID.String(), "source_member_"+memberID.String()
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO users(id,username,display_name) VALUES
+		($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, memberID, memberName); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, memberID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO user_preferences(user_id) VALUES($1)`, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'revoked source selection')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'edit')`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO notes(space_id,author_id,content,x,y) VALUES
+		($1,$2,'첫 번째 자동 Dream 원본',10,20),($1,$2,'두 번째 자동 Dream 원본',300,200)`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Store: db}
+	cfg := Config{MinNotes: 2, ContextDays: 7, MaxContextNotes: 10}
+	if sources, selectErr := service.selectSources(ctx, cfg, memberID); selectErr != nil || len(sources) != 2 {
+		t.Fatalf("authorized sources were not selected: sources=%#v err=%v", sources, selectErr)
+	}
+	if _, err = db.Pool.Exec(ctx, `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if sources, selectErr := service.selectSources(ctx, cfg, memberID); selectErr == nil {
+		t.Fatalf("revoked shared-space sources remained eligible: %#v", sources)
 	}
 }
 

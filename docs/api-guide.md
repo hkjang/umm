@@ -43,6 +43,14 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | `PUT` | `/comments/{id}/resolve` | 댓글 해결·재개 | `notes:write` |
 | `POST` | `/spaces/{id}/edges` | 두 포스트잇 간 연결선 생성 (`source`, `target`, `relation`) | `notes:write` |
 
+### 🧠 AI Assist
+
+| 메서드 | 경로 | 설명 | 권한 스코프 |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/ai/assist` | 선택한 1~20개 생각을 요약·질문·확장·반대 관점·실행 항목으로 발전 | `ai:assist` |
+
+서버는 선택한 모든 생각이 현재 접근 가능하고 AI 제외 상태가 아닌지 외부 호출 직전에 다시 확인합니다. 해당 note·space·membership 행을 Gateway 응답이 끝날 때까지 잠그므로 공유 회수나 AI 제외가 먼저 확정되면 본문을 보내지 않고 미사용 쿼터를 취소하며, AI lease가 먼저 시작되면 정책 변경은 호출 종료까지 기다립니다.
+
 ### ☀️ Today 리뷰
 
 | 메서드 | 경로 | 설명 | 권한 스코프 |
@@ -62,7 +70,7 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | `POST` | `/dreams/{id}/develop` | 확장·반대 관점·실행 항목으로 발전 | `dreams:read` |
 | `POST` | `/dreams/{id}/developed-note` | 발전 결과를 새 메모와 `expanded` 연결선으로 원자 저장(동일 재시도 무중복) | `dreams:read`, `notes:write` |
 
-Today의 대기 Dream과 `GET /dreams`의 후보·출처는 매 조회마다 Dream이 속한 공간의 현재 owner/member 권한을 확인합니다. 공간 공유가 회수되면 파생 본문·공간명·원본이 즉시 목록에서 빠지고 보관한 Dream ID로 피드백·숨김·채택·재생성·발전을 요청해도 상태나 개인화를 바꾸지 않습니다. 피드백은 Dream 행과 membership을 같은 transaction에서 잠급니다. 채택과 발전 결과 저장은 열린 transaction 안에서 현재 공간과 편집 membership을 잠근 뒤 메모·연결선·이벤트를 확정합니다. 권한 강등이 먼저 끝나면 생성하지 않고, 생성이 먼저 잠금을 얻으면 권한 변경이 commit 뒤까지 기다립니다. 별도 pool 연결로 권한을 다시 조회하지 않으므로 `pool_max_conns=1`에서도 자신이 보유한 transaction 연결을 기다리지 않습니다.
+Today의 대기 Dream과 `GET /dreams`의 후보·출처는 매 조회마다 Dream이 속한 공간의 현재 owner/member 권한을 확인합니다. 자동 Dream의 원본 선별도 현재 접근 가능한 사용자 작성 생각만 허용하고, 최종 source lease 안에서 자격을 다시 확인합니다. 공간 공유가 회수되면 파생 본문·공간명·원본이 즉시 목록에서 빠지고 보관한 Dream ID로 피드백·숨김·채택·재생성·발전을 요청해도 상태나 개인화를 바꾸지 않습니다. 피드백은 Dream 행과 membership을 같은 transaction에서 잠급니다. 자동 생성·재생성·발전은 AI 제외되지 않은 원본 note, 관련 공간과 현재 membership을 정렬된 순서로 잠그며 Dream 기반 호출은 Dream 행과 공간도 포함한 뒤 그 lease 안에서만 Gateway를 호출합니다. 회수가 먼저 끝나면 외부 호출 전 쿼터 예약을 취소하고 본문을 보내지 않으며, lease가 먼저 시작되면 회수 transaction이 호출 종료 뒤까지 기다립니다. 자동 생성 후보·source·알림과 채택·발전 결과 저장도 각 열린 transaction 안에서 함께 확정합니다. 별도 pool 연결로 권한을 다시 조회하지 않으므로 작은 pool에서도 자신이 보유한 transaction 연결을 기다리지 않습니다.
 
 `GET /notifications`의 각 항목에는 `resourceType`, `resourceId`, `resourceSpaceId`, `metadata`가 포함됩니다. Dream 알림은 `/dreams?focus={resourceId}`, 공간 공유 알림은 `/space/{resourceId}`, 댓글·멘션은 `/space/{resourceSpaceId}?note={resourceId}`로 연결할 수 있습니다. note 알림은 현재 생각의 soft-delete 상태와 실제 공간 접근권한을 목록·unread count 양쪽에서 확인하며, 이전 행에 `resourceSpaceId`가 없어도 생각이 속한 공간으로 권한을 계산합니다. Dream 알림도 현재 공간 ID를 저장하고 이전 행은 Dream에서 실제 공간을 찾아 공유 회수 뒤 본문을 숨깁니다. unread count와 page 조회는 DB 연결을 겹쳐 잡지 않고 순차 실행합니다. `pool_max_conns` 1~2에서는 realtime listener도 안전 폴링으로 전환하므로 endpoint가 자신이 필요한 request 연결을 기다리지 않습니다.
 

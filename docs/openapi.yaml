@@ -394,6 +394,7 @@ paths:
       operationId: post_ai_assist
       tags: [AI]
       summary: Quietly develop selected thoughts with the configured internal AI Gateway
+      description: Revalidates and locks every selected note, space, and current membership through the external AI call; completed access revocation or AI exclusion prevents prompt dispatch.
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [noteIds, mode], properties: { noteIds: { type: array, minItems: 1, maxItems: 20, items: { type: string, format: uuid } }, mode: { type: string, enum: [summarize, questions, expand, challenge, actions] } } } } } }
       responses: { '200': { description: Generated thought aid }, '400': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' }, '503': { $ref: '#/components/responses/Error' } }
   /preferences:
@@ -623,6 +624,7 @@ paths:
       operationId: post_dreams_dreamId_regenerate
       tags: [Dream]
       summary: Generate a distinct alternative from the same source notes
+      description: Locks the Dream, eligible source notes, source spaces and current memberships through the external AI call so completed access revocation prevents prompt dispatch and state changes.
       x-required-scope: dreams:read
       responses: { '200': { description: Replaced Dream candidate, content: { application/json: { schema: { $ref: '#/components/schemas/DreamCandidate' } } } }, '429': { $ref: '#/components/responses/Error' }, '503': { $ref: '#/components/responses/Error' } }
   /dreams/{dreamId}/develop:
@@ -632,6 +634,7 @@ paths:
       operationId: post_dreams_dreamId_develop
       tags: [Dream]
       summary: Expand, challenge or turn a Dream into actions
+      description: Holds a transaction-scoped lease on the Dream, eligible sources and every current space membership until the external AI call finishes.
       x-required-scope: dreams:read
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mode], properties: { mode: { type: string, enum: [expand, challenge, actions] } } } } } }
       responses: { '200': { description: Developed Dream text, content: { application/json: { schema: { type: object, required: [mode, content, model, inputTokens, outputTokens], properties: { mode: { type: string }, content: { type: string }, model: { type: string }, inputTokens: { type: integer }, outputTokens: { type: integer } } } } } }, '429': { $ref: '#/components/responses/Error' }, '503': { $ref: '#/components/responses/Error' } }

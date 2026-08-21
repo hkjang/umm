@@ -36,12 +36,12 @@ User API/MCP key (one-time plaintext display)
 - Export: 관리자가 `export` 검토를 켠 경우 승인 후 24시간 동안만 허용
 - Admin secret: API 응답에서 항상 마스킹, 감사 로그에 원문 미기록
 - Browser write: `Origin`의 scheme·hostname·effective port와 `Sec-Fetch-Site`를 확인해 로그인과 인증된 변경 요청의 cross-site·cross-scheme 전송 차단. 신뢰 proxy가 정규화한 scheme 또는 관리자 공개 URL origin과 정확히 일치해야 함
-- AI exclusion: 메모 또는 공간의 AI 제외 flag를 원격 임베딩 batch 구성 전에 확인하며, 제외 콘텐츠는 외부 Gateway 대신 서버 내부 로컬 vector만 사용. 장애 폴백 뒤 비교 집합 전체를 로컬로 맞추는 후속 pass도 원래 Gateway 설정 세대에 묶어 두 pass 사이의 관리자 설정 변경을 넘어 새 벡터를 덮지 못하게 함
+- AI exclusion: 메모 또는 공간의 AI 제외 flag를 원격 임베딩 batch 구성 전에 확인하며, 제외 콘텐츠는 외부 Gateway 대신 서버 내부 로컬 vector만 사용. AI Assist와 자동·대화형 Dream도 외부 호출 직전 source lease에서 제외 상태를 다시 확인하고 호출 종료까지 note·space 변경을 잠금. 장애 폴백 뒤 비교 집합 전체를 로컬로 맞추는 후속 pass도 원래 Gateway 설정 세대에 묶어 두 pass 사이의 관리자 설정 변경을 넘어 새 벡터를 덮지 못하게 함
 - Offline retry: atomic Canvas mutation에 한정한 `Idempotency-Key`, 사용자·키별 advisory lock, 실행 중 갱신되는 2분 pending lease, 도메인/SSE/outbox/응답 원자 커밋과 24시간 성공 replay로 동시 중복·post-commit 기록 유실·crash 고착 방지
 - Aggregate scope: `notes:read`만 가진 API key의 Today 응답에서는 `dreams:read` 데이터와 개수를 제거해 집계 endpoint를 통한 scope 우회를 차단
 - One-time secrets: API key와 webhook signing key 생성·회전 응답은 멱등 캐시 대상에서 제외해 평문 자격 증명을 PostgreSQL에 남기지 않음
 - Dream materialization: 채택·발전 transaction이 공간과 현재 편집 membership을 같은 연결에서 잠가, 권한 강등·회수와 메모·연결선·이벤트 생성이 엇갈리거나 작은 pool에서 중첩 연결을 기다리지 않도록 함
-- Dream access lifecycle: Today·Dream 이력·상세·source와 Dream 알림은 저장된 참조값 대신 실제 Dream 공간의 현재 owner/member만 반환하고, 피드백·숨김은 Dream 행과 membership을 같은 transaction에서 잠금. 공유 회수 뒤에는 파생 AI 본문·공간명·원본·알림을 숨기고 보관한 Dream ID의 채택·재생성·발전·상태/선호 mutation을 거부
+- Dream access lifecycle: Today·Dream 이력·상세·source와 Dream 알림은 저장된 참조값 대신 실제 Dream 공간의 현재 owner/member만 반환하고, 피드백·숨김은 Dream 행과 membership을 같은 transaction에서 잠금. AI Assist·자동 Dream 생성·재생성·발전은 선택 원본 note와 모든 관련 공간·membership을 외부 Gateway 호출 종료까지 잠그고, Dream 기반 호출은 Dream 행도 함께 잠가 공유 회수 뒤 캡처 본문 전송을 차단. 최종 lease 실패 시 아직 외부 호출에 쓰지 않은 AI 쿼터를 취소하며 자동 생성 후보·source·알림은 lease transaction에서 함께 commit. 공유 회수 뒤에는 파생 AI 본문·공간명·원본·알림을 숨기고 보관한 Dream ID의 채택·재생성·발전·상태/선호 mutation을 거부
 - Security-setting compatibility: 구버전 관리 payload가 생략한 로그인·API·AI guard는 설정별 advisory transaction lock 아래 최신 확정값에서 병합하고, 명시한 `0`과 omission을 구분하며 `null`은 거부해 롤링 배포 중 보호 수준 초기화를 차단
 
 TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장합니다. 이 경우 직접 연결되는 proxy IP/CIDR만 `UMM_TRUSTED_PROXY_CIDRS`에 지정하고 proxy가 `X-Forwarded-For`와 `X-Forwarded-Proto: https`를 정규화해 전달하도록 구성하세요. 목록이 비어 있거나 socket peer가 목록 밖이면 umm은 모든 forwarding header를 제거합니다. Keycloak redirect URI는 wildcard가 아니라 callback 전체 경로로 제한하세요.

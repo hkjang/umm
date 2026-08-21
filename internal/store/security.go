@@ -297,6 +297,17 @@ func (s *Store) ReleaseAIDailyQuota(ctx context.Context, reservationID uuid.UUID
 	return err
 }
 
+// CancelAIDailyQuotaBeforeCall removes a durable claim only when the caller
+// has not dispatched the external AI request. Once a gateway request starts,
+// callers must retain the consumed claim even if the request later fails.
+func (s *Store) CancelAIDailyQuotaBeforeCall(ctx context.Context, reservationID uuid.UUID) error {
+	if reservationID == uuid.Nil {
+		return nil
+	}
+	_, err := s.Pool.Exec(ctx, `DELETE FROM ai_quota_reservations WHERE id=$1`, reservationID)
+	return err
+}
+
 // StartJanitor removes rows whose lifetime has expired. Before v0.8.0 expired
 // sessions and OAuth states were never deleted, so both tables grew for the life
 // of the deployment.
