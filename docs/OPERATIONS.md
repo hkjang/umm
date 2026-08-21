@@ -14,8 +14,8 @@
 
 ```bash
 sha256sum -c SHA256SUMS
-./scripts/load-offline.sh umm-v0.8.0.tar.gz
-docker image inspect umm:v0.8.0
+./scripts/load-offline.sh umm-v0.8.1.tar.gz
+docker image inspect umm:v0.8.1
 ```
 
 PostgreSQL user는 대상 database에 schema/table/extension을 생성할 권한이 필요합니다(`pgcrypto`, `citext`, `pg_trgm`). 시작 시 embedded migration이 transaction으로 실행됩니다.
@@ -58,9 +58,9 @@ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 업그레이드 전에 PostgreSQL snapshot/backup을 만들고 현재 `ENCRYPTION_KEY`를 별도 비밀 저장소에서 확인합니다.
 
 ```bash
-gzip -dc umm-v0.8.0.tar.gz | docker load
+gzip -dc umm-v0.8.1.tar.gz | docker load
 docker stop umm
-# 동일한 네 필수 환경변수와 DB로 umm:v0.8.0 실행
+# 동일한 네 필수 환경변수와 DB로 umm:v0.8.1 실행
 ```
 
 Schema migration은 기동 시 forward 방향으로만 자동 적용됩니다. 되돌려야 할 때를 위해 `migrations/down/`에 되돌리기 스크립트를 둡니다. 자동으로는 절대 실행되지 않습니다 — 컬럼을 지우는 일은 그 안의 데이터를 지우는 일이므로, 백업을 확보한 운영자가 의도적으로 실행해야 합니다.
@@ -107,4 +107,4 @@ vLLM이 최종 본문 없이 추론만 반환한다면 모델에 맞는 `--reaso
 
 ## Release 규칙
 
-`VERSION`이 `0.8.0`이면 tag는 `v0.8.0`, image는 `umm:v0.8.0`, GitHub asset은 `umm-v0.8.0.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 image tarball, SPDX JSON SBOM, `SHA256SUMS`가 첨부되며 GitHub artifact provenance와 SBOM attestation을 함께 발급합니다.
+`VERSION`이 `0.8.1`이면 tag는 `v0.8.1`, image는 `umm:v0.8.1`, GitHub asset은 `umm-v0.8.1.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 image tarball, SPDX JSON SBOM, `SHA256SUMS`가 첨부되며 GitHub artifact provenance와 SBOM attestation을 함께 발급합니다.

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -79,7 +80,12 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 		SELECT sp.name FROM spaces sp
 		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
 		WHERE sp.id=$1 AND (sp.owner_id=$2 OR sm.user_id=$2)`, spaceID, p.User.ID).Scan(&spaceName); err != nil {
-		writeError(w, 404, "공간을 찾을 수 없습니다.")
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 404, "공간을 찾을 수 없습니다.")
+			return
+		}
+		slog.Warn("export space access recheck failed", "space_id", spaceID, "user_id", p.User.ID, "error", err)
+		writeError(w, 500, "내보낼 공간을 확인하지 못했습니다.")
 		return
 	}
 	var out strings.Builder

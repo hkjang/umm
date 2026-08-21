@@ -139,7 +139,7 @@ func TestSpaceMemberListRechecksAccessIntegration(t *testing.T) {
 	}
 
 	authService := &auth.Service{Store: db}
-	session, err := authService.CreateSession(ctx, memberID)
+	session, err := authService.CreateSession(ctx, memberID, auth.SessionOrigin{UserAgent: "integration-test", ClientIP: "127.0.0.1"})
 	if err != nil {
 		t.Fatal(err)
 	}

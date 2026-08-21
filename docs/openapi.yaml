@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: umm API
-  version: 0.8.0
+  version: 0.8.1
   description: |
     Spatial Thought Memory, collaboration, automation and Dream Layer API.
     Supported Canvas mutation requests can include an `Idempotency-Key` header (8-128 safe characters) for replay-safe offline synchronization.

@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.8.0-success?style=flat-square" alt="v0.8.0" />
+  <img src="https://img.shields.io/badge/Release-v0.8.1-success?style=flat-square" alt="v0.8.1" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,7 +25,15 @@
 
 ---
 
-## v0.8.0 — 많아져도 버티는 umm
+## v0.8.1 — 권한 경계를 끝까지 지키는 패치
+
+- **원자적 콘텐츠 권한 확인**: Canvas 목록·수정 이력·댓글·백링크는 콘텐츠를 읽는 PostgreSQL statement 안에서 현재 owner/member 조건을 함께 확인합니다.
+- **공유·내보내기 재검증**: 멤버 목록과 공간 내보내기도 응답 직전의 접근권한을 다시 확인해, 멤버 제거와 조회가 겹쳐도 공간 정보를 노출하지 않습니다.
+- **회귀 검증**: PostgreSQL 17 통합 테스트가 같은 세션에서 멤버 제거 전후를 재현하고, 제거 뒤 모든 본문 조회가 `404`로 닫히는지 검사합니다.
+
+v0.8.0의 규모·보안·접근성 개선도 모두 포함합니다.
+
+자세한 변경과 업그레이드 안내: [v0.8.1 릴리스 노트](docs/releases/v0.8.1.md)
 
 - **푸시 협업**: PostgreSQL `LISTEN/NOTIFY` 기반 실시간 스트림으로 바꿔, 공간을 열어 둔 사람이 늘어도 유휴 데이터베이스 비용이 0입니다.
 - **인덱스 검색**: 키워드 조건을 `pg_trgm` GIN 인덱스가 타는 형태로 재작성하고, 선택적으로 게이트웨이 임베딩 모델을 붙일 수 있습니다.
@@ -140,7 +148,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.8.0
+  umm:v0.8.1
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

@@ -2,7 +2,7 @@
 
 `umm`은 생각을 문서나 폴더로 정리하기 전에 공간에 먼저 붙이고, 연결하고, 밤사이 **Dream**으로 다시 발견하는 **Spatial Thought Memory** 플랫폼입니다.
 
-현재 문서 기준은 **v0.8.0**입니다. v0.7.0의 Today 리뷰, 하이브리드 검색·백링크, 댓글·멘션, 오프라인 동기화와 충돌 병합, 서명 웹훅, AI 평가, Prometheus/OpenTelemetry, master-key 회전과 공급망 증명에 더해, 푸시 기반 실시간 협업(LISTEN/NOTIFY), 인덱스를 타는 검색, 선택적 게이트웨이 임베딩, 로그인 잠금·요청 한도·AI 사용 한도, 응답별 CSP nonce와 로그인 기기 관리, English·다크 모드·마크다운 가져오기를 포함합니다.
+현재 문서 기준은 **v0.8.1**입니다. v0.8.0의 푸시 기반 실시간 협업(LISTEN/NOTIFY), 인덱스 검색, 선택적 게이트웨이 임베딩, 남용 방지, 응답별 CSP nonce, English·다크 모드·마크다운 가져오기에 더해, 멤버 제거와 콘텐츠 조회가 겹치는 순간에도 Canvas·이력·댓글·백링크·멤버 목록·내보내기의 접근권한을 원자적으로 다시 확인합니다.
 
 ---
 
@@ -40,6 +40,7 @@
   - REST API 공식 계약 스키마. CI가 라우터와 대조해 문서와 실제 API가 어긋나면 빌드를 실패시킵니다
 
 ### 5. 릴리스 노트
+- 📄 **[v0.8.1 — 권한 경계를 끝까지 지키는 패치](releases/v0.8.1.md)**
 - 📄 **[v0.8.0 — 많아져도 버티는 umm](releases/v0.8.0.md)**
 - 📄 **[v0.7.0 — 생각을 다시 만나고, 안전하게 협업하기](releases/v0.7.0.md)**
 
@@ -49,7 +50,7 @@
 
 ```bash
 # 1. 패키지 이미지 로드
-gzip -dc umm-v0.8.0.tar.gz | docker load
+gzip -dc umm-v0.8.1.tar.gz | docker load
 
 # 2. 필수 환경변수 4개로 컨테이너 실행
 docker run -d --name umm --restart unless-stopped \
@@ -58,7 +59,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-admin-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.8.0
+  umm:v0.8.1
 ```
 
 - **접속 주소**: `http://localhost:8080` (초기 관리자 계정: `admin`)

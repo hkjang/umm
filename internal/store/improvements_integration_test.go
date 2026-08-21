@@ -394,6 +394,10 @@ func TestContentQueriesRejectRevokedMemberIntegration(t *testing.T) {
 	if err != nil || len(notes) != 2 {
 		t.Fatalf("member canvas access before revocation: %d err=%v", len(notes), err)
 	}
+	filtered, _, err := db.ListNotes(ctx, memberID, spaceID, "source")
+	if err != nil || len(filtered) != 1 || filtered[0].Content != "source secret" {
+		t.Fatalf("member filtered canvas access before revocation: %#v err=%v", filtered, err)
+	}
 	history, err := db.NoteHistory(ctx, memberID, sourceID)
 	if err != nil || len(history) != 1 || history[0].Content != "revision secret" {
 		t.Fatalf("member history access before revocation: %#v err=%v", history, err)
