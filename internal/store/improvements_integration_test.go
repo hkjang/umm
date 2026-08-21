@@ -883,6 +883,133 @@ func TestGatewayChangeWithSameModelReembedsIntegration(t *testing.T) {
 	}
 }
 
+func TestStaleGatewayResponseCannotOverwriteCurrentEmbeddingIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var originalGateway []byte
+	if err = db.Pool.QueryRow(ctx, `SELECT value FROM app_settings WHERE key='ai_gateway'`).Scan(&originalGateway); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_, _ = db.Pool.Exec(context.Background(), `UPDATE app_settings SET value=$1::jsonb,updated_at=clock_timestamp() WHERE key='ai_gateway'`, originalGateway)
+		db.InvalidateEmbeddingProvider()
+	}()
+
+	oldStarted := make(chan struct{})
+	releaseOld := make(chan struct{})
+	var startOnce, releaseOnce sync.Once
+	var oldCalls, currentCalls atomic.Int64
+	oldGateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		oldCalls.Add(1)
+		startOnce.Do(func() { close(oldStarted) })
+		select {
+		case <-releaseOld:
+		case <-r.Context().Done():
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "embedding": []float32{1, 0}}}})
+	}))
+	defer oldGateway.Close()
+	defer releaseOnce.Do(func() { close(releaseOld) })
+	currentGateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		currentCalls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "embedding": []float32{0, 2, 0}}}})
+	}))
+	defer currentGateway.Close()
+
+	putGateway := func(baseURL string) {
+		t.Helper()
+		raw, marshalErr := json.Marshal(embeddingSettings{BaseURL: baseURL, EmbeddingModel: "shared-model", TimeoutSeconds: 5})
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if _, updateErr := db.Pool.Exec(ctx, `UPDATE app_settings SET value=$1::jsonb,updated_at=clock_timestamp() WHERE key='ai_gateway'`, raw); updateErr != nil {
+			t.Fatal(updateErr)
+		}
+		db.InvalidateEmbeddingProvider()
+	}
+
+	userID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New()
+	username := "stale_embedding_" + userID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, userID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'stale gateway fence')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'same content version')`, noteID, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	notes := []Note{{ID: noteID, SpaceID: spaceID, Content: "same content version", Version: 1}}
+
+	putGateway(oldGateway.URL)
+	oldProvider := db.EmbeddingProvider(ctx)
+	if oldProvider.Remote == nil || !oldProvider.Remote.SettingsManaged {
+		t.Fatal("the settings-backed provider was not marked for configuration fencing")
+	}
+	oldDone := make(chan struct{})
+	go func() {
+		defer close(oldDone)
+		db.ensureEmbeddings(ctx, notes)
+	}()
+	select {
+	case <-oldStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the old gateway request did not start")
+	}
+
+	putGateway(currentGateway.URL)
+	currentProvider := db.EmbeddingProvider(ctx)
+	if currentProvider.Algorithm() == oldProvider.Algorithm() {
+		t.Fatal("the gateway change did not produce a new vector-space identifier")
+	}
+	db.ensureEmbeddings(ctx, notes)
+	releaseOnce.Do(func() { close(releaseOld) })
+	select {
+	case <-oldDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stale gateway request did not finish")
+	}
+
+	var algorithm, model string
+	var dimensions, version int
+	var vector []float32
+	if err = db.Pool.QueryRow(ctx, `SELECT algorithm,model,dimensions,vector,content_version FROM note_embeddings WHERE note_id=$1`, noteID).Scan(&algorithm, &model, &dimensions, &vector, &version); err != nil {
+		t.Fatal(err)
+	}
+	if algorithm != currentProvider.Algorithm() || model != "shared-model" || dimensions != 3 || version != 1 || len(vector) != 3 || vector[1] != 1 {
+		t.Fatalf("stale response replaced the current embedding: algorithm=%q model=%q dimensions=%d version=%d vector=%v", algorithm, model, dimensions, version, vector)
+	}
+	if oldCalls.Load() != 1 || currentCalls.Load() != 1 {
+		t.Fatalf("unexpected gateway calls: old=%d current=%d", oldCalls.Load(), currentCalls.Load())
+	}
+
+	if err = db.persistEmbeddingBatch(ctx,
+		[]embeddingTarget{{ID: noteID, Content: "older content", Version: 0}},
+		[][]float32{{1, 0, 0, 0}}, "legacy-vector-space", "legacy-model", intelligence.Provider{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Pool.QueryRow(ctx, `SELECT algorithm,dimensions,content_version FROM note_embeddings WHERE note_id=$1`, noteID).Scan(&algorithm, &dimensions, &version); err != nil {
+		t.Fatal(err)
+	}
+	if algorithm != currentProvider.Algorithm() || dimensions != 3 || version != 1 {
+		t.Fatalf("an older content version replaced the current embedding: algorithm=%q dimensions=%d version=%d", algorithm, dimensions, version)
+	}
+}
+
 func TestLoadEmbeddingsUsesOneFallbackVectorSpaceIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {

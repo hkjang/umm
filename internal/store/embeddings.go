@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -25,6 +27,8 @@ const embeddingBatchSize = 64
 // window instead of paying the remote timeout again on every page load. An
 // administrator changing the gateway configuration clears the window early.
 const embeddingFallbackRetryInterval = 5 * time.Minute
+
+var errEmbeddingProviderChanged = errors.New("embedding provider changed while the request was in flight")
 
 // Decrypter is the subset of cryptoutil.Cipher the store needs to read the
 // gateway credential. It stays an interface so the store keeps no hard
@@ -72,7 +76,7 @@ func (s *Store) EmbeddingProvider(ctx context.Context) intelligence.Provider {
 		}
 		provider.Remote = &intelligence.RemoteConfig{
 			BaseURL: settings.BaseURL, APIKey: key,
-			Model: strings.TrimSpace(settings.EmbeddingModel), Timeout: timeout,
+			Model: strings.TrimSpace(settings.EmbeddingModel), Timeout: timeout, SettingsManaged: true,
 		}
 	}
 	if !sameEmbeddingProvider(s.embeddings.provider, provider) {
@@ -97,7 +101,8 @@ func sameEmbeddingProvider(left, right intelligence.Provider) bool {
 	return left.Remote.BaseURL == right.Remote.BaseURL &&
 		left.Remote.APIKey == right.Remote.APIKey &&
 		left.Remote.Model == right.Remote.Model &&
-		left.Remote.Timeout == right.Remote.Timeout
+		left.Remote.Timeout == right.Remote.Timeout &&
+		left.Remote.SettingsManaged == right.Remote.SettingsManaged
 }
 
 func (s *Store) deferRemoteEmbeddings(provider intelligence.Provider) {
@@ -136,7 +141,7 @@ func (s *Store) UpsertEmbedding(ctx context.Context, noteID uuid.UUID, content s
 		return err
 	}
 	algorithm, err := s.writeEmbeddingsWithProvider(ctx, []embeddingTarget{{ID: noteID, Content: content, Version: version}}, provider)
-	if provider.Algorithm() != intelligence.LocalAlgorithm && algorithm == intelligence.LocalAlgorithm {
+	if err == nil && provider.Algorithm() != intelligence.LocalAlgorithm && algorithm == intelligence.LocalAlgorithm {
 		s.deferRemoteEmbeddings(provider)
 	}
 	return err
@@ -212,7 +217,10 @@ func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
 		}
 		stale = append(stale, embeddingTarget{ID: n.ID, Content: n.Content, Version: n.Version})
 	}
-	actualAlgorithm, _ := s.writeEmbeddingsWithProvider(ctx, stale, provider)
+	actualAlgorithm, writeErr := s.writeEmbeddingsWithProvider(ctx, stale, provider)
+	if writeErr != nil {
+		return
+	}
 	if algorithm != intelligence.LocalAlgorithm && actualAlgorithm == intelligence.LocalAlgorithm {
 		s.deferRemoteEmbeddings(provider)
 		// A gateway outage can leave older notes with remote vectors and newer
@@ -232,7 +240,6 @@ func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embed
 	}
 	actualAlgorithm := provider.Algorithm()
 	activeProvider := provider
-	var firstErr error
 	for start := 0; start < len(targets); start += embeddingBatchSize {
 		batch := targets[start:min(start+embeddingBatchSize, len(targets))]
 		texts := make([]string, len(batch))
@@ -248,25 +255,59 @@ func (s *Store) writeEmbeddingsWithProvider(ctx context.Context, targets []embed
 			// the remaining batches locally instead of repeating the full timeout.
 			activeProvider = intelligence.Provider{}
 		}
-		for i, target := range batch {
-			// A stored row is replaced when the note content moved on or when the
-			// active algorithm changed, so switching models re-embeds instead of
-			// leaving two incompatible vector spaces in one index.
-			_, err := s.Pool.Exec(ctx, `
-				INSERT INTO note_embeddings(note_id,algorithm,model,dimensions,vector,content_version,updated_at)
-				VALUES($1,$2,$3,$4,$5,$6,now())
-				ON CONFLICT(note_id) DO UPDATE SET
-				  algorithm=EXCLUDED.algorithm,model=EXCLUDED.model,dimensions=EXCLUDED.dimensions,
-				  vector=EXCLUDED.vector,content_version=EXCLUDED.content_version,updated_at=now()
-				WHERE note_embeddings.content_version<EXCLUDED.content_version
-				   OR note_embeddings.algorithm<>EXCLUDED.algorithm`,
-				target.ID, algorithm, model, len(vectors[i]), vectors[i], target.Version)
-			if err != nil && firstErr == nil {
-				firstErr = err
-			}
+		if err := s.persistEmbeddingBatch(ctx, batch, vectors, algorithm, model, provider); err != nil {
+			return actualAlgorithm, err
 		}
 	}
-	return actualAlgorithm, firstErr
+	return actualAlgorithm, nil
+}
+
+// persistEmbeddingBatch fences remote results against the current settings row.
+// The shared lock and writes live in one transaction: either an old request
+// commits before the administrator's settings update, or it observes the new
+// vector-space identifier and is discarded. It can never commit afterward.
+func (s *Store) persistEmbeddingBatch(ctx context.Context, batch []embeddingTarget, vectors [][]float32, algorithm, model string, origin intelligence.Provider) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if origin.Remote != nil && origin.Remote.SettingsManaged {
+		var raw []byte
+		if err = tx.QueryRow(ctx, `SELECT value FROM app_settings WHERE key='ai_gateway' FOR SHARE`).Scan(&raw); err != nil {
+			return err
+		}
+		var settings embeddingSettings
+		if err = json.Unmarshal(raw, &settings); err != nil {
+			return err
+		}
+		current := intelligence.Provider{}
+		if strings.TrimSpace(settings.BaseURL) != "" && strings.TrimSpace(settings.EmbeddingModel) != "" {
+			current.Remote = &intelligence.RemoteConfig{BaseURL: settings.BaseURL, Model: strings.TrimSpace(settings.EmbeddingModel)}
+		}
+		if current.Algorithm() != origin.Algorithm() {
+			s.InvalidateEmbeddingProvider()
+			return errEmbeddingProviderChanged
+		}
+	}
+	for i, target := range batch {
+		// A newer content version always wins. At the same version, a current
+		// provider may replace a different vector space, while an older content
+		// version can never win merely because its algorithm differs.
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO note_embeddings(note_id,algorithm,model,dimensions,vector,content_version,updated_at)
+			VALUES($1,$2,$3,$4,$5,$6,now())
+			ON CONFLICT(note_id) DO UPDATE SET
+			  algorithm=EXCLUDED.algorithm,model=EXCLUDED.model,dimensions=EXCLUDED.dimensions,
+			  vector=EXCLUDED.vector,content_version=EXCLUDED.content_version,updated_at=now()
+			WHERE note_embeddings.content_version<EXCLUDED.content_version
+			   OR (note_embeddings.content_version=EXCLUDED.content_version
+			       AND note_embeddings.algorithm<>EXCLUDED.algorithm)`,
+			target.ID, algorithm, model, len(vectors[i]), vectors[i], target.Version); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // loadEmbeddings chooses one current algorithm for the entire comparison set.

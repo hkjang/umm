@@ -58,10 +58,14 @@ func TestProviderUsesTheGatewayAndNormalises(t *testing.T) {
 func TestProviderAlgorithmIncludesCanonicalGatewayIdentity(t *testing.T) {
 	first := Provider{Remote: &RemoteConfig{BaseURL: "https://gateway-a.internal/v1", APIKey: "first", Model: "shared-model", Timeout: time.Second}}
 	equivalent := Provider{Remote: &RemoteConfig{BaseURL: "https://gateway-a.internal/v1/embeddings", APIKey: "second", Model: "shared-model", Timeout: 2 * time.Second}}
+	managed := Provider{Remote: &RemoteConfig{BaseURL: "https://gateway-a.internal/v1", Model: "shared-model", SettingsManaged: true}}
 	second := Provider{Remote: &RemoteConfig{BaseURL: "https://gateway-b.internal/v1", APIKey: "first", Model: "shared-model", Timeout: time.Second}}
 
 	if first.Algorithm() != equivalent.Algorithm() {
 		t.Fatalf("equivalent embedding endpoints must share a vector space: %q != %q", first.Algorithm(), equivalent.Algorithm())
+	}
+	if first.Algorithm() != managed.Algorithm() {
+		t.Fatalf("settings ownership must not change the vector space: %q != %q", first.Algorithm(), managed.Algorithm())
 	}
 	if first.Algorithm() == second.Algorithm() {
 		t.Fatalf("different gateways with the same model label shared an algorithm: %q", first.Algorithm())

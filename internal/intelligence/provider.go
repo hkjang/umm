@@ -23,10 +23,11 @@ const maxEmbeddingResponseBody = 32 << 20
 
 // RemoteConfig points at an OpenAI compatible /v1/embeddings endpoint.
 type RemoteConfig struct {
-	BaseURL string
-	APIKey  string
-	Model   string
-	Timeout time.Duration
+	BaseURL         string
+	APIKey          string
+	Model           string
+	Timeout         time.Duration
+	SettingsManaged bool
 }
 
 // Provider produces embeddings for a batch of texts. A zero Provider embeds
