@@ -20,11 +20,14 @@ async function precacheShell() {
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(precacheShell().then(() => self.skipWaiting()));
+  // Do not skipWaiting: an older open page still imports its versioned lazy
+  // chunks from the previous cache. The new worker activates after those
+  // clients close, then it is safe to retire the old shell.
+  event.waitUntil(precacheShell());
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith('umm-shell-') && key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith('umm-shell-') && key !== CACHE).map((key) => caches.delete(key)))));
 });
 
 self.addEventListener('fetch', (event) => {

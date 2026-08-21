@@ -19,4 +19,7 @@ const worker = readFileSync(resolve(root, 'dist/umm-sw.js'), 'utf8');
 if (!worker.includes("BUILD_MANIFEST = '/asset-manifest.json'") || !worker.includes('cache.addAll')) {
   throw new Error('service worker does not precache the build manifest assets');
 }
+if (/\bself\.skipWaiting\s*\(/.test(worker) || /\bself\.clients\.claim\s*\(/.test(worker)) {
+  throw new Error('service worker must not replace active clients before their versioned chunks are retired');
+}
 console.log(`PWA precache verified: ${files.size} build assets`);
