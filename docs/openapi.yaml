@@ -401,9 +401,10 @@ paths:
     put:
       operationId: put_preferences
       tags: [Personal]
-      summary: Replace personal preferences (browser session only)
+      summary: Partially update personal preferences (browser session only)
+      description: Omitted fields retain their latest stored values. Overlapping partial requests are merged atomically, and an explicit null clears dream_pause_until.
       x-session-only: true
-      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/Preferences' } } } }
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/PreferencesPatch' } } } }
       responses: { '200': { description: Preferences saved } }
   /api-keys:
     get:
@@ -1086,3 +1087,17 @@ components:
         locale: { type: string }
         edge_style: { type: string, enum: [bezier, smoothstep, straight], default: bezier }
         review_digest: { type: boolean, default: true }
+    PreferencesPatch:
+      type: object
+      description: A presence-aware partial preference update; omitted fields are preserved.
+      properties:
+        dream_enabled: { type: boolean }
+        dream_frequency: { type: string, enum: [daily, three_week, weekly] }
+        dream_style: { type: string, enum: [auto, connection, question, expansion, free] }
+        dream_notifications: { type: boolean }
+        include_old_notes: { type: boolean }
+        dream_pause_until: { type: [string, 'null'], format: date-time }
+        theme: { type: string, enum: [light, dark, system] }
+        locale: { type: string, enum: [ko, en] }
+        edge_style: { type: string, enum: [bezier, smoothstep, straight] }
+        review_digest: { type: boolean }

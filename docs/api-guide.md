@@ -66,7 +66,7 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 개인 설정과 API key 생성·회전·폐기, 세션 관리, 모든 `/admin/*` 작업은 API key가 아니라 로그인한 브라우저 세션에서만 허용됩니다. 제한된 자동화 key가 새 자격 증명을 만들거나 관리자 role을 상속해 권한을 넓힐 수 없습니다.
 
-`PUT /preferences`는 **부분 수정**입니다. 바꾸려는 필드만 보내면 되고, 보내지 않은 필드는 저장된 값이 유지됩니다.
+`PUT /preferences`는 **원자적 부분 수정**입니다. 바꾸려는 필드만 보내면 되고, 보내지 않은 필드는 요청이 처리되는 시점의 최신 저장값이 유지됩니다. 언어와 테마처럼 서로 다른 설정을 동시에 바꿔도 한 요청이 다른 요청을 되돌리지 않으며, `dream_pause_until: null`은 일시정지를 명시적으로 해제합니다.
 
 ### 🔐 로그인한 기기
 
