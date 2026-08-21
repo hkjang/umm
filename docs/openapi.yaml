@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: umm API
-  version: 0.7.0
+  version: 0.8.0
   description: |
     Spatial Thought Memory, collaboration, automation and Dream Layer API.
     Supported Canvas mutation requests can include an `Idempotency-Key` header (8-128 safe characters) for replay-safe offline synchronization.
@@ -422,6 +422,47 @@ paths:
         required: true
         content: { application/json: { schema: { type: object, required: [name, scopes], properties: { name: { type: string }, scopes: { type: array, items: { type: string } }, expiresDays: { type: integer, minimum: 1, maximum: 3650 } } } } }
       responses: { '201': { description: Key metadata and one-time secret } }
+  /sessions:
+    get:
+      operationId: get_sessions
+      tags: [Personal]
+      summary: List the browser sessions currently signed in to this account
+      x-session-only: true
+      description: The session making the request is flagged with `current`. Session tokens are never returned.
+      responses:
+        '200':
+          description: Active sessions, most recently used first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: '#/components/schemas/Session' }
+  /sessions/{sessionId}:
+    delete:
+      operationId: delete_session
+      tags: [Personal]
+      summary: End one signed-in session
+      x-session-only: true
+      description: Ending the current session also clears this browser's cookie.
+      parameters:
+        - { in: path, name: sessionId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Session ended }
+        '404': { description: No such session for this account }
+  /sessions/revoke-others:
+    post:
+      operationId: post_sessions_revoke_others
+      tags: [Personal]
+      summary: Sign every other device out
+      x-session-only: true
+      responses:
+        '200':
+          description: Number of sessions that were ended
+          content:
+            application/json: { schema: { type: object, properties: { revoked: { type: integer } } } }
   /notifications:
     get:
       operationId: get_notifications
@@ -760,6 +801,17 @@ components:
       type: object
       required: [serviceName, version, oidcEnabled, dreamEnabled, dreamAllowUserDisable, mcpProtocol]
       properties: { serviceName: { type: string }, version: { type: string }, oidcEnabled: { type: boolean }, dreamEnabled: { type: boolean }, dreamAllowUserDisable: { type: boolean }, mcpProtocol: { type: string } }
+    Session:
+      type: object
+      required: [id, current, createdAt, lastSeenAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        userAgent: { type: string, description: Reported browser, truncated for display }
+        clientIp: { type: string }
+        current: { type: boolean, description: True for the session making the request }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
     User:
       type: object
       required: [id, username, displayName, role, active]

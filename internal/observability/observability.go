@@ -35,11 +35,17 @@ type requestMetric struct {
 	BucketHits []uint64
 }
 
+type gauge struct {
+	Value float64
+	Help  string
+}
+
 type Registry struct {
 	mu       sync.RWMutex
 	started  time.Time
 	inFlight int64
 	requests map[metricKey]*requestMetric
+	gauges   map[string]gauge
 }
 
 func NewRegistry() *Registry {
@@ -89,6 +95,17 @@ func (r *Registry) Snapshot() map[string]any {
 	return map[string]any{"uptimeSeconds": int64(time.Since(r.started).Seconds()), "requests": total, "serverErrors": errors, "inFlight": r.inFlight}
 }
 
+// Gauge records a named point-in-time value that Prometheus should expose
+// alongside the request metrics, such as the realtime subscriber count.
+func (r *Registry) Gauge(name string, value float64, help string) {
+	r.mu.Lock()
+	if r.gauges == nil {
+		r.gauges = map[string]gauge{}
+	}
+	r.gauges[name] = gauge{Value: value, Help: help}
+	r.mu.Unlock()
+}
+
 func (r *Registry) Prometheus(w io.Writer, version string) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -98,6 +115,17 @@ func (r *Registry) Prometheus(w io.Writer, version string) {
 	fmt.Fprintln(w, "# HELP umm_http_requests_in_flight Current in-flight HTTP requests.")
 	fmt.Fprintln(w, "# TYPE umm_http_requests_in_flight gauge")
 	fmt.Fprintf(w, "umm_http_requests_in_flight %d\n", r.inFlight)
+	names := make([]string, 0, len(r.gauges))
+	for name := range r.gauges {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		metric := r.gauges[name]
+		fmt.Fprintf(w, "# HELP %s %s\n", name, metric.Help)
+		fmt.Fprintf(w, "# TYPE %s gauge\n", name)
+		fmt.Fprintf(w, "%s %g\n", name, metric.Value)
+	}
 	fmt.Fprintln(w, "# HELP umm_http_requests_total HTTP requests by method, route and status class.")
 	fmt.Fprintln(w, "# TYPE umm_http_requests_total counter")
 	fmt.Fprintln(w, "# HELP umm_http_request_duration_seconds HTTP request latency histogram.")

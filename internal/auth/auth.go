@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -23,9 +24,10 @@ type contextKey string
 const principalKey contextKey = "principal"
 
 type Principal struct {
-	User     store.User
-	Scopes   map[string]bool
-	AuthType string
+	User      store.User
+	Scopes    map[string]bool
+	AuthType  string
+	SessionID uuid.UUID
 }
 
 type Service struct{ Store *store.Store }
@@ -56,7 +58,28 @@ func randomToken(bytes int) (string, error) {
 }
 func digest(v string) []byte { s := sha256.Sum256([]byte(v)); return s[:] }
 
-func (s *Service) PasswordLogin(ctx context.Context, username, password string) (store.User, string, error) {
+// SessionOrigin records where a session was created so a user can recognise it
+// in the active session list and revoke one they do not recognise.
+type SessionOrigin struct {
+	UserAgent string
+	ClientIP  string
+}
+
+// OriginOf reads the origin of the request that is creating a session. The
+// user agent is truncated because it is only ever shown to a human.
+func OriginOf(r *http.Request) SessionOrigin {
+	agent := strings.TrimSpace(r.UserAgent())
+	if len(agent) > 300 {
+		agent = agent[:300]
+	}
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return SessionOrigin{UserAgent: agent, ClientIP: host}
+}
+
+func (s *Service) PasswordLogin(ctx context.Context, username, password string, origin SessionOrigin) (store.User, string, error) {
 	u, hash, err := s.Store.UserByUsername(ctx, strings.TrimSpace(username))
 	if err != nil {
 		return store.User{}, "", errors.New("invalid credentials")
@@ -64,11 +87,11 @@ func (s *Service) PasswordLogin(ctx context.Context, username, password string) 
 	if !u.Active || hash == "" || bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		return store.User{}, "", errors.New("invalid credentials")
 	}
-	token, err := s.CreateSession(ctx, u.ID)
+	token, err := s.CreateSession(ctx, u.ID, origin)
 	return u, token, err
 }
 
-func (s *Service) CreateSession(ctx context.Context, userID uuid.UUID) (string, error) {
+func (s *Service) CreateSession(ctx context.Context, userID uuid.UUID, origin SessionOrigin) (string, error) {
 	token, err := randomToken(32)
 	if err != nil {
 		return "", err
@@ -80,7 +103,7 @@ func (s *Service) CreateSession(ctx context.Context, userID uuid.UUID) (string, 
 	if general.SessionHours < 1 || general.SessionHours > 720 {
 		general.SessionHours = 24
 	}
-	_, err = s.Store.Pool.Exec(ctx, `INSERT INTO sessions(user_id,token_hash,expires_at) VALUES($1,$2,now()+make_interval(hours=>$3))`, userID, digest(token), general.SessionHours)
+	_, err = s.Store.Pool.Exec(ctx, `INSERT INTO sessions(user_id,token_hash,expires_at,user_agent,client_ip) VALUES($1,$2,now()+make_interval(hours=>$3),$4,$5)`, userID, digest(token), general.SessionHours, origin.UserAgent, origin.ClientIP)
 	return token, err
 }
 
@@ -89,6 +112,57 @@ func (s *Service) DeleteSession(ctx context.Context, token string) {
 		_, _ = s.Store.Pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash=$1`, digest(token))
 	}
 }
+
+// Session is one active browser login, as shown on the personal settings page.
+type Session struct {
+	ID         uuid.UUID `json:"id"`
+	UserAgent  string    `json:"userAgent"`
+	ClientIP   string    `json:"clientIp"`
+	Current    bool      `json:"current"`
+	CreatedAt  time.Time `json:"createdAt"`
+	LastSeenAt time.Time `json:"lastSeenAt"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+}
+
+func (s *Service) ListSessions(ctx context.Context, userID uuid.UUID, currentToken string) ([]Session, error) {
+	rows, err := s.Store.Pool.Query(ctx, `SELECT id,user_agent,client_ip,created_at,last_seen_at,expires_at,token_hash=$2 FROM sessions WHERE user_id=$1 AND expires_at>now() ORDER BY last_seen_at DESC`, userID, digest(currentToken))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Session{}
+	for rows.Next() {
+		var item Session
+		if err := rows.Scan(&item.ID, &item.UserAgent, &item.ClientIP, &item.CreatedAt, &item.LastSeenAt, &item.ExpiresAt, &item.Current); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// RevokeSession ends one session. A user may only revoke their own.
+func (s *Service) RevokeSession(ctx context.Context, userID, sessionID uuid.UUID) error {
+	command, err := s.Store.Pool.Exec(ctx, `DELETE FROM sessions WHERE id=$1 AND user_id=$2`, sessionID, userID)
+	if err == nil && command.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return err
+}
+
+// RevokeOtherSessions signs every other device out, which is what a user needs
+// after a lost laptop or a shared-computer login.
+func (s *Service) RevokeOtherSessions(ctx context.Context, userID uuid.UUID, currentToken string) (int64, error) {
+	command, err := s.Store.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id=$1 AND token_hash<>$2`, userID, digest(currentToken))
+	if err != nil {
+		return 0, err
+	}
+	return command.RowsAffected(), nil
+}
+
+// sessionActivityInterval throttles the last_seen_at write so an active tab
+// costs one UPDATE every few minutes instead of one per request.
+const sessionActivityInterval = 5 * time.Minute
 
 func (s *Service) Authenticate(r *http.Request) (Principal, error) {
 	if raw := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")); raw != "" && raw != r.Header.Get("Authorization") {
@@ -99,11 +173,16 @@ func (s *Service) Authenticate(r *http.Request) (Principal, error) {
 		return Principal{}, err
 	}
 	var u store.User
-	err = s.Store.Pool.QueryRow(r.Context(), `SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),u.role,u.team_id,u.active FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active`, digest(cookie.Value)).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Role, &u.TeamID, &u.Active)
+	var sessionID uuid.UUID
+	var lastSeen time.Time
+	err = s.Store.Pool.QueryRow(r.Context(), `SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),u.role,u.team_id,u.active,s.id,s.last_seen_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at>now() AND u.active`, digest(cookie.Value)).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Role, &u.TeamID, &u.Active, &sessionID, &lastSeen)
 	if err != nil {
 		return Principal{}, err
 	}
-	return Principal{User: u, Scopes: map[string]bool{"*": true}, AuthType: "session"}, nil
+	if time.Since(lastSeen) > sessionActivityInterval {
+		_, _ = s.Store.Pool.Exec(r.Context(), `UPDATE sessions SET last_seen_at=now() WHERE id=$1`, sessionID)
+	}
+	return Principal{User: u, Scopes: map[string]bool{"*": true}, AuthType: "session", SessionID: sessionID}, nil
 }
 
 func (s *Service) authenticateAPIKey(ctx context.Context, raw string) (Principal, error) {

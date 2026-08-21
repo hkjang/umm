@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+env:
+  POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
+  BOOTSTRAP_ADMIN: admin
+  BOOTSTRAP_ADMIN_PASSWORD: CI-Admin-Password-2026!
+  ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -35,29 +41,36 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
+
+      # --- Go ---------------------------------------------------------------
+      - run: go vet ./...
       - run: go test ./...
       - name: Go vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      # --- Database ---------------------------------------------------------
+      - name: Migration dry run
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          POSTGRES_USER: postgres
+        run: ./scripts/migrate-dry-run.sh
+      - name: Build server
+        run: go build -ldflags '-X main.version=ci' -o /tmp/umm-ci ./cmd/umm
       - name: PostgreSQL integration smoke
+        run: ./scripts/integration-smoke.sh
+      - name: Multi-instance smoke
         env:
-          POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
-          BOOTSTRAP_ADMIN: admin
-          BOOTSTRAP_ADMIN_PASSWORD: CI-Admin-Password-2026!
-          ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-        run: |
-          go build -ldflags '-X main.version=ci' -o /tmp/umm-ci ./cmd/umm
-          ./scripts/integration-smoke.sh
+          UMM_SMOKE_BINARY: /tmp/umm-ci
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          POSTGRES_USER: postgres
+        run: ./scripts/multi-instance-smoke.sh
       - name: Store integration regressions
-        env:
-          POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
         run: go test ./internal/store -run 'Test.*Integration' -count=1
       - name: HTTP reliability regressions
         env:
           POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
         run: go test ./internal/httpapi -run 'Test.*Integration' -count=1
       - name: Webhook persistence regression
-        env:
-          POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
         run: go test ./internal/webhook -run 'Test.*Integration' -count=1
       - name: Backup and restore drill
         env:
@@ -67,9 +80,9 @@ jobs:
           RESTORE_TEST_DB: umm_restore_ci
         run: ./scripts/restore-smoke.sh
       - name: Dream inbox database integration
-        env:
-          POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
         run: go test ./internal/dream -run TestDreamInboxAcceptanceIntegration -count=1
+
+      # --- Frontend ---------------------------------------------------------
       - run: npm ci
         working-directory: web
       - run: npm run test:offline-queue
@@ -77,8 +90,46 @@ jobs:
       - name: Frontend dependency audit
         run: npm audit --audit-level=high
         working-directory: web
-      - run: npm run build
+      - name: Frontend types
+        run: npm run typecheck
         working-directory: web
-      - run: npm run verify:pwa
+      - name: Frontend lint and format
+        run: npm run lint
         working-directory: web
+      - name: Translation coverage
+        run: node scripts/check-i18n.mjs
+        working-directory: web
+      - name: Frontend unit tests
+        run: npm test
+        working-directory: web
+      - name: Build bundle
+        run: npm run build
+        working-directory: web
+      - name: Service worker and offline shell checks
+        run: npm run verify:pwa
+        working-directory: web
+
+      # --- End to end -------------------------------------------------------
+      # Runs against the real binary serving the real bundle, so the offline
+      # queue, the language switch and the Content-Security-Policy are exercised
+      # the way a browser meets them.
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: End-to-end tests
+        env:
+          UMM_HTTP_ADDR: 127.0.0.1:8085
+          UMM_BASE_URL: http://127.0.0.1:8085
+          UMM_E2E_COMMAND: /tmp/umm-ci
+        run: npx playwright test
+        working-directory: web
+      - name: Upload end-to-end report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: web/test-results
+          retention-days: 7
+
+      # --- Image ------------------------------------------------------------
       - run: docker build --build-arg VERSION=$(tr -d '[:space:]' < VERSION) -t umm:ci .

@@ -51,7 +51,7 @@ func TestUpdateNoteReadOnlyIsTerminalIntegration(t *testing.T) {
 	}
 
 	authService := &auth.Service{Store: db}
-	session, err := authService.CreateSession(ctx, editorID)
+	session, err := authService.CreateSession(ctx, editorID, auth.SessionOrigin{UserAgent: "integration-test", ClientIP: "127.0.0.1"})
 	if err != nil {
 		t.Fatal(err)
 	}

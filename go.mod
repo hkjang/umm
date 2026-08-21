@@ -1,6 +1,11 @@
 module github.com/hkjang/umm
 
-go 1.26.7
+go 1.26.0
+
+// Pinned for CI and release builds. The `go` directive stays at 1.26.0 so a
+// developer on any Go 1.26 patch release can build and test with
+// GOTOOLCHAIN=local instead of being forced to download a toolchain.
+toolchain go1.26.7
 
 require (
 	github.com/coreos/go-oidc/v3 v3.16.0

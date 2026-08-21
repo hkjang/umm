@@ -1,4 +1,4 @@
-const CACHE = 'umm-shell-v0.7.0';
+const CACHE = 'umm-shell-v0.8.0';
 const BUILD_MANIFEST = '/asset-manifest.json';
 const SHELL = ['/', '/manifest.webmanifest'];
 

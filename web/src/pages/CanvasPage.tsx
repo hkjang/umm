@@ -1,184 +1,2028 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { ActionIcon, Alert, Badge, Button, Card, Divider, Group, Loader, Menu, Modal, Paper, ScrollArea, Select, SimpleGrid, Stack, Switch, Text, Textarea, TextInput, Title, Tooltip } from '@mantine/core';
-import { IconArrowRight, IconBrain, IconCheck, IconChevronDown, IconDots, IconDownload, IconEdit, IconFileTypePdf, IconFocusCentered, IconGitMerge, IconLayoutGrid, IconList, IconMarkdown, IconMessageCircle, IconMoonStars, IconPhoto, IconPlus, IconSearch, IconSettings, IconShare, IconSparkles, IconTrash, IconX } from '@tabler/icons-react';
-import { ReactFlow, addEdge, Background, BackgroundVariant, Controls, getNodesBounds, getViewportForBounds, MiniMap, ReactFlowProvider, useEdgesState, useNodesState, useReactFlow, type Connection, type Edge, type Node, type OnNodeDrag } from '@xyflow/react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { APIError, api, discardOfflineMutation, json, type EdgeStyle, type NoteComment, type Preferences, type Space, type ThoughtEdge, type ThoughtNote } from '../api';
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Divider,
+  Group,
+  Loader,
+  Menu,
+  Modal,
+  Paper,
+  ScrollArea,
+  Select,
+  SimpleGrid,
+  Stack,
+  Switch,
+  Text,
+  Textarea,
+  TextInput,
+  Title,
+  Tooltip,
+} from '@mantine/core';
+import {
+  IconArrowRight,
+  IconBrain,
+  IconCheck,
+  IconChevronDown,
+  IconDots,
+  IconDownload,
+  IconEdit,
+  IconFileImport,
+  IconFileTypePdf,
+  IconFocusCentered,
+  IconGitMerge,
+  IconLayoutGrid,
+  IconList,
+  IconMarkdown,
+  IconMessageCircle,
+  IconMoonStars,
+  IconPhoto,
+  IconPlus,
+  IconSearch,
+  IconSettings,
+  IconShare,
+  IconSparkles,
+  IconTrash,
+  IconX,
+} from '@tabler/icons-react';
+import {
+  ReactFlow,
+  addEdge,
+  Background,
+  BackgroundVariant,
+  Controls,
+  getNodesBounds,
+  getViewportForBounds,
+  MiniMap,
+  ReactFlowProvider,
+  useEdgesState,
+  useNodesState,
+  useReactFlow,
+  type Connection,
+  type Edge,
+  type Node,
+  type OnNodeDrag,
+} from '@xyflow/react';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import {
+  APIError,
+  api,
+  discardOfflineMutation,
+  json,
+  type EdgeStyle,
+  type NoteComment,
+  type Preferences,
+  type Space,
+  type ThoughtEdge,
+  type ThoughtNote,
+} from '../api';
 import PostItNode, { type PostItData } from '../components/PostItNode';
 import { useAuth } from '../auth-context';
+import { msg, useTranslation } from '../i18n';
+import ImportThoughtsModal from '../components/ImportThoughtsModal';
+import { importLayout, type ImportedThought } from '../lib/markdown-import';
 import { showError, showInfo, showSuccess } from '../ui-notifications';
 
 const nodeTypes = { postit: PostItNode };
-const palette: Record<string, string> = { yellow: '#fff0a8', blue: '#dbeeff', purple: '#e9def8', lavender: '#e8e2f1', green: '#d9f0dc', red: '#f8deda', gray: '#e9e7e1' };
-const aiTools = [['summarize','요약'],['questions','질문 만들기'],['expand','확장'],['challenge','반대 관점'],['actions','실행 항목']];
+const palette: Record<string, string> = {
+  yellow: '#fff0a8',
+  blue: '#dbeeff',
+  purple: '#e9def8',
+  lavender: '#e8e2f1',
+  green: '#d9f0dc',
+  red: '#f8deda',
+  gray: '#e9e7e1',
+};
+const aiTools = [
+  ['summarize', msg('요약')],
+  ['questions', msg('질문 만들기')],
+  ['expand', msg('확장')],
+  ['challenge', msg('반대 관점')],
+  ['actions', msg('실행 항목')],
+];
 const normalizeSearch = (value: string) => value.normalize('NFKC').toLocaleLowerCase('ko-KR').trim();
 
-interface DreamHistory { dreamId: string; status: string; content: string; spaceId: string; qualityScore: number; }
-interface HistoryAction { id: string; before: { x: number; y: number }; after: { x: number; y: number }; }
-interface RelatedThought {note:ThoughtNote;score:number;reason:string}
-interface Backlink {edge:ThoughtEdge;note:ThoughtNote;direction:'incoming'|'outgoing'}
-interface Cluster {id:string;label:string;noteIds:string[];cohesion:number}
-interface SpaceMember {id:string;username:string;displayName:string;email:string;permission:string}
-type NoteWritePayload = Pick<ThoughtNote, 'content'|'title'|'color'|'kind'|'aiExcluded'|'x'|'y'|'width'|'height'|'rotation'|'version'>;
+interface DreamHistory {
+  dreamId: string;
+  status: string;
+  content: string;
+  spaceId: string;
+  qualityScore: number;
+}
+interface HistoryAction {
+  id: string;
+  before: { x: number; y: number };
+  after: { x: number; y: number };
+}
+interface RelatedThought {
+  note: ThoughtNote;
+  score: number;
+  reason: string;
+}
+interface Backlink {
+  edge: ThoughtEdge;
+  note: ThoughtNote;
+  direction: 'incoming' | 'outgoing';
+}
+interface Cluster {
+  id: string;
+  label: string;
+  noteIds: string[];
+  cohesion: number;
+}
+interface SpaceMember {
+  id: string;
+  username: string;
+  displayName: string;
+  email: string;
+  permission: string;
+}
+type NoteWritePayload = Pick<
+  ThoughtNote,
+  'content' | 'title' | 'color' | 'kind' | 'aiExcluded' | 'x' | 'y' | 'width' | 'height' | 'rotation' | 'version'
+>;
 
 const noteWritePayload = (note: ThoughtNote): NoteWritePayload => ({
-  content: note.content, title: note.title, color: note.color, kind: note.kind, aiExcluded: note.aiExcluded,
-  x: note.x, y: note.y, width: note.width, height: note.height,
-  rotation: note.rotation, version: note.version,
+  content: note.content,
+  title: note.title,
+  color: note.color,
+  kind: note.kind,
+  aiExcluded: note.aiExcluded,
+  x: note.x,
+  y: note.y,
+  width: note.width,
+  height: note.height,
+  rotation: note.rotation,
+  version: note.version,
 });
 
 function CanvasInner() {
-  const params = useParams(); const navigate = useNavigate(); const location = useLocation(); const flow = useReactFlow();
-  const {user}=useAuth();
-  const [spaces, setSpaces] = useState<Space[]>([]); const [activeSpace, setActiveSpace] = useState('');
-  const [notes, setNotes] = useState<ThoughtNote[]>([]); const [rawEdges, setRawEdges] = useState<ThoughtEdge[]>([]);
+  const { t, formatDate } = useTranslation();
+  const params = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const flow = useReactFlow();
+  const { user } = useAuth();
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  const [activeSpace, setActiveSpace] = useState('');
+  const [notes, setNotes] = useState<ThoughtNote[]>([]);
+  const [rawEdges, setRawEdges] = useState<ThoughtEdge[]>([]);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<PostItData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
-  const [query, setQuery] = useState(''); const [capture, setCapture] = useState(''); const [loading, setLoading] = useState(true);
-  const [edgeStyle,setEdgeStyle]=useState<EdgeStyle>(()=>{const stored=localStorage.getItem('umm:edge-style');return stored==='smoothstep'||stored==='straight'?stored:'bezier'});const [exportBusy,setExportBusy]=useState('');
-  const [searchIndex,setSearchIndex]=useState(-1);const [spaceQuery,setSpaceQuery]=useState('');const [spaceManagerOpen,setSpaceManagerOpen]=useState(false);const [newSpaceName,setNewSpaceName]=useState('');const [spaceDrafts,setSpaceDrafts]=useState<Record<string,string>>({});const [spaceBusy,setSpaceBusy]=useState('');const [spaceError,setSpaceError]=useState('');const [deleteCandidate,setDeleteCandidate]=useState<Space>();const [deleteConfirmation,setDeleteConfirmation]=useState('');
+  const [query, setQuery] = useState('');
+  const [capture, setCapture] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [edgeStyle, setEdgeStyle] = useState<EdgeStyle>(() => {
+    const stored = localStorage.getItem('umm:edge-style');
+    return stored === 'smoothstep' || stored === 'straight' ? stored : 'bezier';
+  });
+  const [exportBusy, setExportBusy] = useState('');
+  const [searchIndex, setSearchIndex] = useState(-1);
+  const [spaceQuery, setSpaceQuery] = useState('');
+  const [spaceManagerOpen, setSpaceManagerOpen] = useState(false);
+  const [newSpaceName, setNewSpaceName] = useState('');
+  const [spaceDrafts, setSpaceDrafts] = useState<Record<string, string>>({});
+  const [spaceBusy, setSpaceBusy] = useState('');
+  const [spaceError, setSpaceError] = useState('');
+  const [deleteCandidate, setDeleteCandidate] = useState<Space>();
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [morningDream, setMorningDream] = useState<DreamHistory>();
-  const [related,setRelated]=useState<{source:string;items:RelatedThought[]}>();const [aiResult,setAIResult]=useState<{mode:string;content:string}>();const [aiBusy,setAIBusy]=useState(false);
-	const [backlinks,setBacklinks]=useState<Backlink[]>([]);const [listView,setListView]=useState(false);
-	const [commentNote,setCommentNote]=useState<ThoughtNote>();const [comments,setComments]=useState<NoteComment[]>([]);const [commentBody,setCommentBody]=useState('');const [commentBusy,setCommentBusy]=useState(false);
-	const [conflict,setConflict]=useState<{local:ThoughtNote;latest:ThoughtNote;offlineMutationId?:string}>();const [mergeDraft,setMergeDraft]=useState('');
-  const [shareOpen,setShareOpen]=useState(false);const [members,setMembers]=useState<SpaceMember[]>([]);const [canManage,setCanManage]=useState(false);const [shareUser,setShareUser]=useState('');const [sharePermission,setSharePermission]=useState('edit');const [shareMessage,setShareMessage]=useState('');
-  const notesRef = useRef<Record<string, ThoughtNote>>({}); const queues = useRef<Record<string, Promise<void>>>({});
-  const dragStart = useRef<Record<string, {x:number;y:number}>>({}); const undo = useRef<HistoryAction[]>([]); const redo = useRef<HistoryAction[]>([]);
+  const [related, setRelated] = useState<{ source: string; items: RelatedThought[] }>();
+  const [aiResult, setAIResult] = useState<{ mode: string; content: string }>();
+  const [aiBusy, setAIBusy] = useState(false);
+  const [backlinks, setBacklinks] = useState<Backlink[]>([]);
+  const [listView, setListView] = useState(false);
+  const [commentNote, setCommentNote] = useState<ThoughtNote>();
+  const [comments, setComments] = useState<NoteComment[]>([]);
+  const [commentBody, setCommentBody] = useState('');
+  const [commentBusy, setCommentBusy] = useState(false);
+  const [conflict, setConflict] = useState<{ local: ThoughtNote; latest: ThoughtNote; offlineMutationId?: string }>();
+  const [mergeDraft, setMergeDraft] = useState('');
+  const [importOpen, setImportOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [members, setMembers] = useState<SpaceMember[]>([]);
+  const [canManage, setCanManage] = useState(false);
+  const [shareUser, setShareUser] = useState('');
+  const [sharePermission, setSharePermission] = useState('edit');
+  const [shareMessage, setShareMessage] = useState('');
+  const notesRef = useRef<Record<string, ThoughtNote>>({});
+  const queues = useRef<Record<string, Promise<void>>>({});
+  const dragStart = useRef<Record<string, { x: number; y: number }>>({});
+  const undo = useRef<HistoryAction[]>([]);
+  const redo = useRef<HistoryAction[]>([]);
   const focusedShortcut = useRef('');
 
-  const syncNotes = (next: ThoughtNote[]) => { setNotes(next); notesRef.current = Object.fromEntries(next.map((n) => [n.id, n])); };
-  useEffect(() => { api<{spaces: Space[]}>('/spaces').then(({spaces}) => { setSpaces(spaces);setSpaceDrafts(Object.fromEntries(spaces.map(space=>[space.id,space.name]))); const desired = params.spaceId && spaces.some(s => s.id === params.spaceId) ? params.spaceId : spaces[0]?.id; if (desired) { setActiveSpace(desired); if (!params.spaceId) navigate(`/space/${desired}`, { replace: true }); } }).catch(()=>undefined); }, []);
-  useEffect(()=>{api<Preferences>('/preferences',{silent:true}).then(value=>{const style=value.edge_style||'bezier';setEdgeStyle(style);localStorage.setItem('umm:edge-style',style)}).catch(()=>undefined)},[]);
-  useEffect(() => { if (params.spaceId && params.spaceId !== activeSpace) setActiveSpace(params.spaceId); }, [params.spaceId]);
-  const loadCanvas=useCallback(async(silent=false)=>{if(!activeSpace)return;if(!silent)setLoading(true);try{const v=await api<{notes:ThoughtNote[];edges:ThoughtEdge[]}>(`/spaces/${activeSpace}/notes`);syncNotes(v.notes);setRawEdges(v.edges)}finally{if(!silent)setLoading(false)}},[activeSpace]);
-  useEffect(() => { if (!activeSpace) return; void loadCanvas().catch(()=>undefined); api<{dreams: DreamHistory[]}>('/dreams',{silent:true}).then(({dreams}) => { const fresh = dreams.find(d => d.spaceId === activeSpace && d.status === 'created'); if (fresh && !sessionStorage.getItem(`dream:${fresh.dreamId}`)) setMorningDream(fresh); }).catch(() => undefined); }, [activeSpace,loadCanvas]);
-  useEffect(()=>{if(!activeSpace)return;const stream=new EventSource(`/api/v1/spaces/${activeSpace}/events`);stream.addEventListener('space-change',(event)=>{try{const data=JSON.parse((event as MessageEvent).data);if(data.actorId!==user?.id)void loadCanvas(true)}catch{void loadCanvas(true)}});return()=>stream.close()},[activeSpace,user?.id,loadCanvas]);
+  const syncNotes = (next: ThoughtNote[]) => {
+    setNotes(next);
+    notesRef.current = Object.fromEntries(next.map((n) => [n.id, n]));
+  };
+  useEffect(() => {
+    api<{ spaces: Space[] }>('/spaces')
+      .then(({ spaces }) => {
+        setSpaces(spaces);
+        setSpaceDrafts(Object.fromEntries(spaces.map((space) => [space.id, space.name])));
+        const desired = params.spaceId && spaces.some((s) => s.id === params.spaceId) ? params.spaceId : spaces[0]?.id;
+        if (desired) {
+          setActiveSpace(desired);
+          if (!params.spaceId) navigate(`/space/${desired}`, { replace: true });
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    api<Preferences>('/preferences', { silent: true })
+      .then((value) => {
+        const style = value.edge_style || 'bezier';
+        setEdgeStyle(style);
+        localStorage.setItem('umm:edge-style', style);
+      })
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (params.spaceId && params.spaceId !== activeSpace) setActiveSpace(params.spaceId);
+  }, [params.spaceId]);
+  const loadCanvas = useCallback(
+    async (silent = false) => {
+      if (!activeSpace) return;
+      if (!silent) setLoading(true);
+      try {
+        const v = await api<{ notes: ThoughtNote[]; edges: ThoughtEdge[] }>(`/spaces/${activeSpace}/notes`);
+        syncNotes(v.notes);
+        setRawEdges(v.edges);
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [activeSpace],
+  );
+  useEffect(() => {
+    if (!activeSpace) return;
+    void loadCanvas().catch(() => undefined);
+    api<{ dreams: DreamHistory[] }>('/dreams', { silent: true })
+      .then(({ dreams }) => {
+        const fresh = dreams.find((d) => d.spaceId === activeSpace && d.status === 'created');
+        if (fresh && !sessionStorage.getItem(`dream:${fresh.dreamId}`)) setMorningDream(fresh);
+      })
+      .catch(() => undefined);
+  }, [activeSpace, loadCanvas]);
+  useEffect(() => {
+    if (!activeSpace) return;
+    const stream = new EventSource(`/api/v1/spaces/${activeSpace}/events`);
+    stream.addEventListener('space-change', (event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data);
+        if (data.actorId !== user?.id) void loadCanvas(true);
+      } catch {
+        void loadCanvas(true);
+      }
+    });
+    return () => stream.close();
+  }, [activeSpace, user?.id, loadCanvas]);
 
   const persist = useCallback((id: string, patch: Partial<ThoughtNote>) => {
-    const current = notesRef.current[id]; if (!current) return;
-    notesRef.current[id] = { ...current, ...patch }; setNotes((all) => all.map((n) => n.id === id ? { ...n, ...patch } : n));
+    const current = notesRef.current[id];
+    if (!current) return;
+    notesRef.current[id] = { ...current, ...patch };
+    setNotes((all) => all.map((n) => (n.id === id ? { ...n, ...patch } : n)));
     const previous = queues.current[id] || Promise.resolve();
-    queues.current[id] = previous.catch(() => undefined).then(async () => {
-      const base = notesRef.current[id]; if (!base) return;
-		try {
-			const updated = await api<ThoughtNote>(`/notes/${id}`, { ...json('PUT', noteWritePayload(base)), queueIfOffline: true });
-			notesRef.current[id] = { ...notesRef.current[id], version: updated.version, updatedAt: updated.updatedAt };
-			setNotes((all) => all.map((n) => n.id === id ? { ...n, version: updated.version, updatedAt: updated.updatedAt } : n));
-		} catch (error) {
-			if (error instanceof APIError && error.queued) return;
-			if (error instanceof APIError && error.status === 409 && error.payload.latest) {
-				const latest=error.payload.latest as ThoughtNote;setConflict({local:base,latest});setMergeDraft(base.content);
-			}
-			throw error;
-		}
-    }).catch(() => undefined);
+    queues.current[id] = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const base = notesRef.current[id];
+        if (!base) return;
+        try {
+          const updated = await api<ThoughtNote>(`/notes/${id}`, {
+            ...json('PUT', noteWritePayload(base)),
+            queueIfOffline: true,
+          });
+          notesRef.current[id] = { ...notesRef.current[id], version: updated.version, updatedAt: updated.updatedAt };
+          setNotes((all) =>
+            all.map((n) => (n.id === id ? { ...n, version: updated.version, updatedAt: updated.updatedAt } : n)),
+          );
+        } catch (error) {
+          if (error instanceof APIError && error.queued) return;
+          if (error instanceof APIError && error.status === 409 && error.payload.latest) {
+            const latest = error.payload.latest as ThoughtNote;
+            setConflict({ local: base, latest });
+            setMergeDraft(base.content);
+          }
+          throw error;
+        }
+      })
+      .catch(() => undefined);
   }, []);
 
-  const remove = useCallback(async (id: string) => { try{await api(`/notes/${id}`, { method: 'DELETE', queueIfOffline:true })}catch(error){if(!(error instanceof APIError&&error.queued))throw error}delete notesRef.current[id];setNotes((all) => all.filter((n) => n.id !== id));setRawEdges((all) => all.filter((e) => e.source !== id && e.target !== id)); }, []);
-  const restore=useCallback(async(id:string)=>{const result=await api<{history:Array<{version:number;createdAt:string}>}>(`/notes/${id}/history`);const latest=result.history[0];if(!latest){window.alert('복원할 이전 버전이 없습니다.');return};if(!window.confirm(`${new Date(latest.createdAt).toLocaleString('ko-KR')}의 버전으로 되돌릴까요? 현재 상태도 기록에 남습니다.`))return;const restored=await api<ThoughtNote>(`/notes/${id}/restore/${latest.version}`,{method:'POST'});notesRef.current[id]=restored;setNotes(all=>all.map(n=>n.id===id?restored:n))},[]);
+  const remove = useCallback(async (id: string) => {
+    try {
+      await api(`/notes/${id}`, { method: 'DELETE', queueIfOffline: true });
+    } catch (error) {
+      if (!(error instanceof APIError && error.queued)) throw error;
+    }
+    delete notesRef.current[id];
+    setNotes((all) => all.filter((n) => n.id !== id));
+    setRawEdges((all) => all.filter((e) => e.source !== id && e.target !== id));
+  }, []);
+  const restore = useCallback(async (id: string) => {
+    const result = await api<{ history: Array<{ version: number; createdAt: string }> }>(`/notes/${id}/history`);
+    const latest = result.history[0];
+    if (!latest) {
+      window.alert(t('복원할 이전 버전이 없습니다.'));
+      return;
+    }
+    if (
+      !window.confirm(
+        t('{time}의 버전으로 되돌릴까요? 현재 상태도 기록에 남습니다.', { time: formatDate(latest.createdAt) }),
+      )
+    )
+      return;
+    const restored = await api<ThoughtNote>(`/notes/${id}/restore/${latest.version}`, { method: 'POST' });
+    notesRef.current[id] = restored;
+    setNotes((all) => all.map((n) => (n.id === id ? restored : n)));
+  }, []);
 
-  const gravity = useCallback((selectedID?:string) => { const selected = selectedID ? flow.getNode(selectedID) : flow.getNodes().find(n => n.selected); if (!selected) return; const related = new Set<string>(); rawEdges.forEach(e => { if (e.source === selected.id) related.add(e.target); if (e.target === selected.id) related.add(e.source); }); [...related].forEach((id, index) => { const angle = index / Math.max(1, related.size) * Math.PI * 2; const patch = { x: selected.position.x + Math.cos(angle) * 330, y: selected.position.y + Math.sin(angle) * 230 }; persist(id, patch); }); },[flow,rawEdges,persist]);
-  const discoverRelated=useCallback(async(id:string)=>{const [result,linked]=await Promise.all([api<{related:RelatedThought[]}>(`/notes/${id}/related?limit=8`),api<{backlinks:Backlink[]}>(`/notes/${id}/backlinks`)]);setRelated({source:id,items:result.related});setBacklinks(linked.backlinks);const source=flow.getNode(id);if(source){result.related.forEach((item,index)=>{const angle=index/Math.max(1,result.related.length)*Math.PI*2;persist(item.note.id,{x:source.position.x+Math.cos(angle)*360,y:source.position.y+Math.sin(angle)*245})})}},[flow,persist]);
-	const openComments=useCallback(async(note:ThoughtNote)=>{setCommentNote(note);setCommentBody('');const result=await api<{comments:NoteComment[]}>(`/notes/${note.id}/comments`);setComments(result.comments)},[]);
-	const postComment=async()=>{if(!commentNote||!commentBody.trim())return;setCommentBusy(true);try{const created=await api<NoteComment>(`/notes/${commentNote.id}/comments`,{...json('POST',{body:commentBody}),queueIfOffline:true});setComments(all=>[...all,created]);setCommentBody('')}catch(error){if(error instanceof APIError&&error.queued){setCommentBody('');showInfo('댓글을 오프라인 보관함에 넣었습니다. 연결되면 자동으로 게시합니다.','오프라인 저장')}}finally{setCommentBusy(false)}};
-	const resolveComment=async(comment:NoteComment)=>{const resolved=!comment.resolvedAt;try{const updated=await api<NoteComment>(`/comments/${comment.id}/resolve`,{...json('PUT',{resolved}),queueIfOffline:true});setComments(all=>all.map(item=>item.id===updated.id?updated:item))}catch(error){if(error instanceof APIError&&error.queued)setComments(all=>all.map(item=>item.id===comment.id?{...item,resolvedAt:resolved?new Date().toISOString():undefined}:item));else throw error}};
-	const deleteComment=async(comment:NoteComment)=>{if(!window.confirm('이 댓글을 삭제할까요?'))return;try{await api(`/comments/${comment.id}`,{method:'DELETE',queueIfOffline:true})}catch(error){if(!(error instanceof APIError&&error.queued))throw error}setComments(all=>all.filter(item=>item.id!==comment.id))};
-	const applyConflict=async(mode:'server'|'local'|'merge')=>{if(!conflict)return;if(mode==='server'){await discardOfflineMutation(conflict.offlineMutationId);notesRef.current[conflict.latest.id]=conflict.latest;setNotes(all=>all.map(note=>note.id===conflict.latest.id?conflict.latest:note));setConflict(undefined);return}const desired={...conflict.local,content:mode==='merge'?mergeDraft:conflict.local.content,version:conflict.latest.version};const updated=await api<ThoughtNote>(`/notes/${desired.id}`,json('PUT',noteWritePayload(desired)));await discardOfflineMutation(conflict.offlineMutationId);notesRef.current[updated.id]=updated;setNotes(all=>all.map(note=>note.id===updated.id?updated:note));setConflict(undefined)};
-	useEffect(()=>{const synced=()=>{if(activeSpace)void loadCanvas(true)};const offlineConflict=(event:Event)=>{const detail=(event as CustomEvent).detail;const latest=detail?.payload?.latest as ThoughtNote|undefined;if(!latest||latest.spaceId!==activeSpace)return;let queued:Partial<ThoughtNote>={};try{queued=JSON.parse(detail?.item?.body||'{}')}catch{/* malformed queued payload remains available for retry */}const current=notesRef.current[latest.id];const local=current?{...latest,...current,...queued,id:latest.id,spaceId:latest.spaceId}:({...latest,...queued} as ThoughtNote);setConflict({local,latest,offlineMutationId:detail?.item?.id});setMergeDraft(local.content)};window.addEventListener('umm:offline-sync',synced);window.addEventListener('umm:offline-conflict',offlineConflict);return()=>{window.removeEventListener('umm:offline-sync',synced);window.removeEventListener('umm:offline-conflict',offlineConflict)}},[activeSpace,loadCanvas]);
-
-  const searchTerms=useMemo(()=>normalizeSearch(query).split(/\s+/).filter(Boolean),[query]);
-  const searchMatches=useMemo(()=>searchTerms.length===0?notes:notes.filter(note=>{const searchable=normalizeSearch(`${note.title} ${note.content}`);return searchTerms.every(term=>searchable.includes(term))}),[notes,searchTerms]);
-  const visibleSpaces=useMemo(()=>{const term=normalizeSearch(spaceQuery);return [...spaces].filter(space=>!term||normalizeSearch(space.name).includes(term)).sort((a,b)=>a.name.localeCompare(b.name,'ko'))},[spaces,spaceQuery]);
+  const gravity = useCallback(
+    (selectedID?: string) => {
+      const selected = selectedID ? flow.getNode(selectedID) : flow.getNodes().find((n) => n.selected);
+      if (!selected) return;
+      const related = new Set<string>();
+      rawEdges.forEach((e) => {
+        if (e.source === selected.id) related.add(e.target);
+        if (e.target === selected.id) related.add(e.source);
+      });
+      [...related].forEach((id, index) => {
+        const angle = (index / Math.max(1, related.size)) * Math.PI * 2;
+        const patch = {
+          x: selected.position.x + Math.cos(angle) * 330,
+          y: selected.position.y + Math.sin(angle) * 230,
+        };
+        persist(id, patch);
+      });
+    },
+    [flow, rawEdges, persist],
+  );
+  const discoverRelated = useCallback(
+    async (id: string) => {
+      const [result, linked] = await Promise.all([
+        api<{ related: RelatedThought[] }>(`/notes/${id}/related?limit=8`),
+        api<{ backlinks: Backlink[] }>(`/notes/${id}/backlinks`),
+      ]);
+      setRelated({ source: id, items: result.related });
+      setBacklinks(linked.backlinks);
+      const source = flow.getNode(id);
+      if (source) {
+        result.related.forEach((item, index) => {
+          const angle = (index / Math.max(1, result.related.length)) * Math.PI * 2;
+          persist(item.note.id, {
+            x: source.position.x + Math.cos(angle) * 360,
+            y: source.position.y + Math.sin(angle) * 245,
+          });
+        });
+      }
+    },
+    [flow, persist],
+  );
+  const openComments = useCallback(async (note: ThoughtNote) => {
+    setCommentNote(note);
+    setCommentBody('');
+    const result = await api<{ comments: NoteComment[] }>(`/notes/${note.id}/comments`);
+    setComments(result.comments);
+  }, []);
+  const postComment = async () => {
+    if (!commentNote || !commentBody.trim()) return;
+    setCommentBusy(true);
+    try {
+      const created = await api<NoteComment>(`/notes/${commentNote.id}/comments`, {
+        ...json('POST', { body: commentBody }),
+        queueIfOffline: true,
+      });
+      setComments((all) => [...all, created]);
+      setCommentBody('');
+    } catch (error) {
+      if (error instanceof APIError && error.queued) {
+        setCommentBody('');
+        showInfo(t('댓글을 오프라인 보관함에 넣었습니다. 연결되면 자동으로 게시합니다.'), t('오프라인 저장'));
+      }
+    } finally {
+      setCommentBusy(false);
+    }
+  };
+  const resolveComment = async (comment: NoteComment) => {
+    const resolved = !comment.resolvedAt;
+    try {
+      const updated = await api<NoteComment>(`/comments/${comment.id}/resolve`, {
+        ...json('PUT', { resolved }),
+        queueIfOffline: true,
+      });
+      setComments((all) => all.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (error) {
+      if (error instanceof APIError && error.queued)
+        setComments((all) =>
+          all.map((item) =>
+            item.id === comment.id ? { ...item, resolvedAt: resolved ? new Date().toISOString() : undefined } : item,
+          ),
+        );
+      else throw error;
+    }
+  };
+  const deleteComment = async (comment: NoteComment) => {
+    if (!window.confirm(t('이 댓글을 삭제할까요?'))) return;
+    try {
+      await api(`/comments/${comment.id}`, { method: 'DELETE', queueIfOffline: true });
+    } catch (error) {
+      if (!(error instanceof APIError && error.queued)) throw error;
+    }
+    setComments((all) => all.filter((item) => item.id !== comment.id));
+  };
+  const applyConflict = async (mode: 'server' | 'local' | 'merge') => {
+    if (!conflict) return;
+    if (mode === 'server') {
+      await discardOfflineMutation(conflict.offlineMutationId);
+      notesRef.current[conflict.latest.id] = conflict.latest;
+      setNotes((all) => all.map((note) => (note.id === conflict.latest.id ? conflict.latest : note)));
+      setConflict(undefined);
+      return;
+    }
+    const desired = {
+      ...conflict.local,
+      content: mode === 'merge' ? mergeDraft : conflict.local.content,
+      version: conflict.latest.version,
+    };
+    const updated = await api<ThoughtNote>(`/notes/${desired.id}`, json('PUT', noteWritePayload(desired)));
+    await discardOfflineMutation(conflict.offlineMutationId);
+    notesRef.current[updated.id] = updated;
+    setNotes((all) => all.map((note) => (note.id === updated.id ? updated : note)));
+    setConflict(undefined);
+  };
   useEffect(() => {
-    setNodes(searchMatches.map((note) => ({ id: note.id, type: 'postit', position: { x: note.x, y: note.y }, style: { width: note.width, height: note.height }, data: { note, dimmed: false, relatedCount: note.relatedCount, onGather: discoverRelated, onPatch: persist, onDelete: remove,onRestore:restore,onComments:openComments } })));
-  }, [searchMatches, persist, remove, restore,discoverRelated,openComments]);
-  useEffect(() => {const visible=new Set(searchMatches.map(note=>note.id));setEdges(rawEdges.filter(edge=>visible.has(edge.source)&&visible.has(edge.target)).map((e) => ({ id: e.id, source: e.source, target: e.target, type: edgeStyle, animated: e.relation === 'dreamed', label: e.relation === 'related' ? undefined : e.relation })))}, [edgeStyle,rawEdges,searchMatches]);
+    const synced = () => {
+      if (activeSpace) void loadCanvas(true);
+    };
+    const offlineConflict = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      const latest = detail?.payload?.latest as ThoughtNote | undefined;
+      if (!latest || latest.spaceId !== activeSpace) return;
+      let queued: Partial<ThoughtNote> = {};
+      try {
+        queued = JSON.parse(detail?.item?.body || '{}');
+      } catch {
+        /* malformed queued payload remains available for retry */
+      }
+      const current = notesRef.current[latest.id];
+      const local = current
+        ? { ...latest, ...current, ...queued, id: latest.id, spaceId: latest.spaceId }
+        : ({ ...latest, ...queued } as ThoughtNote);
+      setConflict({ local, latest, offlineMutationId: detail?.item?.id });
+      setMergeDraft(local.content);
+    };
+    window.addEventListener('umm:offline-sync', synced);
+    window.addEventListener('umm:offline-conflict', offlineConflict);
+    return () => {
+      window.removeEventListener('umm:offline-sync', synced);
+      window.removeEventListener('umm:offline-conflict', offlineConflict);
+    };
+  }, [activeSpace, loadCanvas]);
 
-  const shortcutNoteID=useMemo(()=>new URLSearchParams(location.search).get('note')||'',[location.search]);
-  useEffect(()=>{if(!shortcutNoteID){focusedShortcut.current='';return}if(loading||focusedShortcut.current===shortcutNoteID)return;const note=notes.find(item=>item.id===shortcutNoteID);if(!note)return;focusedShortcut.current=shortcutNoteID;setQuery('');setNodes(all=>all.map(node=>({...node,selected:node.id===shortcutNoteID})));window.requestAnimationFrame(()=>{void flow.setCenter(note.x+note.width/2,note.y+note.height/2,{zoom:1.08,duration:500});navigate(location.pathname,{replace:true})})},[flow,loading,location.pathname,navigate,notes,setNodes,shortcutNoteID]);
+  const searchTerms = useMemo(() => normalizeSearch(query).split(/\s+/).filter(Boolean), [query]);
+  const searchMatches = useMemo(
+    () =>
+      searchTerms.length === 0
+        ? notes
+        : notes.filter((note) => {
+            const searchable = normalizeSearch(`${note.title} ${note.content}`);
+            return searchTerms.every((term) => searchable.includes(term));
+          }),
+    [notes, searchTerms],
+  );
+  const visibleSpaces = useMemo(() => {
+    const term = normalizeSearch(spaceQuery);
+    return [...spaces]
+      .filter((space) => !term || normalizeSearch(space.name).includes(term))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+  }, [spaces, spaceQuery]);
+  useEffect(() => {
+    setNodes(
+      searchMatches.map((note) => ({
+        id: note.id,
+        type: 'postit',
+        position: { x: note.x, y: note.y },
+        style: { width: note.width, height: note.height },
+        data: {
+          note,
+          dimmed: false,
+          relatedCount: note.relatedCount,
+          onGather: discoverRelated,
+          onPatch: persist,
+          onDelete: remove,
+          onRestore: restore,
+          onComments: openComments,
+        },
+      })),
+    );
+  }, [searchMatches, persist, remove, restore, discoverRelated, openComments]);
+  useEffect(() => {
+    const visible = new Set(searchMatches.map((note) => note.id));
+    setEdges(
+      rawEdges
+        .filter((edge) => visible.has(edge.source) && visible.has(edge.target))
+        .map((e) => ({
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          type: edgeStyle,
+          animated: e.relation === 'dreamed',
+          label: e.relation === 'related' ? undefined : e.relation,
+        })),
+    );
+  }, [edgeStyle, rawEdges, searchMatches]);
 
-  const createAt = useCallback(async (content: string, x: number, y: number) => {
-    if (!activeSpace) return; const trimmed = content.trim();
-    try{const created = await api<ThoughtNote>(`/spaces/${activeSpace}/notes`, {...json('POST', { content: trimmed, title: '', color: 'yellow', kind: 'thought', x, y, width: 240, height: 160, rotation: Math.round((Math.random() - .5) * 2) }),queueIfOffline:true});syncNotes([...Object.values(notesRef.current), created]);setCapture('')}catch(error){if(error instanceof APIError&&error.queued){setCapture('');showInfo('새 생각을 오프라인 보관함에 넣었습니다. 연결되면 캔버스에 나타납니다.','오프라인 저장');return}throw error}
-  }, [activeSpace]);
+  const shortcutNoteID = useMemo(() => new URLSearchParams(location.search).get('note') || '', [location.search]);
+  useEffect(() => {
+    if (!shortcutNoteID) {
+      focusedShortcut.current = '';
+      return;
+    }
+    if (loading || focusedShortcut.current === shortcutNoteID) return;
+    const note = notes.find((item) => item.id === shortcutNoteID);
+    if (!note) return;
+    focusedShortcut.current = shortcutNoteID;
+    setQuery('');
+    setNodes((all) => all.map((node) => ({ ...node, selected: node.id === shortcutNoteID })));
+    window.requestAnimationFrame(() => {
+      void flow.setCenter(note.x + note.width / 2, note.y + note.height / 2, { zoom: 1.08, duration: 500 });
+      navigate(location.pathname, { replace: true });
+    });
+  }, [flow, loading, location.pathname, navigate, notes, setNodes, shortcutNoteID]);
 
-  const onPaneDoubleClick = useCallback((event: React.MouseEvent) => { const point = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY }); void createAt('', point.x, point.y); }, [flow, createAt]);
-  const connect = useCallback(async (connection: Connection) => { if (!connection.source || !connection.target) return;try{const created = await api<ThoughtEdge>(`/spaces/${activeSpace}/edges`, {...json('POST', { source: connection.source, target: connection.target, relation: 'related' }),queueIfOffline:true});setRawEdges((all) => [...all, created]);setEdges((all) => addEdge({ ...connection, id: created.id, type: edgeStyle }, all))}catch(error){if(error instanceof APIError&&error.queued){showInfo('연결을 오프라인 보관함에 넣었습니다.','오프라인 저장');return}throw error} }, [activeSpace,edgeStyle]);
-  const onDragStart: OnNodeDrag<Node<PostItData>> = (_, node) => { dragStart.current[node.id] = { ...node.position }; };
-  const onDragStop: OnNodeDrag<Node<PostItData>> = (_, node) => { const before = dragStart.current[node.id]; const after = { ...node.position }; if (before && (before.x !== after.x || before.y !== after.y)) { undo.current.push({ id: node.id, before, after }); redo.current = []; } persist(node.id, { x: after.x, y: after.y }); };
+  const createAt = useCallback(
+    async (content: string, x: number, y: number) => {
+      if (!activeSpace) return;
+      const trimmed = content.trim();
+      try {
+        const created = await api<ThoughtNote>(`/spaces/${activeSpace}/notes`, {
+          ...json('POST', {
+            content: trimmed,
+            title: '',
+            color: 'yellow',
+            kind: 'thought',
+            x,
+            y,
+            width: 240,
+            height: 160,
+            rotation: Math.round((Math.random() - 0.5) * 2),
+          }),
+          queueIfOffline: true,
+        });
+        syncNotes([...Object.values(notesRef.current), created]);
+        setCapture('');
+      } catch (error) {
+        if (error instanceof APIError && error.queued) {
+          setCapture('');
+          showInfo(t('새 생각을 오프라인 보관함에 넣었습니다. 연결되면 캔버스에 나타납니다.'), t('오프라인 저장'));
+          return;
+        }
+        throw error;
+      }
+    },
+    [activeSpace],
+  );
 
-  const focusSearchResult=useCallback((step=1)=>{if(searchMatches.length===0)return;const next=(searchIndex+step+searchMatches.length)%searchMatches.length;setSearchIndex(next);const id=searchMatches[next].id;setNodes(all=>all.map(node=>({...node,selected:node.id===id})));window.requestAnimationFrame(()=>void flow.fitView({nodes:[{id}],duration:350,padding:1.4,maxZoom:1.25}))},[flow,searchIndex,searchMatches,setNodes]);
+  // Imported thoughts are created one at a time so the progress bar reflects
+  // real work and one rejected note cannot lose the rest of the batch.
+  const importThoughts = useCallback(
+    async (thoughts: ImportedThought[], onProgress: (done: number) => void) => {
+      if (!activeSpace || thoughts.length === 0) return 0;
+      const viewport = flow.screenToFlowPosition({ x: 140, y: 180 });
+      const created: ThoughtNote[] = [];
+      for (const [index, thought] of thoughts.entries()) {
+        const position = importLayout(index, viewport.x, viewport.y);
+        try {
+          created.push(
+            await api<ThoughtNote>(`/spaces/${activeSpace}/notes`, {
+              ...json('POST', {
+                content: thought.content,
+                title: thought.title,
+                color: 'yellow',
+                kind: 'thought',
+                x: position.x,
+                y: position.y,
+                width: 240,
+                height: 160,
+                rotation: Math.round((Math.random() - 0.5) * 2),
+              }),
+              silent: true,
+            }),
+          );
+        } catch {
+          // A single rejected note must not abandon the ones that follow.
+        }
+        onProgress(index + 1);
+      }
+      if (created.length > 0) {
+        syncNotes([...Object.values(notesRef.current), ...created]);
+        showSuccess(t('{count}개의 생각을 캔버스에 붙였습니다.', { count: created.length }), t('가져오기 완료'));
+      }
+      return created.length;
+    },
+    [activeSpace, flow, t],
+  );
+
+  const onPaneDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      const point = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      void createAt('', point.x, point.y);
+    },
+    [flow, createAt],
+  );
+  const connect = useCallback(
+    async (connection: Connection) => {
+      if (!connection.source || !connection.target) return;
+      try {
+        const created = await api<ThoughtEdge>(`/spaces/${activeSpace}/edges`, {
+          ...json('POST', { source: connection.source, target: connection.target, relation: 'related' }),
+          queueIfOffline: true,
+        });
+        setRawEdges((all) => [...all, created]);
+        setEdges((all) => addEdge({ ...connection, id: created.id, type: edgeStyle }, all));
+      } catch (error) {
+        if (error instanceof APIError && error.queued) {
+          showInfo(t('연결을 오프라인 보관함에 넣었습니다.'), t('오프라인 저장'));
+          return;
+        }
+        throw error;
+      }
+    },
+    [activeSpace, edgeStyle],
+  );
+  const onDragStart: OnNodeDrag<Node<PostItData>> = (_, node) => {
+    dragStart.current[node.id] = { ...node.position };
+  };
+  const onDragStop: OnNodeDrag<Node<PostItData>> = (_, node) => {
+    const before = dragStart.current[node.id];
+    const after = { ...node.position };
+    if (before && (before.x !== after.x || before.y !== after.y)) {
+      undo.current.push({ id: node.id, before, after });
+      redo.current = [];
+    }
+    persist(node.id, { x: after.x, y: after.y });
+  };
+
+  const focusSearchResult = useCallback(
+    (step = 1) => {
+      if (searchMatches.length === 0) return;
+      const next = (searchIndex + step + searchMatches.length) % searchMatches.length;
+      setSearchIndex(next);
+      const id = searchMatches[next].id;
+      setNodes((all) => all.map((node) => ({ ...node, selected: node.id === id })));
+      window.requestAnimationFrame(
+        () => void flow.fitView({ nodes: [{ id }], duration: 350, padding: 1.4, maxZoom: 1.25 }),
+      );
+    },
+    [flow, searchIndex, searchMatches, setNodes],
+  );
 
   useEffect(() => {
     const onKey = (event: globalThis.KeyboardEvent) => {
-      const target = event.target as HTMLElement; const editing = ['INPUT','TEXTAREA','SELECT'].includes(target.tagName) || target.isContentEditable;
+      const target = event.target as HTMLElement;
+      const editing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable;
       if (document.querySelector('[role="dialog"]')) return;
-      const mod=event.ctrlKey||event.metaKey;const key=event.key.toLocaleLowerCase();
-      if (!editing && mod && key==='f') {event.preventDefault();document.getElementById('thought-search')?.focus();return}
-      if (!editing && !mod && !event.altKey && key==='n') {event.preventDefault();document.getElementById('quick-thought')?.focus();return}
-      if (!editing && !mod && !event.altKey && event.key==='/') {event.preventDefault();document.getElementById('thought-search')?.focus();return}
-      if (!editing && (event.key==='Delete'||event.key==='Backspace')) {const selected=flow.getNodes().filter(node=>node.selected).map(node=>node.id);if(selected.length===0)return;event.preventDefault();if(window.confirm(`선택한 생각 ${selected.length}개를 삭제할까요?`))void Promise.all(selected.map(remove));return}
-      if (!editing && mod && key==='a') {event.preventDefault();setNodes(all=>all.map(node=>({...node,selected:true})));return}
-      if (!editing && !mod && !event.altKey && key==='f') {event.preventDefault();void flow.fitView({duration:400,padding:.25});return}
-      if (!editing && event.key==='Escape') {setQuery('');setSearchIndex(-1);setRelated(undefined);setNodes(all=>all.map(node=>({...node,selected:false})));return}
-      if (!editing && mod && key==='z') { event.preventDefault(); const action = event.shiftKey ? redo.current.pop() : undo.current.pop(); if (!action) return; const position = event.shiftKey ? action.after : action.before; persist(action.id, position); setNodes((all) => all.map(n => n.id === action.id ? { ...n, position } : n)); (event.shiftKey ? undo.current : redo.current).push(action); }
-    }; window.addEventListener('keydown', onKey); return () => window.removeEventListener('keydown', onKey);
-  }, [flow,persist,remove,setNodes]);
+      const mod = event.ctrlKey || event.metaKey;
+      const key = event.key.toLocaleLowerCase();
+      if (!editing && mod && key === 'f') {
+        event.preventDefault();
+        document.getElementById('thought-search')?.focus();
+        return;
+      }
+      if (!editing && !mod && !event.altKey && key === 'n') {
+        event.preventDefault();
+        document.getElementById('quick-thought')?.focus();
+        return;
+      }
+      if (!editing && !mod && !event.altKey && event.key === '/') {
+        event.preventDefault();
+        document.getElementById('thought-search')?.focus();
+        return;
+      }
+      if (!editing && (event.key === 'Delete' || event.key === 'Backspace')) {
+        const selected = flow
+          .getNodes()
+          .filter((node) => node.selected)
+          .map((node) => node.id);
+        if (selected.length === 0) return;
+        event.preventDefault();
+        if (window.confirm(t('선택한 생각 {count}개를 삭제할까요?', { count: selected.length })))
+          void Promise.all(selected.map(remove));
+        return;
+      }
+      if (!editing && mod && key === 'a') {
+        event.preventDefault();
+        setNodes((all) => all.map((node) => ({ ...node, selected: true })));
+        return;
+      }
+      if (!editing && !mod && !event.altKey && key === 'f') {
+        event.preventDefault();
+        void flow.fitView({ duration: 400, padding: 0.25 });
+        return;
+      }
+      if (!editing && event.key === 'Escape') {
+        setQuery('');
+        setSearchIndex(-1);
+        setRelated(undefined);
+        setNodes((all) => all.map((node) => ({ ...node, selected: false })));
+        return;
+      }
+      if (!editing && mod && key === 'z') {
+        event.preventDefault();
+        const action = event.shiftKey ? redo.current.pop() : undo.current.pop();
+        if (!action) return;
+        const position = event.shiftKey ? action.after : action.before;
+        persist(action.id, position);
+        setNodes((all) => all.map((n) => (n.id === action.id ? { ...n, position } : n)));
+        (event.shiftKey ? undo.current : redo.current).push(action);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [flow, persist, remove, setNodes]);
 
-  const captureKey = (event: KeyboardEvent<HTMLInputElement>) => { if (event.key === 'Enter' && capture.trim()) { const center = flow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 }); void createAt(capture, center.x - 120, center.y - 80); } };
-  const openSpace=(id:string)=>{setQuery('');setSpaceQuery('');navigate(`/space/${id}`)};
-  const addSpace=async()=>{const name=newSpaceName.trim();if(!name)return;setSpaceError('');setSpaceBusy('new');try{const created=await api<Space>('/spaces',json('POST',{name}));setSpaces(all=>[...all,created]);setSpaceDrafts(all=>({...all,[created.id]:created.name}));setNewSpaceName('');setSpaceManagerOpen(false);openSpace(created.id)}catch(error){setSpaceError(error instanceof Error?error.message:'공간을 만들지 못했습니다.')}finally{setSpaceBusy('')}};
-  const renameSpace=async(space:Space)=>{const name=(spaceDrafts[space.id]||'').trim();if(!name||name===space.name)return;setSpaceError('');setSpaceBusy(space.id);try{const updated=await api<Space>(`/spaces/${space.id}`,json('PUT',{name,aiExcluded:space.aiExcluded}));setSpaces(all=>all.map(item=>item.id===space.id?updated:item));setSpaceDrafts(all=>({...all,[space.id]:updated.name}))}catch(error){setSpaceError(error instanceof Error?error.message:'공간 이름을 저장하지 못했습니다.')}finally{setSpaceBusy('')}};
-  const toggleSpaceAI=async(space:Space,aiExcluded:boolean)=>{setSpaceError('');setSpaceBusy(`ai:${space.id}`);try{const updated=await api<Space>(`/spaces/${space.id}`,json('PUT',{name:space.name,aiExcluded}));setSpaces(all=>all.map(item=>item.id===space.id?updated:item))}catch(error){setSpaceError(error instanceof Error?error.message:'Dream 분석 설정을 저장하지 못했습니다.')}finally{setSpaceBusy('')}};
-  const deleteSpace=async()=>{if(!deleteCandidate||deleteConfirmation!==deleteCandidate.name)return;setSpaceError('');setSpaceBusy(`delete:${deleteCandidate.id}`);try{await api(`/spaces/${deleteCandidate.id}`,{method:'DELETE'});const result=await api<{spaces:Space[]}>('/spaces');setSpaces(result.spaces);setSpaceDrafts(Object.fromEntries(result.spaces.map(space=>[space.id,space.name])));const next=result.spaces.find(space=>space.id!==deleteCandidate.id)||result.spaces[0];setDeleteCandidate(undefined);setDeleteConfirmation('');if(next&&activeSpace===deleteCandidate.id)openSpace(next.id)}catch(error){setSpaceError(error instanceof Error?error.message:'공간을 삭제하지 못했습니다.')}finally{setSpaceBusy('')}};
-  const clusterThoughts=async()=>{const {clusters}=await api<{clusters:Cluster[]}>(`/spaces/${activeSpace}/clusters`);clusters.forEach((cluster,clusterIndex)=>cluster.noteIds.forEach((id,noteIndex)=>persist(id,{x:clusterIndex*620+(noteIndex%2)*270,y:Math.floor(noteIndex/2)*205})));if(clusters.length===0)window.alert('아직 뚜렷한 생각 군집이 없습니다. 조금 더 생각을 붙여보세요.')};
-  const assist=async(mode:string)=>{const selected=flow.getNodes().filter(n=>n.selected).map(n=>n.id);if(selected.length===0){showInfo('AI와 발전시킬 생각을 하나 이상 선택해 주세요.','생각 선택 필요');return};setAIBusy(true);try{setAIResult(await api('/ai/assist',json('POST',{noteIds:selected,mode})))}catch{/* API 알림에서 안내합니다. */}finally{setAIBusy(false)}};
-  const loadMembers=async()=>{const v=await api<{members:SpaceMember[];canManage:boolean}>(`/spaces/${activeSpace}/members`);setMembers(v.members);setCanManage(v.canManage)};const openShare=async()=>{await loadMembers();setShareOpen(true)};const share=async()=>{const v=await api<{required:boolean;status:string}>(`/spaces/${activeSpace}/members`,json('POST',{username:shareUser,permission:sharePermission}));setShareMessage(v.required?'팀장 검토를 요청했습니다. 승인되면 자동으로 공유됩니다.':'공간을 공유했습니다.');setShareUser('');await loadMembers()};const removeMember=async(id:string)=>{await api(`/spaces/${activeSpace}/members/${id}`,{method:'DELETE'});await loadMembers()};
-  const ensureExport=async(format:string)=>{const response=await fetch(`/api/v1/spaces/${activeSpace}/export/authorize?format=${format}`,{credentials:'same-origin'});if(response.ok)return true;const payload=await response.json().catch(()=>({}));if(response.status===409&&payload.code==='approval_required'){const request=await api<{required:boolean;status:string}>('/approvals',json('POST',{resourceType:'space',resourceId:activeSpace,action:'export',comment:`${format} 내보내기 요청`}));showInfo(request.required?'팀장 검토를 요청했습니다. 승인 후 24시간 동안 내보낼 수 있습니다.':'내보내기가 허용되었습니다.','내보내기 승인');return !request.required}throw new Error(payload.error||'내보내기 권한을 확인하지 못했습니다.')};
-  const downloadMarkdown=async()=>{if(!await ensureExport('markdown'))return false;const response=await fetch(`/api/v1/spaces/${activeSpace}/export/markdown`,{credentials:'same-origin'});if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.error||'Markdown을 만들지 못했습니다.')}const blob=await response.blob();const url=URL.createObjectURL(blob);const anchor=document.createElement('a');anchor.href=url;anchor.download=`umm-${activeName}.md`;anchor.click();window.setTimeout(()=>URL.revokeObjectURL(url),0);return true};
-  const canvasImage=async()=>{const target=document.querySelector('.react-flow__viewport') as HTMLElement|null;const allNodes=flow.getNodes();if(!target)throw new Error('캔버스를 찾을 수 없습니다.');if(allNodes.length===0)throw new Error('내보낼 메모가 없습니다.');const {toPng}=await import('html-to-image');const bounds=getNodesBounds(allNodes);const aspect=Math.max(.4,Math.min(2.5,(bounds.width||1)/(bounds.height||1)));const imageWidth=aspect>=1?2000:Math.max(900,Math.round(2000*aspect));const imageHeight=aspect>=1?Math.max(900,Math.round(2000/aspect)):2000;const viewport=getViewportForBounds(bounds,imageWidth,imageHeight,.1,2,.1);return toPng(target,{backgroundColor:'#f8f5ee',width:imageWidth,height:imageHeight,pixelRatio:1.5,cacheBust:true,style:{width:`${imageWidth}px`,height:`${imageHeight}px`,transform:`translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`}})};
-  const downloadImage=async()=>{if(!await ensureExport('image'))return false;const data=await canvasImage();const anchor=document.createElement('a');anchor.href=data;anchor.download=`umm-${activeName}.png`;anchor.click();return true};
-  const downloadPDF=async()=>{if(!await ensureExport('pdf'))return false;const data=await canvasImage();const [{jsPDF},image]=await Promise.all([import('jspdf'),new Promise<HTMLImageElement>((resolve,reject)=>{const next=new Image();next.onload=()=>resolve(next);next.onerror=()=>reject(new Error('PDF용 이미지를 준비하지 못했습니다.'));next.src=data})]);const landscape=image.naturalWidth>=image.naturalHeight;const pdf=new jsPDF({orientation:landscape?'landscape':'portrait',unit:'mm',format:'a4',compress:true});const pageWidth=pdf.internal.pageSize.getWidth();const pageHeight=pdf.internal.pageSize.getHeight();const margin=10;const scale=Math.min((pageWidth-margin*2)/image.naturalWidth,(pageHeight-margin*2)/image.naturalHeight);const width=image.naturalWidth*scale;const height=image.naturalHeight*scale;pdf.addImage(data,'PNG',(pageWidth-width)/2,(pageHeight-height)/2,width,height,undefined,'FAST');pdf.save(`umm-${activeName.replace(/[\\/:*?"<>|]/g,'-')}.pdf`);return true};
-  const runExport=async(kind:string,label:string,action:()=>Promise<boolean>)=>{if(exportBusy)return;setExportBusy(kind);showInfo(`${label} 파일을 준비하고 있습니다.`,'내보내기');try{if(await action())showSuccess(`${label} 파일 다운로드를 시작했습니다.`,'내보내기 완료')}catch(error){showError(error instanceof Error?error.message:`${label} 파일을 만들지 못했습니다.`,'내보내기 실패',`export:${kind}`)}finally{setExportBusy('')}};
-  const dismissDream = async () => { if (!morningDream) return; sessionStorage.setItem(`dream:${morningDream.dreamId}`, 'seen'); await api(`/dreams/${morningDream.dreamId}/feedback`, json('POST', { action: 'exposed' })).catch(() => undefined); setMorningDream(undefined); };
-  const reviewDream = async () => { if (!morningDream) return; const id=morningDream.dreamId; await dismissDream();navigate(`/dreams?focus=${id}`); };
-  const activeName = spaces.find(s => s.id === activeSpace)?.name || 'My Space';
+  // The web app manifest registers umm as a share target, so another app can
+  // hand a link or a snippet straight to the capture box. The parameters are
+  // consumed once so a reload does not re-fill the input.
+  useEffect(() => {
+    const shared = [searchParams.get('title'), searchParams.get('text'), searchParams.get('url')]
+      .map((value) => value?.trim())
+      .filter(Boolean);
+    if (shared.length === 0) return;
+    setCapture(shared.join('\n'));
+    const next = new URLSearchParams(searchParams);
+    for (const key of ['title', 'text', 'url']) next.delete(key);
+    setSearchParams(next, { replace: true });
+    window.requestAnimationFrame(() => document.getElementById('quick-thought')?.focus());
+  }, [searchParams, setSearchParams]);
 
-  return <div className="canvas-page">
-    {loading && <div className="canvas-loading" role="status" aria-label="생각 불러오는 중"><Loader color="grape" /></div>}
-    {listView?<ScrollArea className="canvas-linear-view" type="auto"><main aria-label="생각 선형 목록"><Group justify="space-between" mb="lg"><div><Title order={2}>생각 목록</Title><Text c="dimmed" size="sm">키보드와 화면 읽기 도구로 탐색하기 쉬운 보기입니다.</Text></div><Button variant="light" onClick={()=>setListView(false)}>캔버스로 돌아가기</Button></Group><Stack role="list" gap="sm">{searchMatches.map(note=><Card role="listitem" key={note.id} withBorder radius="lg" p="lg"><Group justify="space-between" align="flex-start" wrap="nowrap"><div><Group gap="xs"><Badge variant="light">{note.kind}</Badge>{note.source==='dream'&&<Badge color="grape" variant="light">Dream</Badge>}<Text size="xs" c="dimmed">{new Date(note.updatedAt).toLocaleString('ko-KR')}</Text></Group><Text fw={650} mt="sm">{note.title||note.content||'내용 없는 생각'}</Text></div><Group gap="xs"><Button size="xs" variant="subtle" leftSection={<IconMessageCircle size={14}/>} onClick={()=>void openComments(note)}>댓글</Button><Button size="xs" onClick={()=>{setListView(false);window.requestAnimationFrame(()=>void flow.setCenter(note.x+note.width/2,note.y+note.height/2,{zoom:1.08,duration:400}))}}>캔버스에서 보기</Button></Group></Group></Card>)}</Stack></main></ScrollArea>:<ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={connect} onNodeDragStart={onDragStart} onNodeDragStop={onDragStop} onPaneClick={(event) => { if (event.detail === 2) onPaneDoubleClick(event); }} fitView fitViewOptions={{ padding: .3 }} minZoom={.15} maxZoom={2.2} deleteKeyCode={null} selectionOnDrag panOnScroll>
-      <Background variant={BackgroundVariant.Dots} color="transparent" /><Controls position="bottom-left" showInteractive={false} /><MiniMap position="bottom-right" pannable zoomable nodeColor={(node) => palette[(node.data as PostItData | undefined)?.note?.color || 'yellow'] || '#ddd'} maskColor="rgba(245,242,234,.7)" />
-    </ReactFlow>}
-    <Paper className="canvas-toolbar" radius="xl" p={7}><Group gap={6} wrap="nowrap">
-      <Menu shadow="md" width={300} position="bottom-start"><Menu.Target><Button className="space-switcher" variant="light" color="yellow.8" size="compact-sm" rightSection={<IconChevronDown size={14}/>} style={{textTransform:'none'}}>{activeName}</Button></Menu.Target><Menu.Dropdown>
-        <Menu.Label>공간 {spaces.length}개</Menu.Label><div className="space-menu-search"><TextInput value={spaceQuery} onChange={event=>setSpaceQuery(event.currentTarget.value)} onKeyDown={event=>event.stopPropagation()} leftSection={<IconSearch size={15}/>} placeholder="공간 검색" size="xs"/></div>
-        <ScrollArea.Autosize mah={260} type="auto">{visibleSpaces.map(space=><Menu.Item key={space.id} leftSection={<span className="space-dot" style={{background:space.color}}/>} rightSection={space.id===activeSpace?<IconCheck size={15}/>:undefined} onClick={()=>openSpace(space.id)}>{space.name}</Menu.Item>)}{visibleSpaces.length===0&&<Text size="xs" c="dimmed" ta="center" py="md">일치하는 공간이 없습니다.</Text>}</ScrollArea.Autosize>
-        <Menu.Divider/><Menu.Item leftSection={<IconSettings size={16}/>} onClick={()=>{setSpaceError('');setSpaceManagerOpen(true)}}>공간 관리</Menu.Item><Menu.Item leftSection={<IconPlus size={16}/>} onClick={()=>{setSpaceError('');setSpaceManagerOpen(true)}}>새 공간 만들기</Menu.Item>
-      </Menu.Dropdown></Menu>
-      <TextInput id="thought-search" className="thought-search" aria-label="생각 검색" value={query} onChange={(e) => {setQuery(e.currentTarget.value);setSearchIndex(-1)}} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();focusSearchResult(event.shiftKey?-1:1)}if(event.key==='Escape'){event.preventDefault();setQuery('');setSearchIndex(-1)}}} leftSection={<IconSearch size={17}/>} rightSection={query?<Group gap={3} wrap="nowrap"><Badge size="xs" variant="light" color={searchMatches.length?'grape':'red'}>{searchMatches.length}</Badge><ActionIcon size="sm" variant="subtle" onClick={() => {setQuery('');setSearchIndex(-1)}} aria-label="검색어 지우기"><IconX size={14}/></ActionIcon></Group>:null} rightSectionWidth={query?66:undefined} placeholder="생각 검색  /" variant="filled" />
-      <Group className="canvas-toolbar-actions" gap={2} wrap="nowrap"><Tooltip label={listView?'공간 캔버스 보기':'접근 가능한 선형 목록'}><ActionIcon className="canvas-action" variant={listView?'filled':'subtle'} color="dark" onClick={()=>setListView(value=>!value)} aria-label="생각 보기 전환" aria-pressed={listView}><IconList size={19}/></ActionIcon></Tooltip><Tooltip label="공간 공유"><ActionIcon className="canvas-action" variant="subtle" color="dark" onClick={()=>void openShare()} aria-label="공간 공유"><IconShare size={19}/></ActionIcon></Tooltip><Menu shadow="md"><Menu.Target><Tooltip label="내보내기"><ActionIcon className="canvas-action" loading={!!exportBusy} variant="subtle" color="dark" aria-label="내보내기"><IconDownload size={19}/></ActionIcon></Tooltip></Menu.Target><Menu.Dropdown><Menu.Item disabled={!!exportBusy} leftSection={<IconMarkdown size={16}/>} onClick={()=>void runExport('markdown','Markdown',downloadMarkdown)}>Markdown</Menu.Item><Menu.Item disabled={!!exportBusy} leftSection={<IconPhoto size={16}/>} onClick={()=>void runExport('image','PNG 이미지',downloadImage)}>Image (PNG)</Menu.Item><Menu.Item disabled={!!exportBusy} leftSection={<IconFileTypePdf size={16}/>} onClick={()=>void runExport('pdf','PDF',downloadPDF)}>PDF 다운로드</Menu.Item></Menu.Dropdown></Menu><Menu shadow="md"><Menu.Target><Tooltip label="선택한 생각 발전시키기"><ActionIcon className="canvas-action" loading={aiBusy} variant="subtle" color="grape" aria-label="AI 생각 도구"><IconBrain size={20}/></ActionIcon></Tooltip></Menu.Target><Menu.Dropdown><Menu.Label>AI는 조용히 도와줍니다</Menu.Label>{aiTools.map(([mode,label])=><Menu.Item key={mode} onClick={()=>void assist(mode)}>{label}</Menu.Item>)}</Menu.Dropdown></Menu><Tooltip label="관련 생각 군집 모으기"><ActionIcon className="canvas-action" variant="subtle" color="blue" onClick={()=>void clusterThoughts()} aria-label="생각 군집"><IconLayoutGrid size={20}/></ActionIcon></Tooltip><Tooltip label="직접 연결한 생각 모으기"><ActionIcon className="canvas-action" variant="subtle" color="grape" onClick={()=>gravity()} aria-label="Thought Gravity"><IconFocusCentered size={20}/></ActionIcon></Tooltip></Group>
-      <Menu shadow="md" position="bottom-end"><Menu.Target><ActionIcon className="canvas-mobile-tools" loading={!!exportBusy} variant="subtle" color="dark" aria-label="캔버스 도구"><IconDots size={21}/></ActionIcon></Menu.Target><Menu.Dropdown><Menu.Item leftSection={<IconList size={17}/>} onClick={()=>setListView(value=>!value)}>{listView?'캔버스 보기':'선형 목록 보기'}</Menu.Item><Menu.Item leftSection={<IconShare size={17}/>} onClick={()=>void openShare()}>공간 공유</Menu.Item><Menu.Sub><Menu.Sub.Target><Menu.Sub.Item leftSection={<IconDownload size={17}/>}>내보내기</Menu.Sub.Item></Menu.Sub.Target><Menu.Sub.Dropdown><Menu.Item disabled={!!exportBusy} leftSection={<IconMarkdown size={16}/>} onClick={()=>void runExport('markdown','Markdown',downloadMarkdown)}>Markdown</Menu.Item><Menu.Item disabled={!!exportBusy} leftSection={<IconPhoto size={16}/>} onClick={()=>void runExport('image','PNG 이미지',downloadImage)}>Image (PNG)</Menu.Item><Menu.Item disabled={!!exportBusy} leftSection={<IconFileTypePdf size={16}/>} onClick={()=>void runExport('pdf','PDF',downloadPDF)}>PDF 다운로드</Menu.Item></Menu.Sub.Dropdown></Menu.Sub><Menu.Sub><Menu.Sub.Target><Menu.Sub.Item leftSection={<IconBrain size={17}/>}>AI 생각 도구</Menu.Sub.Item></Menu.Sub.Target><Menu.Sub.Dropdown>{aiTools.map(([mode,label])=><Menu.Item key={mode} onClick={()=>void assist(mode)}>{label}</Menu.Item>)}</Menu.Sub.Dropdown></Menu.Sub><Menu.Item leftSection={<IconLayoutGrid size={17}/>} onClick={()=>void clusterThoughts()}>생각 군집 모으기</Menu.Item><Menu.Item leftSection={<IconFocusCentered size={17}/>} onClick={()=>gravity()}>연결한 생각 모으기</Menu.Item></Menu.Dropdown></Menu>
-    </Group></Paper>
-    {!loading && notes.length === 0 && <div className="onboarding-hint"><div><IconSparkles size={30} stroke={1.4}/><Text fz="lg" fw={650} mt="sm">여기 아무 곳이나 더블클릭 해보세요.</Text><Text c="dimmed" mt={4}>또는 아래에 생각을 바로 적어보세요.</Text></div></div>}
-    {!loading&&searchTerms.length>0&&<Paper className="search-summary glass" radius="xl" px="md" py={7} role="status" aria-live="polite"><Text size="sm" fw={650}>{searchMatches.length===0?'일치하는 생각이 없습니다.':`${searchMatches.length}개의 생각을 찾았습니다.`}</Text>{searchMatches.length>0&&<Text size="xs" c="dimmed">Enter로 결과 이동{searchIndex>=0?` · ${searchIndex+1}/${searchMatches.length}`:''}</Text>}</Paper>}
-    {!loading&&notes.length>0&&searchTerms.length>0&&searchMatches.length===0&&<div className="onboarding-hint"><div><IconSearch size={30} stroke={1.4}/><Text fz="lg" fw={650} mt="sm">검색 결과가 없습니다.</Text><Text c="dimmed" mt={4}>다른 단어를 입력하거나 Esc로 검색을 지워보세요.</Text></div></div>}
-    <Paper className="quick-capture" radius="xl" p={7}><TextInput id="quick-thought" aria-label="새 생각" value={capture} onChange={(e) => setCapture(e.currentTarget.value)} onKeyDown={captureKey} placeholder="생각을 입력하고 Enter로 붙이세요" variant="unstyled" px="sm" rightSection={<ActionIcon variant="filled" color="dark" radius="xl" disabled={!capture.trim()} onClick={() => { const center=flow.screenToFlowPosition({x:window.innerWidth/2,y:window.innerHeight/2});void createAt(capture,center.x-120,center.y-80); }} aria-label="생각 붙이기"><IconArrowRight size={18}/></ActionIcon>} /></Paper>
-    {morningDream && <div className="morning-overlay"><Paper radius="xl" p={{base:'xl',sm:40}} maw={520} mx="md" className="glass" ta="center"><IconMoonStars size={34} color="#76628f"/><Text size="sm" fw={700} c="grape.7" tt="uppercase" mt="sm">Dream</Text><Text fz={24} fw={660} mt="md">어젯밤, 당신의 생각이 꿈을 꾸었습니다.</Text><Text fz="lg" lh={1.65} mt="lg">{morningDream.content}</Text><Text size="sm" c="dimmed" mt="md">원본 생각을 확인한 뒤 캔버스에 남길지 선택할 수 있습니다.</Text><Group justify="center" mt="xl"><Button variant="subtle" color="gray" onClick={()=>void dismissDream()}>나중에</Button><Button variant="light" color="grape" onClick={()=>void reviewDream()}>Dream 검토하기</Button></Group></Paper></div>}
-    {related&&<Paper className="related-panel glass" radius="lg" p="md"><Group justify="space-between"><Text fw={700}>생각 연결</Text><ActionIcon variant="subtle" aria-label="연결 패널 닫기" onClick={()=>{setRelated(undefined);setBacklinks([])}}><IconX size={16}/></ActionIcon></Group>{backlinks.length>0&&<><Text size="xs" fw={700} c="grape.7" mt="md">직접 연결 · 백링크 {backlinks.length}</Text><Stack gap="xs" mt="xs">{backlinks.map(item=><button key={item.edge.id} className="related-row" onClick={()=>flow.fitView({nodes:[{id:item.note.id}],duration:500,padding:.8})}><Text lineClamp={2} ta="left">{item.note.title||item.note.content}</Text><Text size="xs" c="dimmed" ta="left">{item.direction==='incoming'?'이 생각을 가리킴':'이 생각이 가리킴'} · {item.edge.relation}</Text></button>)}</Stack></>}<Text size="xs" fw={700} c="blue.7" mt="md">의미가 가까운 생각 {related.items.length}</Text><Stack gap="xs" mt="xs">{related.items.map(item=><button key={item.note.id} className="related-row" onClick={()=>flow.fitView({nodes:[{id:item.note.id}],duration:500,padding:.8})}><Text lineClamp={2} ta="left">{item.note.content}</Text><Text size="xs" c="dimmed" ta="left">{item.reason} · {Math.round(item.score*100)}%</Text></button>)}</Stack></Paper>}
-    <Modal opened={!!aiResult} onClose={()=>setAIResult(undefined)} title="생각이 한 단계 자랐습니다" centered size="lg"><Stack><Paper p="lg" radius="lg" bg="grape.0"><Text lh={1.75} style={{whiteSpace:'pre-wrap'}}>{aiResult?.content}</Text></Paper><Group justify="flex-end"><Button variant="light" onClick={()=>setAIResult(undefined)}>그대로 두기</Button><Button onClick={()=>{const center=flow.screenToFlowPosition({x:window.innerWidth/2,y:window.innerHeight/2});void createAt(aiResult?.content||'',center.x-120,center.y-80);setAIResult(undefined)}}>새 생각으로 붙이기</Button></Group></Stack></Modal>
-    <Modal opened={!!commentNote} onClose={()=>{setCommentNote(undefined);setComments([])}} title="생각에 대한 대화" centered size="lg"><Stack><Paper p="md" radius="md" bg="gray.0"><Text size="xs" c="dimmed">대화 중인 생각</Text><Text fw={650} lineClamp={3} mt={4}>{commentNote?.title||commentNote?.content||'내용 없는 생각'}</Text></Paper><ScrollArea.Autosize mah={360} type="auto"><Stack gap="sm">{comments.length===0?<Text c="dimmed" ta="center" py="xl">첫 댓글을 남겨 생각을 함께 발전시켜 보세요.</Text>:comments.map(comment=><Paper key={comment.id} withBorder p="md" radius="md" opacity={comment.resolvedAt?.length?0.58:1}><Group justify="space-between" align="flex-start"><div><Group gap="xs"><Text size="sm" fw={700}>{comment.author}</Text><Text size="xs" c="dimmed">@{comment.username} · {new Date(comment.createdAt).toLocaleString('ko-KR')}</Text>{comment.resolvedAt&&<Badge color="green" variant="light">해결됨</Badge>}</Group><Text size="sm" mt="xs" style={{whiteSpace:'pre-wrap'}}>{comment.body}</Text></div><Menu shadow="sm"><Menu.Target><ActionIcon variant="subtle" aria-label="댓글 메뉴"><IconDots size={16}/></ActionIcon></Menu.Target><Menu.Dropdown><Menu.Item leftSection={<IconCheck size={14}/>} onClick={()=>void resolveComment(comment)}>{comment.resolvedAt?'다시 열기':'해결 표시'}</Menu.Item><Menu.Item color="red" leftSection={<IconTrash size={14}/>} onClick={()=>void deleteComment(comment)}>삭제</Menu.Item></Menu.Dropdown></Menu></Group></Paper>)}</Stack></ScrollArea.Autosize><Textarea label="댓글" description="@username으로 공유 공간의 사용자를 언급할 수 있습니다. 네트워크가 끊기면 자동 보관됩니다." value={commentBody} onChange={event=>setCommentBody(event.currentTarget.value)} autosize minRows={3} maxRows={8} maxLength={4000} onKeyDown={event=>{if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();void postComment()}}}/><Group justify="space-between"><Text size="xs" c="dimmed">Ctrl/⌘ + Enter로 게시 · {commentBody.length}/4000</Text><Button loading={commentBusy} disabled={!commentBody.trim()} leftSection={<IconMessageCircle size={16}/>} onClick={()=>void postComment()}>댓글 남기기</Button></Group></Stack></Modal>
-    <Modal opened={!!conflict} onClose={()=>setConflict(undefined)} title="메모 변경이 겹쳤습니다" centered size="xl" closeOnClickOutside={false}><Stack><Alert color="yellow" icon={<IconGitMerge size={18}/>}>다른 화면 또는 오프라인 재시도에서 같은 메모가 먼저 저장되었습니다. 내용을 비교한 뒤 안전하게 선택하세요.</Alert><SimpleGrid cols={{base:1,sm:2}}><Paper withBorder p="md" radius="md"><Text size="xs" fw={700} c="blue.7">내 변경 · v{conflict?.local.version}</Text><Text size="sm" mt="sm" style={{whiteSpace:'pre-wrap'}}>{conflict?.local.content}</Text></Paper><Paper withBorder p="md" radius="md"><Text size="xs" fw={700} c="grape.7">서버의 최신 내용 · v{conflict?.latest.version}</Text><Text size="sm" mt="sm" style={{whiteSpace:'pre-wrap'}}>{conflict?.latest.content}</Text></Paper></SimpleGrid><Textarea label="병합할 내용" value={mergeDraft} onChange={event=>setMergeDraft(event.currentTarget.value)} autosize minRows={5} maxRows={12}/><Group justify="flex-end"><Button variant="default" onClick={()=>void applyConflict('server')}>서버 내용 사용</Button><Button variant="light" onClick={()=>void applyConflict('local')}>내 변경으로 덮기</Button><Button leftSection={<IconGitMerge size={16}/>} onClick={()=>void applyConflict('merge')}>편집한 내용으로 병합</Button></Group></Stack></Modal>
-    <Modal opened={spaceManagerOpen} onClose={()=>{setSpaceManagerOpen(false);setSpaceQuery('');setSpaceError('')}} title="공간 관리" centered size="lg"><Stack>
-      <Text c="dimmed" size="sm">공간을 검색하고 이동하거나, 소유한 공간의 이름을 바꾸고 삭제할 수 있습니다.</Text>
-      {spaceError&&<Alert color="red" withCloseButton onClose={()=>setSpaceError('')}>{spaceError}</Alert>}
-      <Group align="flex-end"><TextInput label="새 공간" placeholder="공간 이름" value={newSpaceName} maxLength={200} onChange={event=>setNewSpaceName(event.currentTarget.value)} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();void addSpace()}}} style={{flex:1}}/><Button leftSection={<IconPlus size={16}/>} loading={spaceBusy==='new'} disabled={!newSpaceName.trim()} onClick={()=>void addSpace()}>만들기</Button></Group>
-      <Divider/><TextInput value={spaceQuery} onChange={event=>setSpaceQuery(event.currentTarget.value)} leftSection={<IconSearch size={16}/>} placeholder={`공간 ${spaces.length}개 중 검색`}/>
-      <ScrollArea.Autosize mah={420} type="auto"><Stack gap="sm">{visibleSpaces.map(space=>{const owned=space.ownerId===user?.id;const changed=(spaceDrafts[space.id]||'').trim()!==space.name;return <Paper key={space.id} className="space-manager-row" p="sm" radius="md" withBorder><Group wrap="nowrap" align="flex-end"><TextInput label={owned?'내 공간':'공유 공간'} value={spaceDrafts[space.id]??space.name} disabled={!owned} maxLength={200} onChange={event=>setSpaceDrafts(all=>({...all,[space.id]:event.currentTarget.value}))} style={{flex:1}}/><Group gap={5} wrap="nowrap"><Tooltip label="이동"><ActionIcon variant={space.id===activeSpace?'filled':'light'} color="grape" aria-label={`${space.name}으로 이동`} onClick={()=>{openSpace(space.id);setSpaceManagerOpen(false)}}><IconArrowRight size={17}/></ActionIcon></Tooltip>{owned&&<Tooltip label="이름 저장"><ActionIcon variant="light" color="blue" loading={spaceBusy===space.id} disabled={!changed||!(spaceDrafts[space.id]||'').trim()} aria-label={`${space.name} 이름 저장`} onClick={()=>void renameSpace(space)}><IconEdit size={16}/></ActionIcon></Tooltip>}{owned&&<Tooltip label="공간 삭제"><ActionIcon variant="light" color="red" aria-label={`${space.name} 삭제`} onClick={()=>{setDeleteCandidate(space);setDeleteConfirmation('')}}><IconTrash size={16}/></ActionIcon></Tooltip>}</Group></Group><Group justify="space-between" mt="xs"><Group gap="xs">{space.id===activeSpace&&<Badge size="xs" variant="light">현재 공간</Badge>}{space.aiExcluded&&<Badge size="xs" color="gray" variant="light">AI 제외</Badge>}</Group>{owned&&<Switch size="xs" label="AI Dream 분석" checked={!space.aiExcluded} disabled={spaceBusy===`ai:${space.id}`} onChange={event=>void toggleSpaceAI(space,!event.currentTarget.checked)}/>}</Group></Paper>})}{visibleSpaces.length===0&&<Text c="dimmed" ta="center" py="xl">일치하는 공간이 없습니다.</Text>}</Stack></ScrollArea.Autosize>
-    </Stack></Modal>
-    <Modal opened={!!deleteCandidate} onClose={()=>{if(!spaceBusy.startsWith('delete:')){setDeleteCandidate(undefined);setDeleteConfirmation('')}}} title="공간을 삭제할까요?" centered size="md" closeOnClickOutside={!spaceBusy.startsWith('delete:')}><Stack><Alert color="red" icon={<IconTrash size={18}/>}>공간 안의 메모, 연결, Dream 기록과 공유 정보가 모두 삭제됩니다. 이 작업은 되돌릴 수 없습니다.</Alert>{spaceError&&<Alert color="red">{spaceError}</Alert>}<Text size="sm">확인을 위해 <b>{deleteCandidate?.name}</b>을 입력하세요.</Text><TextInput autoFocus value={deleteConfirmation} onChange={event=>setDeleteConfirmation(event.currentTarget.value)} placeholder={deleteCandidate?.name}/><Group justify="flex-end"><Button variant="default" onClick={()=>{setDeleteCandidate(undefined);setDeleteConfirmation('');setSpaceError('')}}>취소</Button><Button color="red" loading={spaceBusy===`delete:${deleteCandidate?.id}`} disabled={!deleteCandidate||deleteConfirmation!==deleteCandidate.name} onClick={()=>void deleteSpace()}>영구 삭제</Button></Group></Stack></Modal>
-    <Modal opened={shareOpen} onClose={()=>setShareOpen(false)} title="이 공간 함께 쓰기" centered size="lg"><Stack>{shareMessage&&<Paper p="sm" bg="grape.0"><Text size="sm">{shareMessage}</Text></Paper>}{canManage&&<Group align="flex-end"><TextInput label="사용자 아이디" placeholder="username" value={shareUser} onChange={e=>setShareUser(e.currentTarget.value)} style={{flex:1}}/><Select label="권한" value={sharePermission} onChange={v=>v&&setSharePermission(v)} data={[{value:'view',label:'보기'},{value:'edit',label:'편집'},{value:'manage',label:'관리'}]} w={120}/><Button disabled={!shareUser.trim()} onClick={()=>void share()}>초대</Button></Group>}<Stack gap="xs">{members.map(member=><Paper key={member.id} p="sm" bg="gray.0"><Group justify="space-between"><div><Text fw={600}>{member.displayName}</Text><Text size="xs" c="dimmed">{member.username} · {member.permission}</Text></div>{canManage&&member.permission!=='owner'&&<ActionIcon color="red" variant="subtle" onClick={()=>void removeMember(member.id)}><IconTrash size={16}/></ActionIcon>}</Group></Paper>)}</Stack></Stack></Modal>
-  </div>;
+  const captureKey = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter' && capture.trim()) {
+      const center = flow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+      void createAt(capture, center.x - 120, center.y - 80);
+    }
+  };
+  const openSpace = (id: string) => {
+    setQuery('');
+    setSpaceQuery('');
+    navigate(`/space/${id}`);
+  };
+  const addSpace = async () => {
+    const name = newSpaceName.trim();
+    if (!name) return;
+    setSpaceError('');
+    setSpaceBusy('new');
+    try {
+      const created = await api<Space>('/spaces', json('POST', { name }));
+      setSpaces((all) => [...all, created]);
+      setSpaceDrafts((all) => ({ ...all, [created.id]: created.name }));
+      setNewSpaceName('');
+      setSpaceManagerOpen(false);
+      openSpace(created.id);
+    } catch (error) {
+      setSpaceError(error instanceof Error ? error.message : t('공간을 만들지 못했습니다.'));
+    } finally {
+      setSpaceBusy('');
+    }
+  };
+  const renameSpace = async (space: Space) => {
+    const name = (spaceDrafts[space.id] || '').trim();
+    if (!name || name === space.name) return;
+    setSpaceError('');
+    setSpaceBusy(space.id);
+    try {
+      const updated = await api<Space>(`/spaces/${space.id}`, json('PUT', { name, aiExcluded: space.aiExcluded }));
+      setSpaces((all) => all.map((item) => (item.id === space.id ? updated : item)));
+      setSpaceDrafts((all) => ({ ...all, [space.id]: updated.name }));
+    } catch (error) {
+      setSpaceError(error instanceof Error ? error.message : t('공간 이름을 저장하지 못했습니다.'));
+    } finally {
+      setSpaceBusy('');
+    }
+  };
+  const toggleSpaceAI = async (space: Space, aiExcluded: boolean) => {
+    setSpaceError('');
+    setSpaceBusy(`ai:${space.id}`);
+    try {
+      const updated = await api<Space>(`/spaces/${space.id}`, json('PUT', { name: space.name, aiExcluded }));
+      setSpaces((all) => all.map((item) => (item.id === space.id ? updated : item)));
+    } catch (error) {
+      setSpaceError(error instanceof Error ? error.message : t('Dream 분석 설정을 저장하지 못했습니다.'));
+    } finally {
+      setSpaceBusy('');
+    }
+  };
+  const deleteSpace = async () => {
+    if (!deleteCandidate || deleteConfirmation !== deleteCandidate.name) return;
+    setSpaceError('');
+    setSpaceBusy(`delete:${deleteCandidate.id}`);
+    try {
+      await api(`/spaces/${deleteCandidate.id}`, { method: 'DELETE' });
+      const result = await api<{ spaces: Space[] }>('/spaces');
+      setSpaces(result.spaces);
+      setSpaceDrafts(Object.fromEntries(result.spaces.map((space) => [space.id, space.name])));
+      const next = result.spaces.find((space) => space.id !== deleteCandidate.id) || result.spaces[0];
+      setDeleteCandidate(undefined);
+      setDeleteConfirmation('');
+      if (next && activeSpace === deleteCandidate.id) openSpace(next.id);
+    } catch (error) {
+      setSpaceError(error instanceof Error ? error.message : t('공간을 삭제하지 못했습니다.'));
+    } finally {
+      setSpaceBusy('');
+    }
+  };
+  const clusterThoughts = async () => {
+    const { clusters } = await api<{ clusters: Cluster[] }>(`/spaces/${activeSpace}/clusters`);
+    clusters.forEach((cluster, clusterIndex) =>
+      cluster.noteIds.forEach((id, noteIndex) =>
+        persist(id, { x: clusterIndex * 620 + (noteIndex % 2) * 270, y: Math.floor(noteIndex / 2) * 205 }),
+      ),
+    );
+    if (clusters.length === 0) window.alert(t('아직 뚜렷한 생각 군집이 없습니다. 조금 더 생각을 붙여보세요.'));
+  };
+  const assist = async (mode: string) => {
+    const selected = flow
+      .getNodes()
+      .filter((n) => n.selected)
+      .map((n) => n.id);
+    if (selected.length === 0) {
+      showInfo(t('AI와 발전시킬 생각을 하나 이상 선택해 주세요.'), t('생각 선택 필요'));
+      return;
+    }
+    setAIBusy(true);
+    try {
+      setAIResult(await api('/ai/assist', json('POST', { noteIds: selected, mode })));
+    } catch {
+      /* API 알림에서 안내합니다. */
+    } finally {
+      setAIBusy(false);
+    }
+  };
+  const loadMembers = async () => {
+    const v = await api<{ members: SpaceMember[]; canManage: boolean }>(`/spaces/${activeSpace}/members`);
+    setMembers(v.members);
+    setCanManage(v.canManage);
+  };
+  const openShare = async () => {
+    await loadMembers();
+    setShareOpen(true);
+  };
+  const share = async () => {
+    const v = await api<{ required: boolean; status: string }>(
+      `/spaces/${activeSpace}/members`,
+      json('POST', { username: shareUser, permission: sharePermission }),
+    );
+    setShareMessage(
+      v.required ? t('팀장 검토를 요청했습니다. 승인되면 자동으로 공유됩니다.') : t('공간을 공유했습니다.'),
+    );
+    setShareUser('');
+    await loadMembers();
+  };
+  const removeMember = async (id: string) => {
+    await api(`/spaces/${activeSpace}/members/${id}`, { method: 'DELETE' });
+    await loadMembers();
+  };
+  const ensureExport = async (format: string) => {
+    const response = await fetch(`/api/v1/spaces/${activeSpace}/export/authorize?format=${format}`, {
+      credentials: 'same-origin',
+    });
+    if (response.ok) return true;
+    const payload = await response.json().catch(() => ({}));
+    if (response.status === 409 && payload.code === 'approval_required') {
+      const request = await api<{ required: boolean; status: string }>(
+        '/approvals',
+        json('POST', {
+          resourceType: 'space',
+          resourceId: activeSpace,
+          action: 'export',
+          comment: t('{format} 내보내기 요청', { format }),
+        }),
+      );
+      showInfo(
+        request.required
+          ? t('팀장 검토를 요청했습니다. 승인 후 24시간 동안 내보낼 수 있습니다.')
+          : t('내보내기가 허용되었습니다.'),
+        t('내보내기 승인'),
+      );
+      return !request.required;
+    }
+    throw new Error(payload.error || t('내보내기 권한을 확인하지 못했습니다.'));
+  };
+  const downloadMarkdown = async () => {
+    if (!(await ensureExport('markdown'))) return false;
+    const response = await fetch(`/api/v1/spaces/${activeSpace}/export/markdown`, { credentials: 'same-origin' });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || t('Markdown을 만들지 못했습니다.'));
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `umm-${activeName}.md`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    return true;
+  };
+  const canvasImage = async () => {
+    const target = document.querySelector('.react-flow__viewport') as HTMLElement | null;
+    const allNodes = flow.getNodes();
+    if (!target) throw new Error(t('캔버스를 찾을 수 없습니다.'));
+    if (allNodes.length === 0) throw new Error(t('내보낼 메모가 없습니다.'));
+    const { toPng } = await import('html-to-image');
+    const bounds = getNodesBounds(allNodes);
+    const aspect = Math.max(0.4, Math.min(2.5, (bounds.width || 1) / (bounds.height || 1)));
+    const imageWidth = aspect >= 1 ? 2000 : Math.max(900, Math.round(2000 * aspect));
+    const imageHeight = aspect >= 1 ? Math.max(900, Math.round(2000 / aspect)) : 2000;
+    const viewport = getViewportForBounds(bounds, imageWidth, imageHeight, 0.1, 2, 0.1);
+    return toPng(target, {
+      backgroundColor: '#f8f5ee',
+      width: imageWidth,
+      height: imageHeight,
+      pixelRatio: 1.5,
+      cacheBust: true,
+      style: {
+        width: `${imageWidth}px`,
+        height: `${imageHeight}px`,
+        transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+      },
+    });
+  };
+  const downloadImage = async () => {
+    if (!(await ensureExport('image'))) return false;
+    const data = await canvasImage();
+    const anchor = document.createElement('a');
+    anchor.href = data;
+    anchor.download = `umm-${activeName}.png`;
+    anchor.click();
+    return true;
+  };
+  const downloadPDF = async () => {
+    if (!(await ensureExport('pdf'))) return false;
+    const data = await canvasImage();
+    const [{ jsPDF }, image] = await Promise.all([
+      import('jspdf'),
+      new Promise<HTMLImageElement>((resolve, reject) => {
+        const next = new Image();
+        next.onload = () => resolve(next);
+        next.onerror = () => reject(new Error(t('PDF용 이미지를 준비하지 못했습니다.')));
+        next.src = data;
+      }),
+    ]);
+    const landscape = image.naturalWidth >= image.naturalHeight;
+    const pdf = new jsPDF({
+      orientation: landscape ? 'landscape' : 'portrait',
+      unit: 'mm',
+      format: 'a4',
+      compress: true,
+    });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 10;
+    const scale = Math.min(
+      (pageWidth - margin * 2) / image.naturalWidth,
+      (pageHeight - margin * 2) / image.naturalHeight,
+    );
+    const width = image.naturalWidth * scale;
+    const height = image.naturalHeight * scale;
+    pdf.addImage(data, 'PNG', (pageWidth - width) / 2, (pageHeight - height) / 2, width, height, undefined, 'FAST');
+    pdf.save(`umm-${activeName.replace(/[\\/:*?"<>|]/g, '-')}.pdf`);
+    return true;
+  };
+  const runExport = async (kind: string, label: string, action: () => Promise<boolean>) => {
+    if (exportBusy) return;
+    setExportBusy(kind);
+    showInfo(t('{label} 파일을 준비하고 있습니다.', { label }), t('내보내기'));
+    try {
+      if (await action()) showSuccess(t('{label} 파일 다운로드를 시작했습니다.', { label }), t('내보내기 완료'));
+    } catch (error) {
+      showError(
+        error instanceof Error ? error.message : t('{label} 파일을 만들지 못했습니다.', { label }),
+        t('내보내기 실패'),
+        `export:${kind}`,
+      );
+    } finally {
+      setExportBusy('');
+    }
+  };
+  const dismissDream = async () => {
+    if (!morningDream) return;
+    sessionStorage.setItem(`dream:${morningDream.dreamId}`, 'seen');
+    await api(`/dreams/${morningDream.dreamId}/feedback`, json('POST', { action: 'exposed' })).catch(() => undefined);
+    setMorningDream(undefined);
+  };
+  const reviewDream = async () => {
+    if (!morningDream) return;
+    const id = morningDream.dreamId;
+    await dismissDream();
+    navigate(`/dreams?focus=${id}`);
+  };
+  const activeName = spaces.find((s) => s.id === activeSpace)?.name || 'My Space';
+
+  return (
+    <div className="canvas-page">
+      {loading && (
+        <div className="canvas-loading" role="status" aria-label={t('생각 불러오는 중')}>
+          <Loader color="grape" />
+        </div>
+      )}
+      {listView ? (
+        <ScrollArea className="canvas-linear-view" type="auto">
+          <main aria-label={t('생각 선형 목록')}>
+            <Group justify="space-between" mb="lg">
+              <div>
+                <Title order={2}>{t('생각 목록')}</Title>
+                <Text c="dimmed" size="sm">
+                  {t('키보드와 화면 읽기 도구로 탐색하기 쉬운 보기입니다.')}
+                </Text>
+              </div>
+              <Button variant="light" onClick={() => setListView(false)}>
+                {t('캔버스로 돌아가기')}
+              </Button>
+            </Group>
+            <Stack role="list" gap="sm">
+              {searchMatches.map((note) => (
+                <Card role="listitem" key={note.id} withBorder radius="lg" p="lg">
+                  <Group justify="space-between" align="flex-start" wrap="nowrap">
+                    <div>
+                      <Group gap="xs">
+                        <Badge variant="light">{note.kind}</Badge>
+                        {note.source === 'dream' && (
+                          <Badge color="grape" variant="light">
+                            Dream
+                          </Badge>
+                        )}
+                        <Text size="xs" c="dimmed">
+                          {formatDate(note.updatedAt)}
+                        </Text>
+                      </Group>
+                      <Text fw={650} mt="sm">
+                        {note.title || note.content || t('내용 없는 생각')}
+                      </Text>
+                    </div>
+                    <Group gap="xs">
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        leftSection={<IconMessageCircle size={14} />}
+                        onClick={() => void openComments(note)}
+                      >
+                        {t('댓글')}
+                      </Button>
+                      <Button
+                        size="xs"
+                        onClick={() => {
+                          setListView(false);
+                          window.requestAnimationFrame(
+                            () =>
+                              void flow.setCenter(note.x + note.width / 2, note.y + note.height / 2, {
+                                zoom: 1.08,
+                                duration: 400,
+                              }),
+                          );
+                        }}
+                      >
+                        {t('캔버스에서 보기')}
+                      </Button>
+                    </Group>
+                  </Group>
+                </Card>
+              ))}
+            </Stack>
+          </main>
+        </ScrollArea>
+      ) : (
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={connect}
+          onNodeDragStart={onDragStart}
+          onNodeDragStop={onDragStop}
+          onPaneClick={(event) => {
+            if (event.detail === 2) onPaneDoubleClick(event);
+          }}
+          fitView
+          fitViewOptions={{ padding: 0.3 }}
+          minZoom={0.15}
+          maxZoom={2.2}
+          deleteKeyCode={null}
+          selectionOnDrag
+          panOnScroll
+        >
+          <Background variant={BackgroundVariant.Dots} color="transparent" />
+          <Controls position="bottom-left" showInteractive={false} />
+          <MiniMap
+            position="bottom-right"
+            pannable
+            zoomable
+            nodeColor={(node) => palette[(node.data as PostItData | undefined)?.note?.color || 'yellow'] || '#ddd'}
+            maskColor="rgba(245,242,234,.7)"
+          />
+        </ReactFlow>
+      )}
+      <Paper className="canvas-toolbar" radius="xl" p={7}>
+        <Group gap={6} wrap="nowrap">
+          <Menu shadow="md" width={300} position="bottom-start">
+            <Menu.Target>
+              <Button
+                className="space-switcher"
+                variant="light"
+                color="yellow.8"
+                size="compact-sm"
+                rightSection={<IconChevronDown size={14} />}
+                style={{ textTransform: 'none' }}
+              >
+                {activeName}
+              </Button>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Label>{t('공간 {count}개', { count: spaces.length })}</Menu.Label>
+              <div className="space-menu-search">
+                <TextInput
+                  value={spaceQuery}
+                  onChange={(event) => setSpaceQuery(event.currentTarget.value)}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  leftSection={<IconSearch size={15} />}
+                  placeholder={t('공간 검색')}
+                  size="xs"
+                />
+              </div>
+              <ScrollArea.Autosize mah={260} type="auto">
+                {visibleSpaces.map((space) => (
+                  <Menu.Item
+                    key={space.id}
+                    leftSection={<span className="space-dot" style={{ background: space.color }} />}
+                    rightSection={space.id === activeSpace ? <IconCheck size={15} /> : undefined}
+                    onClick={() => openSpace(space.id)}
+                  >
+                    {space.name}
+                  </Menu.Item>
+                ))}
+                {visibleSpaces.length === 0 && (
+                  <Text size="xs" c="dimmed" ta="center" py="md">
+                    {t('일치하는 공간이 없습니다.')}
+                  </Text>
+                )}
+              </ScrollArea.Autosize>
+              <Menu.Divider />
+              <Menu.Item
+                leftSection={<IconSettings size={16} />}
+                onClick={() => {
+                  setSpaceError('');
+                  setSpaceManagerOpen(true);
+                }}
+              >
+                {t('공간 관리')}
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconPlus size={16} />}
+                onClick={() => {
+                  setSpaceError('');
+                  setSpaceManagerOpen(true);
+                }}
+              >
+                {t('새 공간 만들기')}
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+          <TextInput
+            id="thought-search"
+            className="thought-search"
+            aria-label={t('생각 검색')}
+            value={query}
+            onChange={(e) => {
+              setQuery(e.currentTarget.value);
+              setSearchIndex(-1);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                focusSearchResult(event.shiftKey ? -1 : 1);
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault();
+                setQuery('');
+                setSearchIndex(-1);
+              }
+            }}
+            leftSection={<IconSearch size={17} />}
+            rightSection={
+              query ? (
+                <Group gap={3} wrap="nowrap">
+                  <Badge size="xs" variant="light" color={searchMatches.length ? 'grape' : 'red'}>
+                    {searchMatches.length}
+                  </Badge>
+                  <ActionIcon
+                    size="sm"
+                    variant="subtle"
+                    onClick={() => {
+                      setQuery('');
+                      setSearchIndex(-1);
+                    }}
+                    aria-label={t('검색어 지우기')}
+                  >
+                    <IconX size={14} />
+                  </ActionIcon>
+                </Group>
+              ) : null
+            }
+            rightSectionWidth={query ? 66 : undefined}
+            placeholder={t('생각 검색  /')}
+            variant="filled"
+          />
+          <Group className="canvas-toolbar-actions" gap={2} wrap="nowrap">
+            <Tooltip label={listView ? t('공간 캔버스 보기') : t('접근 가능한 선형 목록')}>
+              <ActionIcon
+                className="canvas-action"
+                variant={listView ? 'filled' : 'subtle'}
+                color="dark"
+                onClick={() => setListView((value) => !value)}
+                aria-label={t('생각 보기 전환')}
+                aria-pressed={listView}
+              >
+                <IconList size={19} />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label={t('공간 공유')}>
+              <ActionIcon
+                className="canvas-action"
+                variant="subtle"
+                color="dark"
+                onClick={() => void openShare()}
+                aria-label={t('공간 공유')}
+              >
+                <IconShare size={19} />
+              </ActionIcon>
+            </Tooltip>
+            <Menu shadow="md">
+              <Menu.Target>
+                <Tooltip label={t('내보내기')}>
+                  <ActionIcon
+                    className="canvas-action"
+                    loading={!!exportBusy}
+                    variant="subtle"
+                    color="dark"
+                    aria-label={t('내보내기')}
+                  >
+                    <IconDownload size={19} />
+                  </ActionIcon>
+                </Tooltip>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Item
+                  disabled={!!exportBusy}
+                  leftSection={<IconMarkdown size={16} />}
+                  onClick={() => void runExport('markdown', 'Markdown', downloadMarkdown)}
+                >
+                  Markdown
+                </Menu.Item>
+                <Menu.Item
+                  disabled={!!exportBusy}
+                  leftSection={<IconPhoto size={16} />}
+                  onClick={() => void runExport('image', t('PNG 이미지'), downloadImage)}
+                >
+                  Image (PNG)
+                </Menu.Item>
+                <Menu.Item
+                  disabled={!!exportBusy}
+                  leftSection={<IconFileTypePdf size={16} />}
+                  onClick={() => void runExport('pdf', 'PDF', downloadPDF)}
+                >
+                  {t('PDF 다운로드')}
+                </Menu.Item>
+                <Menu.Divider />
+                <Menu.Item leftSection={<IconFileImport size={16} />} onClick={() => setImportOpen(true)}>
+                  {t('마크다운 가져오기')}
+                </Menu.Item>
+              </Menu.Dropdown>
+            </Menu>
+            <Menu shadow="md">
+              <Menu.Target>
+                <Tooltip label={t('선택한 생각 발전시키기')}>
+                  <ActionIcon
+                    className="canvas-action"
+                    loading={aiBusy}
+                    variant="subtle"
+                    color="grape"
+                    aria-label={t('AI 생각 도구')}
+                  >
+                    <IconBrain size={20} />
+                  </ActionIcon>
+                </Tooltip>
+              </Menu.Target>
+              <Menu.Dropdown>
+                <Menu.Label>{t('AI는 조용히 도와줍니다')}</Menu.Label>
+                {aiTools.map(([mode, label]) => (
+                  <Menu.Item key={mode} onClick={() => void assist(mode)}>
+                    {t(label)}
+                  </Menu.Item>
+                ))}
+              </Menu.Dropdown>
+            </Menu>
+            <Tooltip label={t('관련 생각 군집 모으기')}>
+              <ActionIcon
+                className="canvas-action"
+                variant="subtle"
+                color="blue"
+                onClick={() => void clusterThoughts()}
+                aria-label={t('생각 군집')}
+              >
+                <IconLayoutGrid size={20} />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label={t('직접 연결한 생각 모으기')}>
+              <ActionIcon
+                className="canvas-action"
+                variant="subtle"
+                color="grape"
+                onClick={() => gravity()}
+                aria-label="Thought Gravity"
+              >
+                <IconFocusCentered size={20} />
+              </ActionIcon>
+            </Tooltip>
+          </Group>
+          <Menu shadow="md" position="bottom-end">
+            <Menu.Target>
+              <ActionIcon
+                className="canvas-mobile-tools"
+                loading={!!exportBusy}
+                variant="subtle"
+                color="dark"
+                aria-label={t('캔버스 도구')}
+              >
+                <IconDots size={21} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item leftSection={<IconList size={17} />} onClick={() => setListView((value) => !value)}>
+                {listView ? t('캔버스 보기') : t('선형 목록 보기')}
+              </Menu.Item>
+              <Menu.Item leftSection={<IconShare size={17} />} onClick={() => void openShare()}>
+                {t('공간 공유')}
+              </Menu.Item>
+              <Menu.Sub>
+                <Menu.Sub.Target>
+                  <Menu.Sub.Item leftSection={<IconDownload size={17} />}>{t('내보내기')}</Menu.Sub.Item>
+                </Menu.Sub.Target>
+                <Menu.Sub.Dropdown>
+                  <Menu.Item
+                    disabled={!!exportBusy}
+                    leftSection={<IconMarkdown size={16} />}
+                    onClick={() => void runExport('markdown', 'Markdown', downloadMarkdown)}
+                  >
+                    Markdown
+                  </Menu.Item>
+                  <Menu.Item
+                    disabled={!!exportBusy}
+                    leftSection={<IconPhoto size={16} />}
+                    onClick={() => void runExport('image', t('PNG 이미지'), downloadImage)}
+                  >
+                    Image (PNG)
+                  </Menu.Item>
+                  <Menu.Item
+                    disabled={!!exportBusy}
+                    leftSection={<IconFileTypePdf size={16} />}
+                    onClick={() => void runExport('pdf', 'PDF', downloadPDF)}
+                  >
+                    {t('PDF 다운로드')}
+                  </Menu.Item>
+                </Menu.Sub.Dropdown>
+              </Menu.Sub>
+              <Menu.Sub>
+                <Menu.Sub.Target>
+                  <Menu.Sub.Item leftSection={<IconBrain size={17} />}>{t('AI 생각 도구')}</Menu.Sub.Item>
+                </Menu.Sub.Target>
+                <Menu.Sub.Dropdown>
+                  {aiTools.map(([mode, label]) => (
+                    <Menu.Item key={mode} onClick={() => void assist(mode)}>
+                      {t(label)}
+                    </Menu.Item>
+                  ))}
+                </Menu.Sub.Dropdown>
+              </Menu.Sub>
+              <Menu.Item leftSection={<IconLayoutGrid size={17} />} onClick={() => void clusterThoughts()}>
+                {t('생각 군집 모으기')}
+              </Menu.Item>
+              <Menu.Item leftSection={<IconFocusCentered size={17} />} onClick={() => gravity()}>
+                {t('연결한 생각 모으기')}
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        </Group>
+      </Paper>
+      {!loading && notes.length === 0 && (
+        <div className="onboarding-hint">
+          <div>
+            <IconSparkles size={30} stroke={1.4} />
+            <Text fz="lg" fw={650} mt="sm">
+              {t('여기 아무 곳이나 더블클릭 해보세요.')}
+            </Text>
+            <Text c="dimmed" mt={4}>
+              {t('또는 아래에 생각을 바로 적어보세요.')}
+            </Text>
+          </div>
+        </div>
+      )}
+      {!loading && searchTerms.length > 0 && (
+        <Paper className="search-summary glass" radius="xl" px="md" py={7} role="status" aria-live="polite">
+          <Text size="sm" fw={650}>
+            {searchMatches.length === 0
+              ? t('일치하는 생각이 없습니다.')
+              : t('{count}개의 생각을 찾았습니다.', { count: searchMatches.length })}
+          </Text>
+          {searchMatches.length > 0 && (
+            <Text size="xs" c="dimmed">
+              {t('Enter로 결과 이동')}
+              {searchIndex >= 0 ? ` · ${searchIndex + 1}/${searchMatches.length}` : ''}
+            </Text>
+          )}
+        </Paper>
+      )}
+      {!loading && notes.length > 0 && searchTerms.length > 0 && searchMatches.length === 0 && (
+        <div className="onboarding-hint">
+          <div>
+            <IconSearch size={30} stroke={1.4} />
+            <Text fz="lg" fw={650} mt="sm">
+              {t('검색 결과가 없습니다.')}
+            </Text>
+            <Text c="dimmed" mt={4}>
+              {t('다른 단어를 입력하거나 Esc로 검색을 지워보세요.')}
+            </Text>
+          </div>
+        </div>
+      )}
+      <Paper className="quick-capture" radius="xl" p={7}>
+        <TextInput
+          id="quick-thought"
+          aria-label={t('새 생각')}
+          value={capture}
+          onChange={(e) => setCapture(e.currentTarget.value)}
+          onKeyDown={captureKey}
+          placeholder={t('생각을 입력하고 Enter로 붙이세요')}
+          variant="unstyled"
+          px="sm"
+          rightSection={
+            <ActionIcon
+              variant="filled"
+              color="dark"
+              radius="xl"
+              disabled={!capture.trim()}
+              onClick={() => {
+                const center = flow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+                void createAt(capture, center.x - 120, center.y - 80);
+              }}
+              aria-label={t('생각 붙이기')}
+            >
+              <IconArrowRight size={18} />
+            </ActionIcon>
+          }
+        />
+      </Paper>
+      {morningDream && (
+        <div className="morning-overlay">
+          <Paper radius="xl" p={{ base: 'xl', sm: 40 }} maw={520} mx="md" className="glass" ta="center">
+            <IconMoonStars size={34} color="#76628f" />
+            <Text size="sm" fw={700} c="grape.7" tt="uppercase" mt="sm">
+              Dream
+            </Text>
+            <Text fz={24} fw={660} mt="md">
+              {t('어젯밤, 당신의 생각이 꿈을 꾸었습니다.')}
+            </Text>
+            <Text fz="lg" lh={1.65} mt="lg">
+              {morningDream.content}
+            </Text>
+            <Text size="sm" c="dimmed" mt="md">
+              {t('원본 생각을 확인한 뒤 캔버스에 남길지 선택할 수 있습니다.')}
+            </Text>
+            <Group justify="center" mt="xl">
+              <Button variant="subtle" color="gray" onClick={() => void dismissDream()}>
+                {t('나중에')}
+              </Button>
+              <Button variant="light" color="grape" onClick={() => void reviewDream()}>
+                {t('Dream 검토하기')}
+              </Button>
+            </Group>
+          </Paper>
+        </div>
+      )}
+      {related && (
+        <Paper className="related-panel glass" radius="lg" p="md">
+          <Group justify="space-between">
+            <Text fw={700}>{t('생각 연결')}</Text>
+            <ActionIcon
+              variant="subtle"
+              aria-label={t('연결 패널 닫기')}
+              onClick={() => {
+                setRelated(undefined);
+                setBacklinks([]);
+              }}
+            >
+              <IconX size={16} />
+            </ActionIcon>
+          </Group>
+          {backlinks.length > 0 && (
+            <>
+              <Text size="xs" fw={700} c="grape.7" mt="md">
+                {t('직접 연결 · 백링크 {count}', { count: backlinks.length })}
+              </Text>
+              <Stack gap="xs" mt="xs">
+                {backlinks.map((item) => (
+                  <button
+                    key={item.edge.id}
+                    className="related-row"
+                    onClick={() => flow.fitView({ nodes: [{ id: item.note.id }], duration: 500, padding: 0.8 })}
+                  >
+                    <Text lineClamp={2} ta="left">
+                      {item.note.title || item.note.content}
+                    </Text>
+                    <Text size="xs" c="dimmed" ta="left">
+                      {item.direction === 'incoming' ? t('이 생각을 가리킴') : t('이 생각이 가리킴')} ·{' '}
+                      {item.edge.relation}
+                    </Text>
+                  </button>
+                ))}
+              </Stack>
+            </>
+          )}
+          <Text size="xs" fw={700} c="blue.7" mt="md">
+            {t('의미가 가까운 생각 {count}', { count: related.items.length })}
+          </Text>
+          <Stack gap="xs" mt="xs">
+            {related.items.map((item) => (
+              <button
+                key={item.note.id}
+                className="related-row"
+                onClick={() => flow.fitView({ nodes: [{ id: item.note.id }], duration: 500, padding: 0.8 })}
+              >
+                <Text lineClamp={2} ta="left">
+                  {item.note.content}
+                </Text>
+                <Text size="xs" c="dimmed" ta="left">
+                  {item.reason} · {Math.round(item.score * 100)}%
+                </Text>
+              </button>
+            ))}
+          </Stack>
+        </Paper>
+      )}
+      <Modal
+        opened={!!aiResult}
+        onClose={() => setAIResult(undefined)}
+        title={t('생각이 한 단계 자랐습니다')}
+        centered
+        size="lg"
+      >
+        <Stack>
+          <Paper p="lg" radius="lg" bg="grape.0">
+            <Text lh={1.75} style={{ whiteSpace: 'pre-wrap' }}>
+              {aiResult?.content}
+            </Text>
+          </Paper>
+          <Group justify="flex-end">
+            <Button variant="light" onClick={() => setAIResult(undefined)}>
+              {t('그대로 두기')}
+            </Button>
+            <Button
+              onClick={() => {
+                const center = flow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+                void createAt(aiResult?.content || '', center.x - 120, center.y - 80);
+                setAIResult(undefined);
+              }}
+            >
+              {t('새 생각으로 붙이기')}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+      <Modal
+        opened={!!commentNote}
+        onClose={() => {
+          setCommentNote(undefined);
+          setComments([]);
+        }}
+        title={t('생각에 대한 대화')}
+        centered
+        size="lg"
+      >
+        <Stack>
+          <Paper p="md" radius="md" bg="gray.0">
+            <Text size="xs" c="dimmed">
+              {t('대화 중인 생각')}
+            </Text>
+            <Text fw={650} lineClamp={3} mt={4}>
+              {commentNote?.title || commentNote?.content || t('내용 없는 생각')}
+            </Text>
+          </Paper>
+          <ScrollArea.Autosize mah={360} type="auto">
+            <Stack gap="sm">
+              {comments.length === 0 ? (
+                <Text c="dimmed" ta="center" py="xl">
+                  {t('첫 댓글을 남겨 생각을 함께 발전시켜 보세요.')}
+                </Text>
+              ) : (
+                comments.map((comment) => (
+                  <Paper key={comment.id} withBorder p="md" radius="md" opacity={comment.resolvedAt?.length ? 0.58 : 1}>
+                    <Group justify="space-between" align="flex-start">
+                      <div>
+                        <Group gap="xs">
+                          <Text size="sm" fw={700}>
+                            {comment.author}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            @{comment.username} · {formatDate(comment.createdAt)}
+                          </Text>
+                          {comment.resolvedAt && (
+                            <Badge color="green" variant="light">
+                              {t('해결됨')}
+                            </Badge>
+                          )}
+                        </Group>
+                        <Text size="sm" mt="xs" style={{ whiteSpace: 'pre-wrap' }}>
+                          {comment.body}
+                        </Text>
+                      </div>
+                      <Menu shadow="sm">
+                        <Menu.Target>
+                          <ActionIcon variant="subtle" aria-label={t('댓글 메뉴')}>
+                            <IconDots size={16} />
+                          </ActionIcon>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Menu.Item leftSection={<IconCheck size={14} />} onClick={() => void resolveComment(comment)}>
+                            {comment.resolvedAt ? t('다시 열기') : t('해결 표시')}
+                          </Menu.Item>
+                          <Menu.Item
+                            color="red"
+                            leftSection={<IconTrash size={14} />}
+                            onClick={() => void deleteComment(comment)}
+                          >
+                            {t('삭제')}
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
+                    </Group>
+                  </Paper>
+                ))
+              )}
+            </Stack>
+          </ScrollArea.Autosize>
+          <Textarea
+            label={t('댓글')}
+            description={t('@username으로 공유 공간의 사용자를 언급할 수 있습니다. 네트워크가 끊기면 자동 보관됩니다.')}
+            value={commentBody}
+            onChange={(event) => setCommentBody(event.currentTarget.value)}
+            autosize
+            minRows={3}
+            maxRows={8}
+            maxLength={4000}
+            onKeyDown={(event) => {
+              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                event.preventDefault();
+                void postComment();
+              }
+            }}
+          />
+          <Group justify="space-between">
+            <Text size="xs" c="dimmed">
+              {t('Ctrl/⌘ + Enter로 게시')} · {commentBody.length}/4000
+            </Text>
+            <Button
+              loading={commentBusy}
+              disabled={!commentBody.trim()}
+              leftSection={<IconMessageCircle size={16} />}
+              onClick={() => void postComment()}
+            >
+              {t('댓글 남기기')}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+      <Modal
+        opened={!!conflict}
+        onClose={() => setConflict(undefined)}
+        title={t('메모 변경이 겹쳤습니다')}
+        centered
+        size="xl"
+        closeOnClickOutside={false}
+      >
+        <Stack>
+          <Alert color="yellow" icon={<IconGitMerge size={18} />}>
+            {t(
+              '다른 화면 또는 오프라인 재시도에서 같은 메모가 먼저 저장되었습니다. 내용을 비교한 뒤 안전하게 선택하세요.',
+            )}
+          </Alert>
+          <SimpleGrid cols={{ base: 1, sm: 2 }}>
+            <Paper withBorder p="md" radius="md">
+              <Text size="xs" fw={700} c="blue.7">
+                {t('내 변경')} · v{conflict?.local.version}
+              </Text>
+              <Text size="sm" mt="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                {conflict?.local.content}
+              </Text>
+            </Paper>
+            <Paper withBorder p="md" radius="md">
+              <Text size="xs" fw={700} c="grape.7">
+                {t('서버의 최신 내용')} · v{conflict?.latest.version}
+              </Text>
+              <Text size="sm" mt="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                {conflict?.latest.content}
+              </Text>
+            </Paper>
+          </SimpleGrid>
+          <Textarea
+            label={t('병합할 내용')}
+            value={mergeDraft}
+            onChange={(event) => setMergeDraft(event.currentTarget.value)}
+            autosize
+            minRows={5}
+            maxRows={12}
+          />
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => void applyConflict('server')}>
+              {t('서버 내용 사용')}
+            </Button>
+            <Button variant="light" onClick={() => void applyConflict('local')}>
+              {t('내 변경으로 덮기')}
+            </Button>
+            <Button leftSection={<IconGitMerge size={16} />} onClick={() => void applyConflict('merge')}>
+              {t('편집한 내용으로 병합')}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+      <Modal
+        opened={spaceManagerOpen}
+        onClose={() => {
+          setSpaceManagerOpen(false);
+          setSpaceQuery('');
+          setSpaceError('');
+        }}
+        title={t('공간 관리')}
+        centered
+        size="lg"
+      >
+        <Stack>
+          <Text c="dimmed" size="sm">
+            {t('공간을 검색하고 이동하거나, 소유한 공간의 이름을 바꾸고 삭제할 수 있습니다.')}
+          </Text>
+          {spaceError && (
+            <Alert color="red" withCloseButton onClose={() => setSpaceError('')}>
+              {spaceError}
+            </Alert>
+          )}
+          <Group align="flex-end">
+            <TextInput
+              label={t('새 공간')}
+              placeholder={t('공간 이름')}
+              value={newSpaceName}
+              maxLength={200}
+              onChange={(event) => setNewSpaceName(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  void addSpace();
+                }
+              }}
+              style={{ flex: 1 }}
+            />
+            <Button
+              leftSection={<IconPlus size={16} />}
+              loading={spaceBusy === 'new'}
+              disabled={!newSpaceName.trim()}
+              onClick={() => void addSpace()}
+            >
+              {t('만들기')}
+            </Button>
+          </Group>
+          <Divider />
+          <TextInput
+            value={spaceQuery}
+            onChange={(event) => setSpaceQuery(event.currentTarget.value)}
+            leftSection={<IconSearch size={16} />}
+            placeholder={t('공간 {count}개 중 검색', { count: spaces.length })}
+          />
+          <ScrollArea.Autosize mah={420} type="auto">
+            <Stack gap="sm">
+              {visibleSpaces.map((space) => {
+                const owned = space.ownerId === user?.id;
+                const changed = (spaceDrafts[space.id] || '').trim() !== space.name;
+                return (
+                  <Paper key={space.id} className="space-manager-row" p="sm" radius="md" withBorder>
+                    <Group wrap="nowrap" align="flex-end">
+                      <TextInput
+                        label={owned ? t('내 공간') : t('공유 공간')}
+                        value={spaceDrafts[space.id] ?? space.name}
+                        disabled={!owned}
+                        maxLength={200}
+                        onChange={(event) =>
+                          setSpaceDrafts((all) => ({ ...all, [space.id]: event.currentTarget.value }))
+                        }
+                        style={{ flex: 1 }}
+                      />
+                      <Group gap={5} wrap="nowrap">
+                        <Tooltip label={t('이동')}>
+                          <ActionIcon
+                            variant={space.id === activeSpace ? 'filled' : 'light'}
+                            color="grape"
+                            aria-label={t('{name}으로 이동', { name: space.name })}
+                            onClick={() => {
+                              openSpace(space.id);
+                              setSpaceManagerOpen(false);
+                            }}
+                          >
+                            <IconArrowRight size={17} />
+                          </ActionIcon>
+                        </Tooltip>
+                        {owned && (
+                          <Tooltip label={t('이름 저장')}>
+                            <ActionIcon
+                              variant="light"
+                              color="blue"
+                              loading={spaceBusy === space.id}
+                              disabled={!changed || !(spaceDrafts[space.id] || '').trim()}
+                              aria-label={t('{name} 이름 저장', { name: space.name })}
+                              onClick={() => void renameSpace(space)}
+                            >
+                              <IconEdit size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                        {owned && (
+                          <Tooltip label={t('공간 삭제')}>
+                            <ActionIcon
+                              variant="light"
+                              color="red"
+                              aria-label={t('{name} 삭제', { name: space.name })}
+                              onClick={() => {
+                                setDeleteCandidate(space);
+                                setDeleteConfirmation('');
+                              }}
+                            >
+                              <IconTrash size={16} />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                      </Group>
+                    </Group>
+                    <Group justify="space-between" mt="xs">
+                      <Group gap="xs">
+                        {space.id === activeSpace && (
+                          <Badge size="xs" variant="light">
+                            {t('현재 공간')}
+                          </Badge>
+                        )}
+                        {space.aiExcluded && (
+                          <Badge size="xs" color="gray" variant="light">
+                            {t('AI 제외')}
+                          </Badge>
+                        )}
+                      </Group>
+                      {owned && (
+                        <Switch
+                          size="xs"
+                          label={t('AI Dream 분석')}
+                          checked={!space.aiExcluded}
+                          disabled={spaceBusy === `ai:${space.id}`}
+                          onChange={(event) => void toggleSpaceAI(space, !event.currentTarget.checked)}
+                        />
+                      )}
+                    </Group>
+                  </Paper>
+                );
+              })}
+              {visibleSpaces.length === 0 && (
+                <Text c="dimmed" ta="center" py="xl">
+                  {t('일치하는 공간이 없습니다.')}
+                </Text>
+              )}
+            </Stack>
+          </ScrollArea.Autosize>
+        </Stack>
+      </Modal>
+      <Modal
+        opened={!!deleteCandidate}
+        onClose={() => {
+          if (!spaceBusy.startsWith('delete:')) {
+            setDeleteCandidate(undefined);
+            setDeleteConfirmation('');
+          }
+        }}
+        title={t('공간을 삭제할까요?')}
+        centered
+        size="md"
+        closeOnClickOutside={!spaceBusy.startsWith('delete:')}
+      >
+        <Stack>
+          <Alert color="red" icon={<IconTrash size={18} />}>
+            {t('공간 안의 메모, 연결, Dream 기록과 공유 정보가 모두 삭제됩니다. 이 작업은 되돌릴 수 없습니다.')}
+          </Alert>
+          {spaceError && <Alert color="red">{spaceError}</Alert>}
+          <Text size="sm">
+            {t('확인을 위해')}
+            <b>{deleteCandidate?.name}</b>
+            {t('을 입력하세요.')}
+          </Text>
+          <TextInput
+            autoFocus
+            value={deleteConfirmation}
+            onChange={(event) => setDeleteConfirmation(event.currentTarget.value)}
+            placeholder={deleteCandidate?.name}
+          />
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => {
+                setDeleteCandidate(undefined);
+                setDeleteConfirmation('');
+                setSpaceError('');
+              }}
+            >
+              {t('취소')}
+            </Button>
+            <Button
+              color="red"
+              loading={spaceBusy === `delete:${deleteCandidate?.id}`}
+              disabled={!deleteCandidate || deleteConfirmation !== deleteCandidate.name}
+              onClick={() => void deleteSpace()}
+            >
+              {t('영구 삭제')}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+      <ImportThoughtsModal opened={importOpen} onClose={() => setImportOpen(false)} onImport={importThoughts} />
+      <Modal opened={shareOpen} onClose={() => setShareOpen(false)} title={t('이 공간 함께 쓰기')} centered size="lg">
+        <Stack>
+          {shareMessage && (
+            <Paper p="sm" bg="grape.0">
+              <Text size="sm">{shareMessage}</Text>
+            </Paper>
+          )}
+          {canManage && (
+            <Group align="flex-end">
+              <TextInput
+                label={t('사용자 아이디')}
+                placeholder="username"
+                value={shareUser}
+                onChange={(e) => setShareUser(e.currentTarget.value)}
+                style={{ flex: 1 }}
+              />
+              <Select
+                label={t('권한')}
+                value={sharePermission}
+                onChange={(v) => v && setSharePermission(v)}
+                data={[
+                  { value: 'view', label: t('보기') },
+                  { value: 'edit', label: t('편집') },
+                  { value: 'manage', label: t('관리') },
+                ]}
+                w={120}
+              />
+              <Button disabled={!shareUser.trim()} onClick={() => void share()}>
+                {t('초대')}
+              </Button>
+            </Group>
+          )}
+          <Stack gap="xs">
+            {members.map((member) => (
+              <Paper key={member.id} p="sm" bg="gray.0">
+                <Group justify="space-between">
+                  <div>
+                    <Text fw={600}>{member.displayName}</Text>
+                    <Text size="xs" c="dimmed">
+                      {member.username} · {member.permission}
+                    </Text>
+                  </div>
+                  {canManage && member.permission !== 'owner' && (
+                    <ActionIcon color="red" variant="subtle" onClick={() => void removeMember(member.id)}>
+                      <IconTrash size={16} />
+                    </ActionIcon>
+                  )}
+                </Group>
+              </Paper>
+            ))}
+          </Stack>
+        </Stack>
+      </Modal>
+    </div>
+  );
 }
 
-export default function CanvasPage(){return <ReactFlowProvider><CanvasInner/></ReactFlowProvider>;}
+export default function CanvasPage() {
+  return (
+    <ReactFlowProvider>
+      <CanvasInner />
+    </ReactFlowProvider>
+  );
+}

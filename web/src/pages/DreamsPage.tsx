@@ -1,51 +1,523 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Badge, Button, Card, Group, Loader, Menu, Modal, Paper, SegmentedControl, SimpleGrid, Stack, Text, ThemeIcon, Timeline, Title } from '@mantine/core';
-import { IconArrowRight, IconBrain, IconBulb, IconEyeOff, IconMoonStars, IconRefresh, IconRoute, IconSparkles, IconWand } from '@tabler/icons-react';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Loader,
+  Menu,
+  Modal,
+  Paper,
+  SegmentedControl,
+  SimpleGrid,
+  Stack,
+  Text,
+  ThemeIcon,
+  Timeline,
+  Title,
+} from '@mantine/core';
+import {
+  IconArrowRight,
+  IconBrain,
+  IconBulb,
+  IconEyeOff,
+  IconMoonStars,
+  IconRefresh,
+  IconRoute,
+  IconSparkles,
+  IconWand,
+} from '@tabler/icons-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, json, type ThoughtNote } from '../api';
+import { msg, useTranslation } from '../i18n';
 import { showSuccess } from '../ui-notifications';
 
-interface DreamSource {noteId:string;title:string;excerpt:string;rank:number;similarityScore:number;cited:boolean}
-interface Dream {dreamId:string;type:string;generatedAt:string;exposedAt?:string;acceptedAt?:string;qualityScore:number;qualityLabel:string;status:string;noteId?:string;spaceId:string;spaceName:string;content:string;rationale:string;suggestedAction:string;generation:number;dismissedReason?:string;sources:DreamSource[]}
-interface DevelopResult {mode:string;content:string}
-interface DevelopedNoteResult {note:ThoughtNote;created:boolean}
+interface DreamSource {
+  noteId: string;
+  title: string;
+  excerpt: string;
+  rank: number;
+  similarityScore: number;
+  cited: boolean;
+}
+interface Dream {
+  dreamId: string;
+  type: string;
+  generatedAt: string;
+  exposedAt?: string;
+  acceptedAt?: string;
+  qualityScore: number;
+  qualityLabel: string;
+  status: string;
+  noteId?: string;
+  spaceId: string;
+  spaceName: string;
+  content: string;
+  rationale: string;
+  suggestedAction: string;
+  generation: number;
+  dismissedReason?: string;
+  sources: DreamSource[];
+}
+interface DevelopResult {
+  mode: string;
+  content: string;
+}
+interface DevelopedNoteResult {
+  note: ThoughtNote;
+  created: boolean;
+}
 
-const typeLabels:Record<string,string>={connection:'연결',question:'질문',expansion:'확장',contrarian:'반대 관점',rediscovery:'재발견',action:'다음 행동',pattern:'패턴'};
-const hideReasons=[['too_obvious','너무 뻔해요'],['irrelevant','관련이 없어요'],['incorrect','사실과 달라요'],['repetitive','반복되는 내용이에요'],['too_frequent','너무 자주 와요']];
-const developModes=[['expand','더 구체적으로 확장'],['challenge','반대 관점에서 보기'],['actions','실행 항목으로 바꾸기']];
+const typeLabels: Record<string, string> = {
+  connection: msg('연결'),
+  question: msg('질문'),
+  expansion: msg('확장'),
+  contrarian: msg('반대 관점'),
+  rediscovery: msg('재발견'),
+  action: msg('다음 행동'),
+  pattern: msg('패턴'),
+};
+const hideReasons = [
+  ['too_obvious', msg('너무 뻔해요')],
+  ['irrelevant', msg('관련이 없어요')],
+  ['incorrect', msg('사실과 달라요')],
+  ['repetitive', msg('반복되는 내용이에요')],
+  ['too_frequent', msg('너무 자주 와요')],
+];
+const developModes = [
+  ['expand', msg('더 구체적으로 확장')],
+  ['challenge', msg('반대 관점에서 보기')],
+  ['actions', msg('실행 항목으로 바꾸기')],
+];
 
-export default function DreamsPage(){
-  const navigate=useNavigate();const [params]=useSearchParams();
-  const [dreams,setDreams]=useState<Dream[]>();const [nextCursor,setNextCursor]=useState('');const [loadingMore,setLoadingMore]=useState(false);const [error,setError]=useState('');const [filter,setFilter]=useState('inbox');const [busy,setBusy]=useState('');const [developed,setDeveloped]=useState<{dream:Dream;result:DevelopResult}>();
-  const exposed=useRef(new Set<string>());
-  const focused=useRef('');
-  const visible=useMemo(()=>{const all=dreams||[];if(filter==='inbox')return all.filter(d=>d.status==='created'||d.status==='exposed');if(filter==='kept')return all.filter(d=>d.status==='kept');if(filter==='hidden')return all.filter(d=>d.status==='deleted');return all},[dreams,filter]);
-  const load=useCallback(async(cursor='')=>{setError('');if(cursor)setLoadingMore(true);try{const query=new URLSearchParams({limit:'30'});if(cursor)query.set('cursor',cursor);const value=await api<{dreams:Dream[];nextCursor:string}>(`/dreams?${query}`);setDreams(all=>cursor?[...(all||[]),...value.dreams.filter(item=>!all?.some(existing=>existing.dreamId===item.dreamId))]:value.dreams);setNextCursor(value.nextCursor||'')}catch(reason){setError(reason instanceof Error?reason.message:'Dream 기록을 불러오지 못했습니다.');if(!cursor){setDreams([]);setNextCursor('')}}finally{setLoadingMore(false)}},[]);
-  useEffect(()=>{void load()},[load]);
-  useEffect(()=>{const focus=params.get('focus');if(!focus||!dreams||focused.current===focus)return;const card=document.getElementById(`dream-${focus}`);if(!card){const target=dreams.find(d=>d.dreamId===focus);if(target?.status==='kept'&&filter!=='kept')setFilter('kept');else if(target?.status==='deleted'&&filter!=='hidden')setFilter('hidden');else if(!target&&nextCursor&&!loadingMore)void load(nextCursor);return}focused.current=focus;window.requestAnimationFrame(()=>card.scrollIntoView({behavior:'smooth',block:'center'}))},[dreams,filter,load,loadingMore,nextCursor,params]);
-  useEffect(()=>{if(typeof IntersectionObserver==='undefined')return;const observer=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(!entry.isIntersecting||entry.intersectionRatio<.5)return;const id=(entry.target as HTMLElement).dataset.dreamId;if(!id||exposed.current.has(id))return;exposed.current.add(id);observer.unobserve(entry.target);void api(`/dreams/${id}/feedback`,{...json('POST',{action:'exposed'}),silent:true}).then(()=>setDreams(all=>all?.map(d=>d.dreamId===id&&d.status==='created'?{...d,status:'exposed'}:d))).catch(()=>exposed.current.delete(id))})},{threshold:.5});visible.filter(d=>d.status==='created').forEach(d=>{const card=document.getElementById(`dream-${d.dreamId}`);if(card)observer.observe(card)});return()=>observer.disconnect()},[visible]);
-  const replace=(next:Dream)=>setDreams(all=>all?.map(d=>d.dreamId===next.dreamId?next:d));
-  const accept=async(dream:Dream,content='')=>{setBusy(`accept:${dream.dreamId}`);try{const note=await api<ThoughtNote>(`/dreams/${dream.dreamId}/accept`,json('POST',{content}));showSuccess('Dream을 생각 곁에 남겼습니다.','Dream 채택');navigate(`/space/${note.spaceId}?note=${note.id}`)}finally{setBusy('')}};
-  const regenerate=async(dream:Dream)=>{setBusy(`regenerate:${dream.dreamId}`);try{const next=await api<Dream>(`/dreams/${dream.dreamId}/regenerate`,{method:'POST'});await api(`/dreams/${dream.dreamId}/feedback`,json('POST',{action:'exposed'}));exposed.current.add(dream.dreamId);replace({...next,status:'exposed'});showSuccess('같은 원본에서 다른 관점을 만들었습니다.','Dream 재생성')}finally{setBusy('')}};
-  const hide=async(dream:Dream,reason:string)=>{setBusy(`hide:${dream.dreamId}`);try{await api(`/dreams/${dream.dreamId}/feedback`,json('POST',{action:'hidden',reason}));setDreams(all=>all?.map(d=>d.dreamId===dream.dreamId?{...d,status:'deleted',dismissedReason:reason}:d));showSuccess(reason==='too_frequent'?'이 Dream을 숨기고 생성 빈도를 한 단계 낮췄습니다.':'이 Dream을 숨기고 스타일 선호도에 반영했습니다.','피드백 반영')}finally{setBusy('')}};
-  const develop=async(dream:Dream,mode:string)=>{setBusy(`develop:${dream.dreamId}`);try{const result=await api<DevelopResult>(`/dreams/${dream.dreamId}/develop`,json('POST',{mode}));setDeveloped({dream,result})}finally{setBusy('')}};
-  const keepDeveloped=async()=>{if(!developed)return;const {dream,result}=developed;if(!dream.noteId&&dream.status!=='kept'){await accept(dream,result.content);return}setBusy(`develop:${dream.dreamId}`);try{const saved=await api<DevelopedNoteResult>(`/dreams/${dream.dreamId}/developed-note`,json('POST',{content:result.content}));setDeveloped(undefined);navigate(`/space/${saved.note.spaceId}?note=${saved.note.id}`)}finally{setBusy('')}};
-  return <main className="settings-page"><Stack maw={900} mx="auto" gap="xl">
-    <Group justify="space-between" align="flex-end"><Group><ThemeIcon size={42} radius="xl" color="grape" variant="light"><IconMoonStars/></ThemeIcon><div><Title order={1}>Dreams</Title><Text c="dimmed">근거를 확인하고 내 생각으로 채택하는 AI 인사이트</Text></div></Group><Button variant="subtle" leftSection={<IconRefresh size={16}/>} onClick={()=>void load()}>새로고침</Button></Group>
-    <SegmentedControl fullWidth value={filter} onChange={setFilter} data={[{value:'inbox',label:`검토함 ${(dreams||[]).filter(d=>d.status==='created'||d.status==='exposed').length}`},{value:'kept',label:'채택됨'},{value:'hidden',label:'숨김'},{value:'all',label:'전체'}]}/>
-    {error&&<Alert color="red" title="Dream을 불러오지 못했습니다.">{error}</Alert>}
-    {!dreams?<Loader/>:visible.length===0?<Stack><Card p={45} radius="lg" withBorder ta="center"><IconMoonStars size={38} color="#8c7a9f"/><Title order={3} mt="md">{filter==='inbox'?'검토할 Dream이 없어요':'이 상태의 Dream이 없어요'}</Title><Text c="dimmed" mt="sm">충분한 생각이 쌓이면 근거와 함께 새로운 관점이 이곳에 도착합니다.</Text><Button mt="lg" variant="light" onClick={()=>navigate('/settings')}>Dream 설정 보기</Button></Card>{nextCursor&&<Group justify="center"><Button variant="light" loading={loadingMore} onClick={()=>void load(nextCursor)}>이전 Dream 더 불러오기</Button></Group>}</Stack>:<><Timeline color="grape" bulletSize={30} lineWidth={2}>{visible.map(d=><Timeline.Item key={d.dreamId} bullet={<IconMoonStars size={16}/>} title={new Date(d.generatedAt).toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric'})}>
-      <Card id={`dream-${d.dreamId}`} data-dream-id={d.dreamId} mt="sm" p={{base:'md',sm:'xl'}} radius="lg" withBorder className={`dream-review-card ${params.get('focus')===d.dreamId?'dream-review-card-focused':''}`}>
-        <Group justify="space-between" align="flex-start"><Group gap="xs"><Badge color="grape" variant="light">{typeLabels[d.type]||d.type}</Badge><Badge color={d.qualityLabel==='근거 충분'?'green':'blue'} variant="light">{d.qualityLabel}</Badge>{d.generation>1&&<Badge color="gray" variant="light">다른 관점 {d.generation}</Badge>}</Group><Text size="xs" c="dimmed">{d.spaceName}</Text></Group>
-        <Text fz="lg" fw={600} lh={1.75} mt="md" style={{whiteSpace:'pre-wrap'}}>{d.content}</Text>
-        {d.rationale&&<Paper mt="md" p="md" radius="md" bg="gray.0"><Group gap="xs"><IconRoute size={16} color="#765c96"/><Text size="sm" fw={650}>왜 이 Dream인가요?</Text></Group><Text size="sm" c="dimmed" mt={6}>{d.rationale}</Text></Paper>}
-        {d.sources.length>0&&<SimpleGrid cols={{base:1,sm:2}} mt="sm">{d.sources.filter(source=>source.cited).slice(0,4).map(source=><button type="button" className="dream-source" key={source.noteId} onClick={()=>navigate(`/space/${d.spaceId}?note=${source.noteId}`)}><Text size="xs" fw={700} c="grape.7">원본 생각 {source.rank}</Text><Text size="sm" lineClamp={2} ta="left" mt={3}>{source.title||source.excerpt}</Text><Text size="xs" c="dimmed" mt={5}>캔버스에서 보기 →</Text></button>)}</SimpleGrid>}
-        {d.suggestedAction&&<Group gap="xs" mt="md" align="flex-start" wrap="nowrap"><IconBulb size={17} color="#9a6a18" style={{marginTop:2,flex:'0 0 auto'}}/><Text size="sm"><b>이어가기:</b> {d.suggestedAction}</Text></Group>}
-        {d.status!=='deleted'&&<Group mt="xl" justify="space-between"><Group gap="xs">{!d.noteId&&d.status!=='kept'?<Button loading={busy===`accept:${d.dreamId}`} leftSection={<IconSparkles size={16}/>} onClick={()=>void accept(d)}>캔버스에 남기기</Button>:<Button leftSection={<IconArrowRight size={16}/>} onClick={()=>navigate(`/space/${d.spaceId}?note=${d.noteId||''}`)}>생각 곁에서 보기</Button>}<Menu shadow="md"><Menu.Target><Button variant="light" loading={busy===`develop:${d.dreamId}`} leftSection={<IconBrain size={16}/>}>발전시키기</Button></Menu.Target><Menu.Dropdown>{developModes.map(([mode,label])=><Menu.Item key={mode} onClick={()=>void develop(d,mode)}>{label}</Menu.Item>)}</Menu.Dropdown></Menu></Group>{!d.noteId&&d.status!=='kept'&&<Group gap="xs"><Button variant="subtle" loading={busy===`regenerate:${d.dreamId}`} leftSection={<IconWand size={16}/>} onClick={()=>void regenerate(d)}>다른 관점</Button><Menu shadow="md"><Menu.Target><Button color="gray" variant="subtle" leftSection={<IconEyeOff size={16}/>}>숨기기</Button></Menu.Target><Menu.Dropdown>{hideReasons.map(([reason,label])=><Menu.Item color="red" key={reason} onClick={()=>void hide(d,reason)}>{label}</Menu.Item>)}</Menu.Dropdown></Menu></Group>}</Group>}
-        {d.status==='deleted'&&<Text mt="md" size="sm" c="dimmed">숨긴 Dream · 선호도 학습에 반영됨</Text>}
-      </Card>
-    </Timeline.Item>)}</Timeline>{nextCursor&&<Group justify="center"><Button variant="light" loading={loadingMore} onClick={()=>void load(nextCursor)}>이전 Dream 더 불러오기</Button></Group>}</>}
-  </Stack>
-  <Modal opened={!!developed} onClose={()=>setDeveloped(undefined)} title="Dream을 한 단계 발전시켰습니다" centered size="lg"><Stack><Paper p="lg" radius="lg" bg="grape.0"><Text lh={1.75} style={{whiteSpace:'pre-wrap'}}>{developed?.result.content}</Text></Paper><Group justify="flex-end"><Button variant="light" onClick={()=>setDeveloped(undefined)}>그대로 두기</Button><Button loading={!!developed&&busy===`develop:${developed.dream.dreamId}`} onClick={()=>void keepDeveloped()}>이 결과를 캔버스에 남기기</Button></Group></Stack></Modal>
-  </main>
+// The API returns this label as Korean text, so the colour rule compares
+// against the raw server value while the badge renders a translated copy.
+const wellSourcedLabel = msg('근거 충분');
+
+export default function DreamsPage() {
+  const navigate = useNavigate();
+  const { t, formatDate } = useTranslation();
+  const [params] = useSearchParams();
+  const [dreams, setDreams] = useState<Dream[]>();
+  const [nextCursor, setNextCursor] = useState('');
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState('');
+  const [filter, setFilter] = useState('inbox');
+  const [busy, setBusy] = useState('');
+  const [developed, setDeveloped] = useState<{ dream: Dream; result: DevelopResult }>();
+  const exposed = useRef(new Set<string>());
+  const focused = useRef('');
+  const visible = useMemo(() => {
+    const all = dreams || [];
+    if (filter === 'inbox') return all.filter((d) => d.status === 'created' || d.status === 'exposed');
+    if (filter === 'kept') return all.filter((d) => d.status === 'kept');
+    if (filter === 'hidden') return all.filter((d) => d.status === 'deleted');
+    return all;
+  }, [dreams, filter]);
+  const load = useCallback(async (cursor = '') => {
+    setError('');
+    if (cursor) setLoadingMore(true);
+    try {
+      const query = new URLSearchParams({ limit: '30' });
+      if (cursor) query.set('cursor', cursor);
+      const value = await api<{ dreams: Dream[]; nextCursor: string }>(`/dreams?${query}`);
+      setDreams((all) =>
+        cursor
+          ? [
+              ...(all || []),
+              ...value.dreams.filter((item) => !all?.some((existing) => existing.dreamId === item.dreamId)),
+            ]
+          : value.dreams,
+      );
+      setNextCursor(value.nextCursor || '');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('Dream 기록을 불러오지 못했습니다.'));
+      if (!cursor) {
+        setDreams([]);
+        setNextCursor('');
+      }
+    } finally {
+      setLoadingMore(false);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  useEffect(() => {
+    const focus = params.get('focus');
+    if (!focus || !dreams || focused.current === focus) return;
+    const card = document.getElementById(`dream-${focus}`);
+    if (!card) {
+      const target = dreams.find((d) => d.dreamId === focus);
+      if (target?.status === 'kept' && filter !== 'kept') setFilter('kept');
+      else if (target?.status === 'deleted' && filter !== 'hidden') setFilter('hidden');
+      else if (!target && nextCursor && !loadingMore) void load(nextCursor);
+      return;
+    }
+    focused.current = focus;
+    window.requestAnimationFrame(() => card.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+  }, [dreams, filter, load, loadingMore, nextCursor, params]);
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting || entry.intersectionRatio < 0.5) return;
+          const id = (entry.target as HTMLElement).dataset.dreamId;
+          if (!id || exposed.current.has(id)) return;
+          exposed.current.add(id);
+          observer.unobserve(entry.target);
+          void api(`/dreams/${id}/feedback`, { ...json('POST', { action: 'exposed' }), silent: true })
+            .then(() =>
+              setDreams((all) =>
+                all?.map((d) => (d.dreamId === id && d.status === 'created' ? { ...d, status: 'exposed' } : d)),
+              ),
+            )
+            .catch(() => exposed.current.delete(id));
+        });
+      },
+      { threshold: 0.5 },
+    );
+    visible
+      .filter((d) => d.status === 'created')
+      .forEach((d) => {
+        const card = document.getElementById(`dream-${d.dreamId}`);
+        if (card) observer.observe(card);
+      });
+    return () => observer.disconnect();
+  }, [visible]);
+  const replace = (next: Dream) => setDreams((all) => all?.map((d) => (d.dreamId === next.dreamId ? next : d)));
+  const accept = async (dream: Dream, content = '') => {
+    setBusy(`accept:${dream.dreamId}`);
+    try {
+      const note = await api<ThoughtNote>(`/dreams/${dream.dreamId}/accept`, json('POST', { content }));
+      showSuccess(t('Dream을 생각 곁에 남겼습니다.'), t('Dream 채택'));
+      navigate(`/space/${note.spaceId}?note=${note.id}`);
+    } finally {
+      setBusy('');
+    }
+  };
+  const regenerate = async (dream: Dream) => {
+    setBusy(`regenerate:${dream.dreamId}`);
+    try {
+      const next = await api<Dream>(`/dreams/${dream.dreamId}/regenerate`, { method: 'POST' });
+      await api(`/dreams/${dream.dreamId}/feedback`, json('POST', { action: 'exposed' }));
+      exposed.current.add(dream.dreamId);
+      replace({ ...next, status: 'exposed' });
+      showSuccess(t('같은 원본에서 다른 관점을 만들었습니다.'), t('Dream 재생성'));
+    } finally {
+      setBusy('');
+    }
+  };
+  const hide = async (dream: Dream, reason: string) => {
+    setBusy(`hide:${dream.dreamId}`);
+    try {
+      await api(`/dreams/${dream.dreamId}/feedback`, json('POST', { action: 'hidden', reason }));
+      setDreams((all) =>
+        all?.map((d) => (d.dreamId === dream.dreamId ? { ...d, status: 'deleted', dismissedReason: reason } : d)),
+      );
+      showSuccess(
+        t(
+          reason === 'too_frequent'
+            ? '이 Dream을 숨기고 생성 빈도를 한 단계 낮췄습니다.'
+            : '이 Dream을 숨기고 스타일 선호도에 반영했습니다.',
+        ),
+        t('피드백 반영'),
+      );
+    } finally {
+      setBusy('');
+    }
+  };
+  const develop = async (dream: Dream, mode: string) => {
+    setBusy(`develop:${dream.dreamId}`);
+    try {
+      const result = await api<DevelopResult>(`/dreams/${dream.dreamId}/develop`, json('POST', { mode }));
+      setDeveloped({ dream, result });
+    } finally {
+      setBusy('');
+    }
+  };
+  const keepDeveloped = async () => {
+    if (!developed) return;
+    const { dream, result } = developed;
+    if (!dream.noteId && dream.status !== 'kept') {
+      await accept(dream, result.content);
+      return;
+    }
+    setBusy(`develop:${dream.dreamId}`);
+    try {
+      const saved = await api<DevelopedNoteResult>(
+        `/dreams/${dream.dreamId}/developed-note`,
+        json('POST', { content: result.content }),
+      );
+      setDeveloped(undefined);
+      navigate(`/space/${saved.note.spaceId}?note=${saved.note.id}`);
+    } finally {
+      setBusy('');
+    }
+  };
+  return (
+    <main className="settings-page">
+      <Stack maw={900} mx="auto" gap="xl">
+        <Group justify="space-between" align="flex-end">
+          <Group>
+            <ThemeIcon size={42} radius="xl" color="grape" variant="light">
+              <IconMoonStars />
+            </ThemeIcon>
+            <div>
+              <Title order={1}>Dreams</Title>
+              <Text c="dimmed">{t('근거를 확인하고 내 생각으로 채택하는 AI 인사이트')}</Text>
+            </div>
+          </Group>
+          <Button variant="subtle" leftSection={<IconRefresh size={16} />} onClick={() => void load()}>
+            {t('새로고침')}
+          </Button>
+        </Group>
+        <SegmentedControl
+          fullWidth
+          value={filter}
+          onChange={setFilter}
+          data={[
+            {
+              value: 'inbox',
+              label: t('검토함 {count}', {
+                count: (dreams || []).filter((d) => d.status === 'created' || d.status === 'exposed').length,
+              }),
+            },
+            { value: 'kept', label: t('채택됨') },
+            { value: 'hidden', label: t('숨김') },
+            { value: 'all', label: t('전체') },
+          ]}
+        />
+        {error && (
+          <Alert color="red" title={t('Dream을 불러오지 못했습니다.')}>
+            {error}
+          </Alert>
+        )}
+        {!dreams ? (
+          <Loader />
+        ) : visible.length === 0 ? (
+          <Stack>
+            <Card p={45} radius="lg" withBorder ta="center">
+              <IconMoonStars size={38} color="#8c7a9f" />
+              <Title order={3} mt="md">
+                {t(filter === 'inbox' ? '검토할 Dream이 없어요' : '이 상태의 Dream이 없어요')}
+              </Title>
+              <Text c="dimmed" mt="sm">
+                {t('충분한 생각이 쌓이면 근거와 함께 새로운 관점이 이곳에 도착합니다.')}
+              </Text>
+              <Button mt="lg" variant="light" onClick={() => navigate('/settings')}>
+                {t('Dream 설정 보기')}
+              </Button>
+            </Card>
+            {nextCursor && (
+              <Group justify="center">
+                <Button variant="light" loading={loadingMore} onClick={() => void load(nextCursor)}>
+                  {t('이전 Dream 더 불러오기')}
+                </Button>
+              </Group>
+            )}
+          </Stack>
+        ) : (
+          <>
+            <Timeline color="grape" bulletSize={30} lineWidth={2}>
+              {visible.map((d) => (
+                <Timeline.Item
+                  key={d.dreamId}
+                  bullet={<IconMoonStars size={16} />}
+                  title={formatDate(d.generatedAt, { year: 'numeric', month: 'long', day: 'numeric' })}
+                >
+                  <Card
+                    id={`dream-${d.dreamId}`}
+                    data-dream-id={d.dreamId}
+                    mt="sm"
+                    p={{ base: 'md', sm: 'xl' }}
+                    radius="lg"
+                    withBorder
+                    className={`dream-review-card ${params.get('focus') === d.dreamId ? 'dream-review-card-focused' : ''}`}
+                  >
+                    <Group justify="space-between" align="flex-start">
+                      <Group gap="xs">
+                        <Badge color="grape" variant="light">
+                          {t(typeLabels[d.type] || d.type)}
+                        </Badge>
+                        {/* The label is a server-supplied Korean value, so the
+                            colour check stays on the original and only the
+                            rendered text is translated. */}
+                        <Badge color={d.qualityLabel === wellSourcedLabel ? 'green' : 'blue'} variant="light">
+                          {t(d.qualityLabel)}
+                        </Badge>
+                        {d.generation > 1 && (
+                          <Badge color="gray" variant="light">
+                            {t('다른 관점 {generation}', { generation: d.generation })}
+                          </Badge>
+                        )}
+                      </Group>
+                      <Text size="xs" c="dimmed">
+                        {d.spaceName}
+                      </Text>
+                    </Group>
+                    <Text fz="lg" fw={600} lh={1.75} mt="md" style={{ whiteSpace: 'pre-wrap' }}>
+                      {d.content}
+                    </Text>
+                    {d.rationale && (
+                      <Paper mt="md" p="md" radius="md" bg="gray.0">
+                        <Group gap="xs">
+                          <IconRoute size={16} color="#765c96" />
+                          <Text size="sm" fw={650}>
+                            {t('왜 이 Dream인가요?')}
+                          </Text>
+                        </Group>
+                        <Text size="sm" c="dimmed" mt={6}>
+                          {d.rationale}
+                        </Text>
+                      </Paper>
+                    )}
+                    {d.sources.length > 0 && (
+                      <SimpleGrid cols={{ base: 1, sm: 2 }} mt="sm">
+                        {d.sources
+                          .filter((source) => source.cited)
+                          .slice(0, 4)
+                          .map((source) => (
+                            <button
+                              type="button"
+                              className="dream-source"
+                              key={source.noteId}
+                              onClick={() => navigate(`/space/${d.spaceId}?note=${source.noteId}`)}
+                            >
+                              <Text size="xs" fw={700} c="grape.7">
+                                {t('원본 생각 {rank}', { rank: source.rank })}
+                              </Text>
+                              <Text size="sm" lineClamp={2} ta="left" mt={3}>
+                                {source.title || source.excerpt}
+                              </Text>
+                              <Text size="xs" c="dimmed" mt={5}>
+                                {t('캔버스에서 보기 →')}
+                              </Text>
+                            </button>
+                          ))}
+                      </SimpleGrid>
+                    )}
+                    {d.suggestedAction && (
+                      <Group gap="xs" mt="md" align="flex-start" wrap="nowrap">
+                        <IconBulb size={17} color="#9a6a18" style={{ marginTop: 2, flex: '0 0 auto' }} />
+                        <Text size="sm">
+                          <b>{t('이어가기:')}</b> {d.suggestedAction}
+                        </Text>
+                      </Group>
+                    )}
+                    {d.status !== 'deleted' && (
+                      <Group mt="xl" justify="space-between">
+                        <Group gap="xs">
+                          {!d.noteId && d.status !== 'kept' ? (
+                            <Button
+                              loading={busy === `accept:${d.dreamId}`}
+                              leftSection={<IconSparkles size={16} />}
+                              onClick={() => void accept(d)}
+                            >
+                              {t('캔버스에 남기기')}
+                            </Button>
+                          ) : (
+                            <Button
+                              leftSection={<IconArrowRight size={16} />}
+                              onClick={() => navigate(`/space/${d.spaceId}?note=${d.noteId || ''}`)}
+                            >
+                              {t('생각 곁에서 보기')}
+                            </Button>
+                          )}
+                          <Menu shadow="md">
+                            <Menu.Target>
+                              <Button
+                                variant="light"
+                                loading={busy === `develop:${d.dreamId}`}
+                                leftSection={<IconBrain size={16} />}
+                              >
+                                {t('발전시키기')}
+                              </Button>
+                            </Menu.Target>
+                            <Menu.Dropdown>
+                              {developModes.map(([mode, label]) => (
+                                <Menu.Item key={mode} onClick={() => void develop(d, mode)}>
+                                  {t(label)}
+                                </Menu.Item>
+                              ))}
+                            </Menu.Dropdown>
+                          </Menu>
+                        </Group>
+                        {!d.noteId && d.status !== 'kept' && (
+                          <Group gap="xs">
+                            <Button
+                              variant="subtle"
+                              loading={busy === `regenerate:${d.dreamId}`}
+                              leftSection={<IconWand size={16} />}
+                              onClick={() => void regenerate(d)}
+                            >
+                              {t('다른 관점')}
+                            </Button>
+                            <Menu shadow="md">
+                              <Menu.Target>
+                                <Button color="gray" variant="subtle" leftSection={<IconEyeOff size={16} />}>
+                                  {t('숨기기')}
+                                </Button>
+                              </Menu.Target>
+                              <Menu.Dropdown>
+                                {hideReasons.map(([reason, label]) => (
+                                  <Menu.Item color="red" key={reason} onClick={() => void hide(d, reason)}>
+                                    {t(label)}
+                                  </Menu.Item>
+                                ))}
+                              </Menu.Dropdown>
+                            </Menu>
+                          </Group>
+                        )}
+                      </Group>
+                    )}
+                    {d.status === 'deleted' && (
+                      <Text mt="md" size="sm" c="dimmed">
+                        {t('숨긴 Dream · 선호도 학습에 반영됨')}
+                      </Text>
+                    )}
+                  </Card>
+                </Timeline.Item>
+              ))}
+            </Timeline>
+            {nextCursor && (
+              <Group justify="center">
+                <Button variant="light" loading={loadingMore} onClick={() => void load(nextCursor)}>
+                  {t('이전 Dream 더 불러오기')}
+                </Button>
+              </Group>
+            )}
+          </>
+        )}
+      </Stack>
+      <Modal
+        opened={!!developed}
+        onClose={() => setDeveloped(undefined)}
+        title={t('Dream을 한 단계 발전시켰습니다')}
+        centered
+        size="lg"
+      >
+        <Stack>
+          <Paper p="lg" radius="lg" bg="grape.0">
+            <Text lh={1.75} style={{ whiteSpace: 'pre-wrap' }}>
+              {developed?.result.content}
+            </Text>
+          </Paper>
+          <Group justify="flex-end">
+            <Button variant="light" onClick={() => setDeveloped(undefined)}>
+              {t('그대로 두기')}
+            </Button>
+            <Button
+              loading={!!developed && busy === `develop:${developed.dream.dreamId}`}
+              onClick={() => void keepDeveloped()}
+            >
+              {t('이 결과를 캔버스에 남기기')}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </main>
+  );
 }

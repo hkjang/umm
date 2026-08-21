@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -17,7 +18,14 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Store struct{ Pool *pgxpool.Pool }
+// Store owns the database pool. Cipher is optional and only needed for the
+// settings that hold encrypted credentials.
+type Store struct {
+	Pool   *pgxpool.Pool
+	Cipher Decrypter
+
+	embeddings embeddingCache
+}
 
 type User struct {
 	ID          uuid.UUID  `json:"id"`
@@ -104,7 +112,12 @@ type NoteRevision struct {
 }
 
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse POSTGRES_DSN: %w", err)
+	}
+	applyPoolDefaults(poolConfig)
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -113,6 +126,32 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
 	return &Store{Pool: pool}, nil
+}
+
+// applyPoolDefaults keeps headroom for the connections umm holds open for a
+// long time — the realtime LISTEN connection and the migration advisory lock —
+// so a busy request burst can never starve them. An explicit pool_max_conns in
+// the DSN always wins.
+func applyPoolDefaults(config *pgxpool.Config) {
+	const reservedLongLivedConns = 2
+	if !strings.Contains(config.ConnString(), "pool_max_conns") {
+		minimum := int32(runtime.NumCPU()*2) + reservedLongLivedConns
+		if config.MaxConns < minimum {
+			config.MaxConns = minimum
+		}
+	}
+	if config.MinConns < reservedLongLivedConns {
+		config.MinConns = reservedLongLivedConns
+	}
+	if config.MaxConnLifetime == 0 {
+		config.MaxConnLifetime = time.Hour
+	}
+	if config.MaxConnIdleTime == 0 {
+		config.MaxConnIdleTime = 30 * time.Minute
+	}
+	if config.HealthCheckPeriod == 0 {
+		config.HealthCheckPeriod = time.Minute
+	}
 }
 
 func (s *Store) Migrate(ctx context.Context) error {
@@ -357,60 +396,18 @@ func (s *Store) CanEditSpace(ctx context.Context, userID, spaceID uuid.UUID) boo
 	return ok
 }
 
-func noteSearchPatterns(query string) []string {
-	escape := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-	terms := strings.Fields(strings.TrimSpace(query))
-	patterns := make([]string, 0, len(terms))
-	for _, term := range terms {
-		patterns = append(patterns, "%"+escape.Replace(term)+"%")
-	}
-	return patterns
-}
-
-func (s *Store) SearchNotes(ctx context.Context, userID uuid.UUID, query string, limit int) ([]NoteSearchResult, error) {
-	patterns := noteSearchPatterns(query)
-	if len(patterns) == 0 {
-		return []NoteSearchResult{}, nil
-	}
-	if limit < 1 {
-		limit = 12
-	}
-	if limit > 30 {
-		limit = 30
-	}
-	rows, err := s.Pool.Query(ctx, `
-		SELECT n.id,n.space_id,sp.name,n.title,left(n.content,500),n.kind,n.updated_at
-		FROM notes n
-		JOIN spaces sp ON sp.id=n.space_id
-		WHERE n.deleted_at IS NULL
-		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
-		  AND NOT EXISTS(
-			SELECT 1 FROM unnest($2::text[]) AS term(pattern)
-			WHERE concat_ws(' ',n.title,n.content,sp.name) NOT ILIKE term.pattern ESCAPE E'\\'
-		  )
-		ORDER BY (NULLIF(trim(n.title),'') IS NOT NULL) DESC,n.updated_at DESC
-		LIMIT $3`, userID, patterns, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	results := []NoteSearchResult{}
-	for rows.Next() {
-		var result NoteSearchResult
-		if err := rows.Scan(&result.ID, &result.SpaceID, &result.SpaceName, &result.Title, &result.Content, &result.Kind, &result.UpdatedAt); err != nil {
-			return nil, err
-		}
-		results = append(results, result)
-	}
-	return results, rows.Err()
-}
-
 func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query string) ([]Note, []Edge, error) {
 	if !s.CanViewSpace(ctx, userID, spaceID) {
 		return nil, nil, pgx.ErrNoRows
 	}
 	patterns := noteSearchPatterns(query)
-	rows, err := s.Pool.Query(ctx, `SELECT id,space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation,version,created_at,updated_at FROM notes WHERE space_id=$1 AND deleted_at IS NULL AND (cardinality($2::text[])=0 OR NOT EXISTS(SELECT 1 FROM unnest($2::text[]) AS term(pattern) WHERE concat_ws(' ',content,title) NOT ILIKE term.pattern ESCAPE E'\\')) ORDER BY created_at`, spaceID, patterns)
+	b := &queryBuilder{}
+	space := b.bind(spaceID)
+	match := "true"
+	if len(patterns) > 0 {
+		match = allMatch(noteTextExpression, patterns, b)
+	}
+	rows, err := s.Pool.Query(ctx, fmt.Sprintf(`SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at FROM notes n WHERE n.space_id=%s AND n.deleted_at IS NULL AND %s ORDER BY n.created_at`, space, match), b.args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -575,40 +572,6 @@ func (s *Store) CreateEdge(ctx context.Context, userID uuid.UUID, e Edge) (Edge,
 func (s *Store) Audit(ctx context.Context, actor *uuid.UUID, action, resourceType, resourceID string, metadata any) {
 	raw, _ := json.Marshal(metadata)
 	_, _ = s.Pool.Exec(ctx, `INSERT INTO audit_logs(actor_id,action,resource_type,resource_id,metadata) VALUES($1,$2,$3,$4,$5)`, actor, action, resourceType, resourceID, raw)
-}
-
-func (s *Store) UpsertEmbedding(ctx context.Context, noteID uuid.UUID, content string, version int) error {
-	vector := intelligence.Embed(content)
-	_, err := s.Pool.Exec(ctx, `INSERT INTO note_embeddings(note_id,dimensions,vector,content_version,updated_at) VALUES($1,$2,$3,$4,now()) ON CONFLICT(note_id) DO UPDATE SET dimensions=EXCLUDED.dimensions,vector=EXCLUDED.vector,content_version=EXCLUDED.content_version,updated_at=now() WHERE note_embeddings.content_version<EXCLUDED.content_version`, noteID, len(vector), vector, version)
-	return err
-}
-func (s *Store) ensureEmbeddings(ctx context.Context, notes []Note) {
-	for _, n := range notes {
-		_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
-	}
-}
-func (s *Store) loadEmbeddings(ctx context.Context, notes []Note) map[uuid.UUID][]float32 {
-	out := map[uuid.UUID][]float32{}
-	if len(notes) == 0 {
-		return out
-	}
-	ids := make([]uuid.UUID, len(notes))
-	for i, n := range notes {
-		ids[i] = n.ID
-	}
-	rows, err := s.Pool.Query(ctx, `SELECT note_id,vector FROM note_embeddings WHERE note_id=ANY($1)`, ids)
-	if err != nil {
-		return out
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id uuid.UUID
-		var vector []float32
-		if rows.Scan(&id, &vector) == nil {
-			out[id] = vector
-		}
-	}
-	return out
 }
 
 func (s *Store) RelatedNotes(ctx context.Context, userID, noteID uuid.UUID, limit int) ([]RelatedNote, error) {

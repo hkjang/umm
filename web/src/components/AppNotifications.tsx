@@ -24,22 +24,42 @@ export default function AppNotifications() {
       const previousTimer = timers.current.get(notice.id);
       if (previousTimer) window.clearTimeout(previousTimer);
       setNotices((all) => [...all.filter((item) => item.id !== notice.id), notice].slice(-4));
-      timers.current.set(notice.id, window.setTimeout(() => dismiss(notice.id), notice.timeout));
+      timers.current.set(
+        notice.id,
+        window.setTimeout(() => dismiss(notice.id), notice.timeout),
+      );
     };
     window.addEventListener('umm:notice', onNotice);
+    // The ref object is captured here so the cleanup clears the same map the
+    // effect registered its timers in, even if the ref is reassigned later.
+    const pending = timers.current;
     return () => {
       window.removeEventListener('umm:notice', onNotice);
-      timers.current.forEach((timer) => window.clearTimeout(timer));
-      timers.current.clear();
+      pending.forEach((timer) => window.clearTimeout(timer));
+      pending.clear();
     };
   }, []);
 
-  return <div className="app-notifications" aria-live="polite" aria-atomic="false">
-    <Stack gap="sm">{notices.map((notice) => {
-      const Icon = icons[notice.tone];
-      return <Alert key={notice.id} className="app-notification" color={colors[notice.tone]} title={notice.title} icon={<Icon size={19}/>} withCloseButton onClose={() => dismiss(notice.id)}>
-        {notice.message}
-      </Alert>;
-    })}</Stack>
-  </div>;
+  return (
+    <div className="app-notifications" aria-live="polite" aria-atomic="false">
+      <Stack gap="sm">
+        {notices.map((notice) => {
+          const Icon = icons[notice.tone];
+          return (
+            <Alert
+              key={notice.id}
+              className="app-notification"
+              color={colors[notice.tone]}
+              title={notice.title}
+              icon={<Icon size={19} />}
+              withCloseButton
+              onClose={() => dismiss(notice.id)}
+            >
+              {notice.message}
+            </Alert>
+          );
+        })}
+      </Stack>
+    </div>
+  );
 }

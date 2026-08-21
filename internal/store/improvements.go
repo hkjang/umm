@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hkjang/umm/internal/intelligence"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -156,115 +154,6 @@ func lexicalScore(query, title, content, space string) (float64, []string) {
 		score += .35 * float64(matched) / float64(len(terms))
 	}
 	return math.Min(score, 1), reasons
-}
-
-// SearchNotesHybrid combines deterministic local embeddings with lexical
-// matching. It remains fully offline and needs no vector database extension.
-func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options SearchOptions) (HybridSearchPage, error) {
-	patterns := noteSearchPatterns(options.Query)
-	if len(patterns) == 0 {
-		return HybridSearchPage{Notes: []NoteSearchResult{}}, nil
-	}
-	if options.Limit < 1 {
-		options.Limit = 20
-	}
-	if options.Limit > 50 {
-		options.Limit = 50
-	}
-	if options.Offset < 0 {
-		options.Offset = 0
-	}
-	rows, err := s.Pool.Query(ctx, `
-		WITH eligible AS NOT MATERIALIZED (
-		  SELECT n.id,n.space_id,sp.name AS space_name,n.title,left(n.content,2000) AS content,n.kind,n.updated_at,e.vector,
-		    lower(btrim(n.title))=lower(btrim($8::text)) AS exact_title,
-		    lower(btrim(n.content))=lower(btrim($8::text)) AS exact_content,
-		    strpos(lower(n.title),lower(btrim($8::text)))>0 AS title_phrase,
-		    strpos(lower(n.content),lower(btrim($8::text)))>0 AS content_phrase,
-		    NOT EXISTS(
-		      SELECT 1 FROM unnest($6::text[]) AS term(pattern)
-		      WHERE concat_ws(' ',n.title,n.content,sp.name) NOT ILIKE term.pattern ESCAPE E'\\'
-		    ) AS lexical_match,
-		    (SELECT count(*) FROM unnest($6::text[]) AS term(pattern) WHERE n.title ILIKE term.pattern ESCAPE E'\\') AS title_matches,
-		    (SELECT count(*) FROM unnest($6::text[]) AS term(pattern) WHERE n.content ILIKE term.pattern ESCAPE E'\\') AS content_matches,
-		    (SELECT count(*) FROM unnest($6::text[]) AS term(pattern) WHERE sp.name ILIKE term.pattern ESCAPE E'\\') AS space_matches
-		  FROM notes n
-		  JOIN spaces sp ON sp.id=n.space_id
-		  LEFT JOIN note_embeddings e ON e.note_id=n.id AND e.content_version=n.version
-		  WHERE n.deleted_at IS NULL
-		    AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
-		    AND ($2::uuid IS NULL OR n.space_id=$2)
-		    AND ($3='' OR n.kind=$3)
-		    AND ($4::timestamptz IS NULL OR n.updated_at >= $4)
-		    AND ($5::timestamptz IS NULL OR n.updated_at <= $5)
-		), lexical_candidates AS (
-		  SELECT * FROM eligible WHERE lexical_match
-		  ORDER BY exact_title DESC,exact_content DESC,title_phrase DESC,content_phrase DESC,
-		           title_matches DESC,content_matches DESC,space_matches DESC,updated_at DESC,id DESC
-		  LIMIT $7
-		), candidates AS (
-		  SELECT * FROM lexical_candidates
-		  UNION ALL
-		  SELECT * FROM (
-		    SELECT * FROM eligible WHERE NOT lexical_match ORDER BY updated_at DESC,id DESC LIMIT 2000
-		  ) recent_semantic
-		)
-		SELECT id,space_id,space_name,title,content,kind,updated_at,vector,lexical_match FROM candidates`,
-		userID, options.SpaceID, strings.TrimSpace(options.Kind), options.UpdatedFrom, options.UpdatedTo, patterns, hybridLexicalCandidateLimit, strings.TrimSpace(options.Query))
-	if err != nil {
-		return HybridSearchPage{}, err
-	}
-	defer rows.Close()
-	queryVector := intelligence.Embed(options.Query)
-	results := []NoteSearchResult{}
-	for rows.Next() {
-		var result NoteSearchResult
-		var vector []float32
-		var fullLexicalMatch bool
-		if err := rows.Scan(&result.ID, &result.SpaceID, &result.SpaceName, &result.Title, &result.Content, &result.Kind, &result.UpdatedAt, &vector, &fullLexicalMatch); err != nil {
-			return HybridSearchPage{}, err
-		}
-		if len(vector) == 0 {
-			vector = intelligence.Embed(result.Title + " " + result.Content)
-		}
-		lexical, reasons := lexicalScore(options.Query, result.Title, result.Content, result.SpaceName)
-		if fullLexicalMatch && lexical < .35 {
-			lexical = .35
-			reasons = append(reasons, "전체 본문 키워드 일치")
-		}
-		semantic := math.Max(0, intelligence.Cosine(queryVector, vector))
-		if lexical == 0 && semantic < .18 {
-			continue
-		}
-		result.Score = math.Round((lexical*.68+semantic*.32)*10000) / 10000
-		if semantic >= .28 {
-			reasons = append(reasons, "의미상 유사")
-		}
-		if len(reasons) == 0 {
-			reasons = append(reasons, "연관 표현")
-		}
-		result.Reason = strings.Join(reasons, " · ")
-		results = append(results, result)
-	}
-	if err := rows.Err(); err != nil {
-		return HybridSearchPage{}, err
-	}
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Score == results[j].Score {
-			if results[i].UpdatedAt.Equal(results[j].UpdatedAt) {
-				return results[i].ID.String() > results[j].ID.String()
-			}
-			return results[i].UpdatedAt.After(results[j].UpdatedAt)
-		}
-		return results[i].Score > results[j].Score
-	})
-	start := min(options.Offset, len(results))
-	end := min(start+options.Limit, len(results))
-	page := HybridSearchPage{Notes: results[start:end], HasMore: end < len(results)}
-	if page.HasMore {
-		page.NextOffset = end
-	}
-	return page, nil
 }
 
 func (s *Store) Backlinks(ctx context.Context, userID, noteID uuid.UUID) ([]Backlink, error) {

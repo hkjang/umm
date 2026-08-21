@@ -10,8 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/realtime"
 )
 
+// spaceEvents streams the collaboration log. The reader is woken by the
+// realtime hub's PostgreSQL LISTEN connection, so an idle space costs no
+// queries at all. The ticker is only a safety net: it runs slowly while the
+// listener is healthy and takes over at the old poll rate if it is not.
 func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:read") {
 		return
@@ -42,12 +47,56 @@ func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request) {
 	if last == 0 && r.Header.Get("Last-Event-ID") == "" && r.URL.Query().Get("after") == "" {
 		_ = s.Store.Pool.QueryRow(r.Context(), `SELECT COALESCE(max(sequence),0) FROM space_events WHERE space_id=$1`, spaceID).Scan(&last)
 	}
-	ticker := time.NewTicker(time.Second)
+	// Subscribing before the first drain closes the race where an event is
+	// committed between reading the cursor above and registering here.
+	var pushed <-chan struct{}
+	if s.Events != nil {
+		subscription := s.Events.Subscribe(spaceID)
+		defer subscription.Close()
+		pushed = subscription.C()
+	}
+	ticker := time.NewTicker(sseFallbackInterval(s.Events))
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	defer heartbeat.Stop()
 	fmt.Fprint(w, ": umm collaboration stream\n\n")
 	flusher.Flush()
+	// Each batch re-checks membership inside the same statement, so a stream
+	// cannot keep delivering events after its reader loses access to the space.
+	drain := func() (wrote bool, keepStreaming bool) {
+		events, allowed, err := s.Store.SpaceEvents(r.Context(), p.User.ID, spaceID, last, 100)
+		if err != nil {
+			return false, true
+		}
+		if !allowed {
+			return false, false
+		}
+		for _, item := range events {
+			event, _ := json.Marshal(item)
+			fmt.Fprintf(w, "id: %d\nevent: space-change\ndata: %s\n\n", item.Sequence, event)
+			last = item.Sequence
+			wrote = true
+		}
+		return wrote, true
+	}
+	// One batch is bounded, so keep draining until the query comes back empty
+	// before parking on the next signal. Returns false once the reader has lost
+	// access and the stream must end.
+	drainAll := func() bool {
+		for {
+			wrote, keepStreaming := drain()
+			if !keepStreaming {
+				return false
+			}
+			flusher.Flush()
+			if !wrote {
+				return true
+			}
+		}
+	}
+	if !drainAll() {
+		return
+	}
 	for {
 		select {
 		case <-r.Context().Done():
@@ -55,22 +104,27 @@ func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request) {
 		case <-heartbeat.C:
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
-		case <-ticker.C:
-			events, allowed, err := s.Store.SpaceEvents(r.Context(), p.User.ID, spaceID, last, 100)
-			if err != nil {
-				continue
-			}
-			if !allowed {
+		case <-pushed:
+			if !drainAll() {
 				return
 			}
-			for _, item := range events {
-				event, _ := json.Marshal(item)
-				fmt.Fprintf(w, "id: %d\nevent: space-change\ndata: %s\n\n", item.Sequence, event)
-				last = item.Sequence
+		case <-ticker.C:
+			ticker.Reset(sseFallbackInterval(s.Events))
+			if !drainAll() {
+				return
 			}
-			flusher.Flush()
 		}
 	}
+}
+
+// sseFallbackInterval keeps the pre-v0.8 one second poll only while the
+// PostgreSQL listener is unavailable. A healthy listener needs the timer purely
+// as a backstop against a missed notification.
+func sseFallbackInterval(hub *realtime.Hub) time.Duration {
+	if hub != nil && hub.Listening() {
+		return 30 * time.Second
+	}
+	return time.Second
 }
 
 func (s *Server) listSpaceMembers(w http.ResponseWriter, r *http.Request) {

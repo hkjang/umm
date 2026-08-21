@@ -38,7 +38,7 @@ func TestIdempotencyPendingLeaseRecoversAfterCrashIntegration(t *testing.T) {
 	}
 	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
 	authService := &auth.Service{Store: db}
-	session, err := authService.CreateSession(ctx, userID)
+	session, err := authService.CreateSession(ctx, userID, auth.SessionOrigin{UserAgent: "integration-test", ClientIP: "127.0.0.1"})
 	if err != nil {
 		t.Fatal(err)
 	}

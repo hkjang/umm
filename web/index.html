@@ -3,10 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#765c96" />
+    <meta name="theme-color" content="#765c96" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1d1a23" media="(prefers-color-scheme: dark)" />
     <meta name="description" content="umm — 생각을 공간에 붙이고 키우는 Thought Space" />
+    <meta name="csp-nonce" content="__CSP_NONCE__" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>umm</title>
+    <script>
+      // Resolve the colour scheme before first paint so a dark-mode user never
+      // sees a flash of the light theme. The server stamps this tag with the
+      // response nonce, so it satisfies the strict script-src policy.
+      (function () {
+        try {
+          var stored = localStorage.getItem('mantine-color-scheme-value');
+          var scheme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+        } catch (error) {
+          document.documentElement.setAttribute('data-mantine-color-scheme', 'light');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

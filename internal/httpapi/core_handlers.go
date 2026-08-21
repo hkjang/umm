@@ -85,12 +85,24 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "아이디와 비밀번호를 확인해 주세요.")
 		return
 	}
-	u, token, err := s.Auth.PasswordLogin(r.Context(), body.Username, body.Password)
+	policy := s.securityPolicy(r.Context())
+	identities := store.LoginIdentities(body.Username, clientIP(r))
+	if locked, remaining := s.Store.LoginLocked(r.Context(), identities); locked {
+		writeRetryAfter(w, remaining)
+		s.Store.Audit(r.Context(), nil, "auth.local.locked", "user", strings.TrimSpace(body.Username), map[string]any{})
+		writeProblem(w, r, http.StatusTooManyRequests, "login-locked", "로그인이 일시적으로 잠겼습니다",
+			"로그인 실패가 반복되어 "+strconv.Itoa(int(remaining.Minutes())+1)+"분 동안 잠겼습니다. 잠시 후 다시 시도해 주세요.",
+			map[string]any{"retryAfterSeconds": int(remaining.Seconds())})
+		return
+	}
+	u, token, err := s.Auth.PasswordLogin(r.Context(), body.Username, body.Password, auth.OriginOf(r))
 	if err != nil {
+		s.Store.RegisterLoginFailure(r.Context(), identities, policy.LoginMaxFailures, policy.lockout())
 		s.Store.Audit(r.Context(), nil, "auth.local.failed", "user", strings.TrimSpace(body.Username), map[string]any{})
 		writeError(w, 401, "아이디 또는 비밀번호가 올바르지 않습니다.")
 		return
 	}
+	s.Store.ClearLoginFailures(r.Context(), identities)
 	auth.SetSessionCookie(w, r, token)
 	s.Store.Audit(r.Context(), &u.ID, "auth.local.login", "user", u.ID.String(), map[string]any{})
 	writeJSON(w, 200, u)

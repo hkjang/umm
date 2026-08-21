@@ -34,10 +34,21 @@ func (s *Server) getPreferences(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putPreferences(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
+	// Decoding over the stored row makes this a partial update: a client that
+	// only wants to change the language does not have to round-trip and resend
+	// every unrelated Dream setting, and cannot clobber one by omitting it.
 	var v preferences
-	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT review_digest FROM user_preferences WHERE user_id=$1`, p.User.ID).Scan(&v.ReviewDigest)
+	if err := s.Store.Pool.QueryRow(r.Context(), `SELECT dream_enabled,dream_frequency,dream_style,dream_notifications,include_old_notes,dream_pause_until,theme,locale,edge_style,review_digest FROM user_preferences WHERE user_id=$1`, p.User.ID).
+		Scan(&v.DreamEnabled, &v.DreamFrequency, &v.DreamStyle, &v.DreamNotifications, &v.IncludeOldNotes, &v.DreamPauseUntil, &v.Theme, &v.Locale, &v.EdgeStyle, &v.ReviewDigest); err != nil {
+		writeError(w, 500, "개인 설정을 불러오지 못했습니다.")
+		return
+	}
 	if decodeJSON(w, r, &v) != nil {
 		writeError(w, 400, "개인 설정 형식이 올바르지 않습니다.")
+		return
+	}
+	if !slices.Contains([]string{"ko", "en"}, v.Locale) {
+		writeError(w, 400, "지원하지 않는 언어입니다.")
 		return
 	}
 	if !slices.Contains([]string{"daily", "three_week", "weekly"}, v.DreamFrequency) {

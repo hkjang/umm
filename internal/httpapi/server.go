@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -9,7 +12,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,6 +25,7 @@ import (
 	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/mcp"
 	"github.com/hkjang/umm/internal/observability"
+	"github.com/hkjang/umm/internal/realtime"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/hkjang/umm/internal/webhook"
 )
@@ -31,11 +38,27 @@ type Server struct {
 	Dreams   *dream.Service
 	Webhooks *webhook.Service
 	Metrics  *observability.Registry
+	Events   *realtime.Hub
 	Version  string
 	WebDir   string
+
+	limiterOnce sync.Once
+	limiter     *rateLimiter
+
+	policyMu       sync.Mutex
+	policy         securityPolicy
+	policyLoadedAt time.Time
 }
 
+// Handler returns the traced HTTP handler the server listens with.
 func (s *Server) Handler() http.Handler {
+	return observability.Wrap(s.router())
+}
+
+// router builds the route tree. It is separate from Handler so tests can walk
+// the routes: the tracing wrapper hides them.
+func (s *Server) router() chi.Router {
+	s.limiterOnce.Do(func() { s.limiter = newRateLimiter() })
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Recoverer, middleware.RequestSize(1<<20), s.securityHeaders, s.accessLog, s.Auth.Middleware)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +74,7 @@ func (s *Server) Handler() http.Handler {
 		writeJSON(w, 200, map[string]string{"status": "ready"})
 	})
 	r.Route("/api/v1", func(api chi.Router) {
-		api.Use(s.verifyWriteOrigin)
+		api.Use(s.verifyWriteOrigin, s.rateLimit)
 		api.Get("/meta", s.meta)
 		api.Post("/auth/login", s.login)
 		api.Get("/auth/oidc/start", s.OIDC.Start)
@@ -88,7 +111,6 @@ func (s *Server) Handler() http.Handler {
 			protected.Get("/spaces/{spaceID}/clusters", s.thoughtClusters)
 			protected.Get("/spaces/{spaceID}/export/authorize", s.authorizeExport)
 			protected.Get("/spaces/{spaceID}/export/markdown", s.exportMarkdown)
-			protected.Post("/ai/assist", s.aiAssist)
 			protected.Delete("/notes/{noteID}", s.deleteNote)
 			protected.Post("/spaces/{spaceID}/edges", s.createEdge)
 			protected.Get("/notifications", s.listNotifications)
@@ -97,6 +119,9 @@ func (s *Server) Handler() http.Handler {
 				account.Use(s.requireSession)
 				account.Get("/preferences", s.getPreferences)
 				account.Put("/preferences", s.putPreferences)
+				account.Get("/sessions", s.listSessions)
+				account.Delete("/sessions/{sessionID}", s.revokeSession)
+				account.Post("/sessions/revoke-others", s.revokeOtherSessions)
 				account.Get("/api-keys", s.listAPIKeys)
 				account.Post("/api-keys", s.createAPIKey)
 				account.Put("/api-keys/{keyID}", s.updateAPIKey)
@@ -112,9 +137,15 @@ func (s *Server) Handler() http.Handler {
 			protected.Get("/dreams", s.dreamHistory)
 			protected.Post("/dreams/{dreamID}/feedback", s.dreamFeedback)
 			protected.Post("/dreams/{dreamID}/accept", s.acceptDream)
-			protected.Post("/dreams/{dreamID}/regenerate", s.regenerateDream)
-			protected.Post("/dreams/{dreamID}/develop", s.developDream)
 			protected.Post("/dreams/{dreamID}/developed-note", s.saveDevelopedDream)
+			// Everything that spends tokens at the AI gateway goes through the
+			// per-user burst and daily quota.
+			protected.Group(func(paid chi.Router) {
+				paid.Use(s.aiQuota)
+				paid.Post("/ai/assist", s.aiAssist)
+				paid.Post("/dreams/{dreamID}/regenerate", s.regenerateDream)
+				paid.Post("/dreams/{dreamID}/develop", s.developDream)
+			})
 			protected.Post("/approvals", s.createApproval)
 			protected.Get("/approvals", s.listApprovals)
 			protected.Post("/approvals/{requestID}/decision", s.decideApproval)
@@ -139,18 +170,75 @@ func (s *Server) Handler() http.Handler {
 	})
 	r.Handle("/mcp", &mcp.Handler{Store: s.Store, Dreams: s.Dreams, Version: s.Version})
 	r.Handle("/*", s.spa())
-	return observability.Wrap(r)
+	return r
+}
+
+type contextKey string
+
+const cspNonceKey contextKey = "csp-nonce"
+
+func cspNonce(r *http.Request) string {
+	nonce, _ := r.Context().Value(cspNonceKey).(string)
+	return nonce
+}
+
+// contentSecurityPolicy pins script execution to the exact bundle umm served.
+//
+// script-src uses a per-response nonce with 'strict-dynamic', so an injected
+// <script src="..."> is refused even when it points at an allowed origin.
+// style-src deliberately keeps 'unsafe-inline': Mantine writes its theme
+// variables into a runtime <style> element and React Flow positions every node
+// with a style attribute, so removing it would break the canvas without closing
+// a comparable hole. Everything else is denied outright.
+func contentSecurityPolicy(nonce string) string {
+	return strings.Join([]string{
+		"default-src 'self'",
+		"img-src 'self' data: blob:",
+		"font-src 'self' data:",
+		"style-src 'self' 'unsafe-inline'",
+		"style-src-attr 'unsafe-inline'",
+		"script-src 'nonce-" + nonce + "' 'strict-dynamic' 'self'",
+		"connect-src 'self'",
+		"worker-src 'self'",
+		"manifest-src 'self'",
+		"object-src 'none'",
+		"frame-src 'none'",
+		"frame-ancestors 'none'",
+		"base-uri 'self'",
+		"form-action 'self'",
+	}, "; ")
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nonce, err := randomNonce()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "보안 헤더를 준비하지 못했습니다.")
+			return
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
-		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-		next.ServeHTTP(w, r)
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+		w.Header().Set("X-Permitted-Cross-Domain-Policies", "none")
+		w.Header().Set("Content-Security-Policy", contentSecurityPolicy(nonce))
+		// Only assert HSTS on a connection that already arrived over TLS, so a
+		// plain-HTTP evaluation deployment does not lock its own browser out.
+		if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), cspNonceKey, nonce)))
 	})
+}
+
+func randomNonce() (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawStdEncoding.EncodeToString(buf), nil
 }
 func (s *Server) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -181,8 +269,34 @@ func (s *Server) prometheusMetrics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "운영 지표 수집기가 준비되지 않았습니다.")
 		return
 	}
+	// The realtime figures live in the hub, so they are sampled at scrape time
+	// rather than being pushed on every subscription change.
+	if s.Events != nil {
+		subscribers, spaces, delivered, listening := s.Events.Stats()
+		s.Metrics.Gauge("umm_realtime_subscribers", float64(subscribers), "Open collaboration event subscriptions.")
+		s.Metrics.Gauge("umm_realtime_spaces", float64(spaces), "Spaces with at least one open subscription.")
+		s.Metrics.Gauge("umm_realtime_signals_total", float64(delivered), "Collaboration wake-ups delivered to subscribers.")
+		listeningValue := 0.0
+		if listening {
+			listeningValue = 1
+		}
+		s.Metrics.Gauge("umm_realtime_listener_up", listeningValue, "1 when the PostgreSQL LISTEN connection is healthy.")
+	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	s.Metrics.Prometheus(w, s.Version)
+}
+
+// scriptTagPattern finds every script element in the shell document so the
+// per-response CSP nonce can be attached to it.
+var scriptTagPattern = regexp.MustCompile(`(?i)<script(\s|>)`)
+
+// nonceMarker lets the document expose its nonce to the bundle, which passes it
+// to Mantine so runtime style elements are labelled too.
+const nonceMarker = "__CSP_NONCE__"
+
+func injectNonce(document []byte, nonce string) []byte {
+	tagged := scriptTagPattern.ReplaceAll(document, []byte(`<script nonce="`+nonce+`"$1`))
+	return bytes.ReplaceAll(tagged, []byte(nonceMarker), []byte(nonce))
 }
 
 func (s *Server) spa() http.Handler {
@@ -191,18 +305,37 @@ func (s *Server) spa() http.Handler {
 		dir = "web/dist"
 	}
 	fileServer := http.FileServer(http.Dir(dir))
+	indexPath := filepath.Join(dir, "index.html")
+	// The shell document is rewritten per request, so it is never served from
+	// the static file handler and never cached.
+	serveIndex := func(w http.ResponseWriter, r *http.Request) {
+		document, err := os.ReadFile(indexPath)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		document = injectNonce(document, cspNonce(r))
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Content-Length", strconv.Itoa(len(document)))
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write(document)
+		}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.NotFound(w, r)
 			return
 		}
 		clean := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
-		if clean == "." {
-			clean = "index.html"
+		if clean == "." || clean == "index.html" {
+			serveIndex(w, r)
+			return
 		}
 		candidate := filepath.Join(dir, clean)
 		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			if clean != "index.html" && strings.Contains(filepath.Base(candidate), ".") {
+			if strings.Contains(filepath.Base(candidate), ".") {
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			} else {
 				w.Header().Set("Cache-Control", "no-cache")
@@ -210,8 +343,7 @@ func (s *Server) spa() http.Handler {
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+		serveIndex(w, r)
 	})
 }
 

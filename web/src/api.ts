@@ -1,3 +1,4 @@
+import { msg, translate } from './i18n/translate';
 import { showError } from './ui-notifications';
 import { isTerminalOfflineRejection, reconcileOfflineQueue, type OfflineMutation } from './offline-queue';
 
@@ -100,7 +101,14 @@ export interface Preferences {
 }
 
 export class APIError extends Error {
-  constructor(public status: number, message: string, public payload: Record<string, any> = {}, public queued = false) { super(message); }
+  constructor(
+    public status: number,
+    message: string,
+    public payload: Record<string, any> = {},
+    public queued = false,
+  ) {
+    super(message);
+  }
 }
 
 export interface APIOptions extends RequestInit {
@@ -168,19 +176,50 @@ export async function discardOfflineMutation(id?: string) {
   if (!id) return;
   const storageKey = queueStorageKey();
   await withOfflineQueueLock(storageKey, () => {
-    saveOfflineQueue(loadOfflineQueue(storageKey).filter((item) => item.id !== id), storageKey);
+    saveOfflineQueue(
+      loadOfflineQueue(storageKey).filter((item) => item.id !== id),
+      storageKey,
+    );
   });
 }
+
+/**
+ * problemMessage localises the RFC 9457 problems the API is known to return.
+ *
+ * The server writes its messages in Korean, so a known `type` is translated by
+ * its stable identifier and anything unrecognised falls back to the server's
+ * own wording rather than being dropped.
+ */
+const problemTitles: Record<string, string> = {
+  'rate-limited': msg('요청이 너무 많습니다'),
+  'ai-rate-limited': msg('AI 요청이 너무 잦습니다'),
+  'ai-daily-limit': msg('오늘의 AI 사용량을 모두 썼습니다'),
+  'login-locked': msg('로그인이 일시적으로 잠겼습니다'),
+  'note-version-conflict': msg('메모 변경이 겹쳤습니다'),
+};
+
+export function problemMessage(payload: Record<string, any>): string {
+  const identifier = typeof payload?.type === 'string' ? payload.type.split('/').pop() || '' : '';
+  const known = problemTitles[identifier];
+  if (known) return translate(known);
+  return payload?.detail || payload?.error || '';
+}
+
+const isIdempotencyInProgress = (payload: Record<string, any>) =>
+  typeof payload?.type === 'string' && payload.type.endsWith('/idempotency-in-progress');
 
 const retryableOfflineStatus = (status: number) => status === 408 || status === 425 || status === 429 || status >= 500;
 let offlineRetryTimer: number | undefined;
 
 function scheduleOfflineRetry(delaySeconds: number) {
   if (offlineRetryTimer !== undefined) return;
-  offlineRetryTimer = window.setTimeout(() => {
-    offlineRetryTimer = undefined;
-    if (navigator.onLine) void flushOfflineQueue();
-  }, Math.max(1, Math.min(delaySeconds, 300)) * 1000);
+  offlineRetryTimer = window.setTimeout(
+    () => {
+      offlineRetryTimer = undefined;
+      if (navigator.onLine) void flushOfflineQueue();
+    },
+    Math.max(1, Math.min(delaySeconds, 300)) * 1000,
+  );
 }
 
 async function fetchAPI(path: string, requestOptions: RequestInit, retry: boolean): Promise<Response> {
@@ -199,7 +238,8 @@ export async function api<T>(path: string, options: APIOptions = {}): Promise<T>
   const method = (requestOptions.method || 'GET').toUpperCase();
   const headers = new Headers(requestOptions.headers);
   if (requestOptions.body) headers.set('Content-Type', 'application/json');
-  if (queueIfOffline && mutationMethods.has(method) && !headers.has('Idempotency-Key')) headers.set('Idempotency-Key', `web:${requestID()}`);
+  if (queueIfOffline && mutationMethods.has(method) && !headers.has('Idempotency-Key'))
+    headers.set('Idempotency-Key', `web:${requestID()}`);
   const normalizedOptions = { ...requestOptions, method, headers };
   let response: Response;
   try {
@@ -212,31 +252,77 @@ export async function api<T>(path: string, options: APIOptions = {}): Promise<T>
         const value = headers.get(name);
         if (value) safeHeaders[name] = value;
       }
-      const queued = await enqueueOffline({ id: requestID(), path, method, body: requestOptions.body as string | undefined, headers: safeHeaders, createdAt: new Date().toISOString() });
+      const queued = await enqueueOffline({
+        id: requestID(),
+        path,
+        method,
+        body: requestOptions.body as string | undefined,
+        headers: safeHeaders,
+        createdAt: new Date().toISOString(),
+      });
       if (!queued) {
-        const error = new APIError(0, '오프라인 보관함이 100개로 가득 찼습니다. 연결 후 동기화를 완료하고 다시 시도해 주세요.');
-        if (!silent) showError(error.message, '오프라인 보관함 가득 참', `api:${path}:queue-full`);
+        const error = new APIError(
+          0,
+          translate('오프라인 보관함이 100개로 가득 찼습니다. 연결 후 동기화를 완료하고 다시 시도해 주세요.'),
+        );
+        if (!silent) showError(error.message, translate('오프라인 보관함 가득 참'), `api:${path}:queue-full`);
         throw error;
       }
-      const error = new APIError(0, '오프라인 보관함에 저장했습니다. 연결되면 자동으로 다시 시도합니다.', {}, true);
-      if (!silent) showError(error.message, '오프라인 저장', `api:${path}:queued`);
+      const error = new APIError(
+        0,
+        translate('오프라인 보관함에 저장했습니다. 연결되면 자동으로 다시 시도합니다.'),
+        {},
+        true,
+      );
+      if (!silent) showError(error.message, translate('오프라인 저장'), `api:${path}:queued`);
       throw error;
     }
-    const error = new APIError(0, '서버에 연결할 수 없습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.');
-    if (!silent) showError(error.message, '연결 오류', `api:${path}:network`);
+    const error = new APIError(
+      0,
+      translate('서버에 연결할 수 없습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.'),
+    );
+    if (!silent) showError(error.message, translate('연결 오류'), `api:${path}:network`);
     throw error;
   }
   if (response.status === 204) return undefined as T;
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new APIError(response.status, payload.detail || payload.error || `요청에 실패했습니다 (${response.status})`, payload);
-    if (!silent) showError(error.message, '요청 오류', `api:${path}:${response.status}`);
+    const error = new APIError(
+      response.status,
+      problemMessage(payload) || translate('요청에 실패했습니다 ({status})', { status: response.status }),
+      payload,
+    );
+    if (!silent) showError(error.message, translate('요청 오류'), `api:${path}:${response.status}`);
     throw error;
   }
   return payload as T;
 }
 
-export async function flushOfflineQueue() {
+export interface FlushResult {
+  synced: number;
+  remaining: number;
+}
+
+/**
+ * Guards against overlapping flushes started inside this tab.
+ *
+ * The Web Lock below serialises the queue reads and writes across tabs, but the
+ * replay loop itself runs outside it. Reconnecting fires the browser's own
+ * `online` event while a screen may also ask for a manual sync, and two flushes
+ * replaying the same mutation made the second one collide with the first one's
+ * in-flight idempotency reservation — surfacing a version-conflict dialog for a
+ * change that was being applied correctly. Callers now share one flush.
+ */
+let inFlightFlush: Promise<FlushResult> | undefined;
+
+export function flushOfflineQueue(): Promise<FlushResult> {
+  inFlightFlush ??= runFlush().finally(() => {
+    inFlightFlush = undefined;
+  });
+  return inFlightFlush;
+}
+
+async function runFlush(): Promise<FlushResult> {
   const storageKey = queueStorageKey();
   const queued = await withOfflineQueueLock(storageKey, () => loadOfflineQueue(storageKey));
   if (queued.length === 0 || !navigator.onLine) return { synced: 0, remaining: queued.length };
@@ -246,7 +332,12 @@ export async function flushOfflineQueue() {
   for (let index = 0; index < queued.length; index += 1) {
     const item = queued[index];
     try {
-      const response = await fetch(`/api/v1${item.path}`, { credentials: 'same-origin', method: item.method, body: item.body, headers: item.headers });
+      const response = await fetch(`/api/v1${item.path}`, {
+        credentials: 'same-origin',
+        method: item.method,
+        body: item.body,
+        headers: item.headers,
+      });
       if (response.ok) {
         synced += 1;
         continue;
@@ -254,19 +345,29 @@ export async function flushOfflineQueue() {
       const payload = await response.json().catch(() => ({}));
       if (response.status === 409) {
         remaining.push(item);
-        window.dispatchEvent(new CustomEvent('umm:offline-conflict', { detail: { item, payload } }));
+        // A reservation that is still in progress is not a version conflict:
+        // the same change is already being applied, so it must be retried
+        // rather than shown to the reader as two competing versions.
+        if (!isIdempotencyInProgress(payload)) {
+          window.dispatchEvent(new CustomEvent('umm:offline-conflict', { detail: { item, payload } }));
+        }
         continue;
       }
       if (isTerminalOfflineRejection(response.status, payload.type)) {
-        const reason = payload.detail || payload.error || `서버가 변경을 거부했습니다 (${response.status}).`;
-        showError(reason, '오프라인 변경을 적용하지 못했습니다', `offline:${item.id}:rejected`);
-        window.dispatchEvent(new CustomEvent('umm:offline-rejected', { detail: { item, payload, status: response.status } }));
+        const reason =
+          problemMessage(payload) || translate('서버가 변경을 거부했습니다 ({status}).', { status: response.status });
+        showError(reason, translate('오프라인 변경을 적용하지 못했습니다'), `offline:${item.id}:rejected`);
+        window.dispatchEvent(
+          new CustomEvent('umm:offline-rejected', { detail: { item, payload, status: response.status } }),
+        );
         continue;
       }
       if (response.status === 401 || response.status === 403) {
         remaining.push(item, ...queued.slice(index + 1));
         break;
       }
+      // A permanent rejection is already handled above; what is left here is
+      // the retryable half, which honours the server's Retry-After.
       if (retryableOfflineStatus(response.status)) {
         remaining.push(item);
         const requestedDelay = Number.parseInt(response.headers.get('Retry-After') || '5', 10);

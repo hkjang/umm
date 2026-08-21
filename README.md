@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.7.0-success?style=flat-square" alt="v0.7.0" />
+  <img src="https://img.shields.io/badge/Release-v0.8.0-success?style=flat-square" alt="v0.8.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,13 +25,16 @@
 
 ---
 
-## v0.7.0 — 생각을 다시 만나고, 안전하게 협업하기
+## v0.8.0 — 많아져도 버티는 umm
 
-- **오늘의 리뷰**: 다시 볼 생각, 연결되지 않은 생각, 대기 중인 Dream, 최근 댓글을 한 화면에서 검토합니다.
-- **찾기와 맥락**: 로컬 의미 벡터와 키워드를 결합한 하이브리드 검색, 필터, 백링크, 연관 생각으로 탐색합니다.
-- **협업 신뢰성**: 댓글·멘션·딥링크 알림, SSE, 오프라인 변경 큐, 멱등 재전송, 시각적 버전 충돌 병합을 지원합니다.
-- **자동화와 운영**: 도메인 변경과 원자적으로 PostgreSQL에 보존되는 SSRF 방어·HMAC-SHA256 서명 웹훅, Prometheus 지표, 선택적 OpenTelemetry OTLP trace, AI 평가 세트를 제공합니다.
-- **보안과 복구**: 무중단 master-key keyring 회전, RFC 9457 오류, 공급망 SBOM·provenance attestation, CI 백업 복구 리허설을 포함합니다.
+- **푸시 협업**: PostgreSQL `LISTEN/NOTIFY` 기반 실시간 스트림으로 바꿔, 공간을 열어 둔 사람이 늘어도 유휴 데이터베이스 비용이 0입니다.
+- **인덱스 검색**: 키워드 조건을 `pg_trgm` GIN 인덱스가 타는 형태로 재작성하고, 선택적으로 게이트웨이 임베딩 모델을 붙일 수 있습니다.
+- **남용 방지**: 인스턴스 간에 공유되는 로그인 잠금, 호출자별 API 요청 한도, AI 생성의 분당·일일 한도를 관리자 화면에서 조정합니다.
+- **조여진 CSP**: 응답마다 새로 만드는 nonce와 `strict-dynamic`, HSTS, 로그인한 기기 목록과 원격 로그아웃을 제공합니다.
+- **English · 다크 모드 · 가져오기**: 화면 전체 번역 계층, 첫 페인트 전 테마 결정, 마크다운 가져오기와 모바일 공유 타깃을 지원합니다.
+- **검증**: Playwright E2E, Vitest, 다중 인스턴스 스모크, 마이그레이션 dry-run, OpenAPI 드리프트 검사를 CI에서 실행합니다.
+
+이전 릴리스의 협업·자동화·복구 기능은 그대로 유지됩니다: [v0.7.0 릴리스 노트](docs/releases/v0.7.0.md)
 
 ---
 
@@ -76,6 +79,7 @@
       ┌─────────────────────────────────────────────────────────────┐
       │               Browser (React 19 + Mantine 9)                │
       │        - Today Review + Spatial Canvas + PWA Offline Queue  │
+      │        - Korean/English, Light/Dark, Markdown Import        │
       │        - Comments, Mentions & Visual Conflict Resolution    │
       │        - Real-time Space SSE Event Synchronization          │
       └──────────────┬──────────────────────────────▲───────────────┘
@@ -84,7 +88,9 @@
       ┌──────────────▼──────────────────────────────┴───────────────┐
       │                    Go Application Daemon                    │
       │  - HTTP Router (chi) & Embedded Static Bundle               │
-      │  - Hybrid Search, Backlinks & N-gram Semantic Clustering    │
+      │  - Realtime Hub (LISTEN/NOTIFY fan-out, no per-user polls)  │
+      │  - Indexed Hybrid Search (pg_trgm) & Pluggable Embeddings   │
+      │  - Rate Limits, Shared Login Lockout & Per-Response CSP     │
       │  - Dream Scheduler & Distributed Worker (SKIP LOCKED)       │
       │  - Signed Webhooks, Metrics, Traces & AES-GCM Keyring       │
       └──────────────┬──────────────────────────────┬───────────────┘
@@ -101,6 +107,7 @@
       │  - comments / mentions / events (실시간 협업)               │
       │  - dream_jobs / ai_eval_runs (생성·평가·피드백)             │
       │  - webhooks / audit_logs (자동화·불변 거버넌스)             │
+      │  - sessions / login_attempts (기기 관리·공유 잠금)          │
       └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -133,8 +140,9 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.7.0
+  umm:v0.8.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)
 - 선택 환경변수: `ENCRYPTION_KEY_PREVIOUS`(키 회전), `UMM_HTTP_ADDR`(바인드 주소), 표준 `OTEL_EXPORTER_OTLP_*`(trace 전송). 필수 입력은 위 네 개로 유지됩니다.
+- 데이터베이스 사용자에게 `CREATE EXTENSION` 권한이 필요합니다 (`pgcrypto`, `citext`, `pg_trgm`).

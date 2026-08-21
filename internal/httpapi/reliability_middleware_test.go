@@ -225,3 +225,63 @@ func TestTodayDreamsRemainWithDreamScope(t *testing.T) {
 		t.Fatalf("authorized dreams were changed: %#v", result)
 	}
 }
+
+func TestSecurityHeadersPinScriptsToAPerResponseNonce(t *testing.T) {
+	server := &Server{}
+	var served string
+	handler := server.securityHeaders(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		served = cspNonce(r)
+	}))
+
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest(http.MethodGet, "/", nil))
+	firstNonce := served
+	policy := first.Header().Get("Content-Security-Policy")
+	if firstNonce == "" {
+		t.Fatal("the handler must be able to read the nonce for the response it is rendering")
+	}
+	if !strings.Contains(policy, "'nonce-"+firstNonce+"'") || !strings.Contains(policy, "'strict-dynamic'") {
+		t.Fatalf("script-src must pin the response nonce, got %q", policy)
+	}
+	for _, directive := range []string{"object-src 'none'", "frame-ancestors 'none'", "base-uri 'self'"} {
+		if !strings.Contains(policy, directive) {
+			t.Fatalf("missing %q in %q", directive, policy)
+		}
+	}
+
+	second := httptest.NewRecorder()
+	handler.ServeHTTP(second, httptest.NewRequest(http.MethodGet, "/", nil))
+	if served == firstNonce {
+		t.Fatal("a reused nonce defeats the purpose; each response needs a fresh one")
+	}
+}
+
+func TestStrictTransportSecurityOnlyOnTLS(t *testing.T) {
+	server := &Server{}
+	handler := server.securityHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	plain := httptest.NewRecorder()
+	handler.ServeHTTP(plain, httptest.NewRequest(http.MethodGet, "/", nil))
+	if plain.Header().Get("Strict-Transport-Security") != "" {
+		t.Fatal("asserting HSTS over plain HTTP would lock an evaluation deployment out of its own browser")
+	}
+
+	forwarded := httptest.NewRequest(http.MethodGet, "/", nil)
+	forwarded.Header.Set("X-Forwarded-Proto", "https")
+	behindProxy := httptest.NewRecorder()
+	handler.ServeHTTP(behindProxy, forwarded)
+	if behindProxy.Header().Get("Strict-Transport-Security") == "" {
+		t.Fatal("a TLS terminating proxy must still produce HSTS")
+	}
+}
+
+func TestInjectNonceLabelsEveryScriptTag(t *testing.T) {
+	document := []byte(`<html><head><meta name="csp-nonce" content="__CSP_NONCE__"></head><body><script type="module" src="/a.js"></script><SCRIPT>x</SCRIPT></body></html>`)
+	out := string(injectNonce(document, "abc123"))
+	if strings.Count(out, `nonce="abc123"`) != 2 {
+		t.Fatalf("both script tags need the nonce attribute, got %q", out)
+	}
+	if !strings.Contains(out, `content="abc123"`) || strings.Contains(out, nonceMarker) {
+		t.Fatalf("the marker must be replaced so the bundle can read the nonce, got %q", out)
+	}
+}

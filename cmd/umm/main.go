@@ -16,6 +16,7 @@ import (
 	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/httpapi"
 	"github.com/hkjang/umm/internal/observability"
+	"github.com/hkjang/umm/internal/realtime"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/hkjang/umm/internal/webhook"
 )
@@ -66,6 +67,7 @@ func main() {
 		slog.Error("encryption initialization failed", "error", err)
 		os.Exit(1)
 	}
+	db.Cipher = cipher
 	authService := &auth.Service{Store: db}
 	oidcService := &auth.OIDCService{Store: db, Cipher: cipher, Sessions: authService}
 	dreamService := &dream.Service{Store: db, Cipher: cipher, Version: version}
@@ -73,12 +75,15 @@ func main() {
 	defer dreamService.Stop()
 	webhookService := webhook.New(db, cipher)
 	webhookService.Start(ctx)
+	events := realtime.New(db.Pool)
+	go events.Run(ctx)
+	db.StartJanitor(ctx)
 	webDir := "web/dist"
 	if _, err := os.Stat("/app/web/index.html"); err == nil {
 		webDir = "/app/web"
 	}
 	metrics := observability.NewRegistry()
-	api := &httpapi.Server{Store: db, Auth: authService, OIDC: oidcService, Cipher: cipher, Dreams: dreamService, Webhooks: webhookService, Metrics: metrics, Version: version, WebDir: webDir}
+	api := &httpapi.Server{Store: db, Auth: authService, OIDC: oidcService, Cipher: cipher, Dreams: dreamService, Webhooks: webhookService, Metrics: metrics, Events: events, Version: version, WebDir: webDir}
 	httpServer := newHTTPServer(cfg.HTTPAddr, api.Handler())
 	go func() {
 		slog.Info("umm started", "version", version, "address", httpServer.Addr)

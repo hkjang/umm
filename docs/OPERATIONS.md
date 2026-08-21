@@ -14,11 +14,13 @@
 
 ```bash
 sha256sum -c SHA256SUMS
-./scripts/load-offline.sh umm-v0.7.0.tar.gz
-docker image inspect umm:v0.7.0
+./scripts/load-offline.sh umm-v0.8.0.tar.gz
+docker image inspect umm:v0.8.0
 ```
 
-PostgreSQL user는 대상 database에 schema/table/extension을 생성할 권한이 필요합니다. 시작 시 embedded migration이 transaction으로 실행됩니다.
+PostgreSQL user는 대상 database에 schema/table/extension을 생성할 권한이 필요합니다(`pgcrypto`, `citext`, `pg_trgm`). 시작 시 embedded migration이 transaction으로 실행됩니다.
+
+인스턴스는 협업 이벤트 수신용 PostgreSQL 연결 하나를 상시 점유합니다. 연결 풀 기본값이 그만큼 여유를 두지만, DSN에 `pool_max_conns`를 직접 지정한다면 인스턴스당 최소 4 이상으로 유지하세요.
 
 32-byte encryption key는 연결망 밖의 승인된 비밀 관리 절차로 생성합니다. 예: `openssl rand -base64 32`. Shell history, compose file, ticket, Git에 실제 값을 남기지 마세요.
 
@@ -45,9 +47,9 @@ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 ## 최초 설정 순서
 
 1. bootstrap 관리자 로그인 후 서비스 관리자 → 일반에서 서비스 이름, 공개 URL, `Asia/Seoul` 같은 IANA 시간대를 저장합니다.
-2. 보안 → 허용 API/MCP scope, 기본 만료, 회전 중첩 시간을 확인합니다.
+2. 보안 → 허용 API/MCP scope, 기본 만료, 회전 중첩 시간과 **남용 방지**(로그인 실패 허용 횟수·잠금 시간, 분당 API 요청, 분당·하루 AI 한도)를 확인합니다. 기본값은 로그인 8회/15분, API 600/분, AI 6/분, AI 80/일입니다.
 3. 필요할 때만 Keycloak SSO를 저장하고 연결 시험 후 활성화합니다.
-4. 필요할 때만 AI Gateway를 저장합니다.
+4. 필요할 때만 AI Gateway를 저장합니다. 임베딩 모델을 비워 두면 외부 호출 없이 내장 로컬 임베딩을 사용합니다.
 5. Dream은 Gateway 확인 뒤 기능과 자동 생성을 각각 활성화합니다.
 6. 승인 흐름이 실제로 필요한 작업만 검토 프로세스에서 선택합니다. OFF일 때는 승인 UI/API 단계가 생기지 않습니다.
 
@@ -56,12 +58,18 @@ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 업그레이드 전에 PostgreSQL snapshot/backup을 만들고 현재 `ENCRYPTION_KEY`를 별도 비밀 저장소에서 확인합니다.
 
 ```bash
-gzip -dc umm-v0.7.0.tar.gz | docker load
+gzip -dc umm-v0.8.0.tar.gz | docker load
 docker stop umm
-# 동일한 네 필수 환경변수와 DB로 umm:v0.7.0 실행
+# 동일한 네 필수 환경변수와 DB로 umm:v0.8.0 실행
 ```
 
-Schema migration은 forward-only입니다. 새 버전 실행 후 schema가 변경되었다면 image만 이전 버전으로 되돌리는 것으로 충분하지 않을 수 있으므로, rollback은 DB snapshot 복원과 함께 수행합니다.
+Schema migration은 기동 시 forward 방향으로만 자동 적용됩니다. 되돌려야 할 때를 위해 `migrations/down/`에 되돌리기 스크립트를 둡니다. 자동으로는 절대 실행되지 않습니다 — 컬럼을 지우는 일은 그 안의 데이터를 지우는 일이므로, 백업을 확보한 운영자가 의도적으로 실행해야 합니다.
+
+```bash
+psql "$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/down/007_scale_and_security.down.sql
+```
+
+CI는 릴리스 전에 `scripts/migrate-dry-run.sh`로 모든 마이그레이션을 임시 database에 적용하고, **다시 적용해도 안전한지** 확인한 뒤, 되돌리기 스크립트가 있는 것들을 역순으로 되돌립니다. 배포가 중단돼 마이그레이션이 재시도되는 상황이 장애가 되지 않도록 하기 위한 검사입니다.
 
 ## Backup
 
@@ -84,6 +92,8 @@ CI는 `scripts/restore-smoke.sh`로 PostgreSQL custom-format dump를 별도 `umm
 ## 관측성과 자동화
 
 - `/api/v1/metrics`는 `metrics:read` scope 또는 관리자 세션으로 Prometheus request count, latency histogram, in-flight, build 정보를 제공합니다.
+- 실시간 협업 상태는 `umm_realtime_subscribers`, `umm_realtime_spaces`, `umm_realtime_signals_total`, `umm_realtime_listener_up`으로 노출됩니다. `umm_realtime_listener_up`이 0이면 PostgreSQL `LISTEN` 연결이 끊긴 상태이며 SSE가 폴백 폴링으로 동작 중이라는 뜻입니다 — 협업은 계속되지만 데이터베이스 부하가 올라가므로 알림을 걸어 두세요. 같은 값은 관리자 → 운영 현황에서도 볼 수 있습니다.
+- 만료된 세션·OAuth state·재시도 기록·로그인 실패 기록은 15분마다 자동 정리됩니다. 별도 cron이 필요하지 않습니다.
 - 표준 `OTEL_EXPORTER_OTLP_ENDPOINT` 또는 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`가 있을 때만 OTLP HTTP trace exporter가 활성화됩니다.
 - 웹훅은 HTTPS 기본 포트만 허용하며 DNS 확인과 연결 시점 모두 사설·loopback·link-local·reserved IP를 거부합니다. 도메인 변경과 SSE/webhook outbox는 같은 PostgreSQL 트랜잭션으로 커밋되고, 재시작 시 대기 항목과 2분 넘게 처리 중인 항목을 워커가 복구합니다. 실패는 세 번 재시도하고 연속 10회 실패 시 subscription을 자동 중지합니다.
 - 전달 시도는 at-least-once 방식입니다. 수신 측은 `X-Umm-Timestamp + "." + raw_body`에 대한 `X-Umm-Signature-256: sha256=<hex>` HMAC을 검증하고 오래된 timestamp를 거부하며, `X-Umm-Delivery`를 멱등 키로 저장해 중복을 안전하게 무시해야 합니다.
@@ -97,4 +107,4 @@ vLLM이 최종 본문 없이 추론만 반환한다면 모델에 맞는 `--reaso
 
 ## Release 규칙
 
-`VERSION`이 `0.7.0`이면 tag는 `v0.7.0`, image는 `umm:v0.7.0`, GitHub asset은 `umm-v0.7.0.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 image tarball, SPDX JSON SBOM, `SHA256SUMS`가 첨부되며 GitHub artifact provenance와 SBOM attestation을 함께 발급합니다.
+`VERSION`이 `0.8.0`이면 tag는 `v0.8.0`, image는 `umm:v0.8.0`, GitHub asset은 `umm-v0.8.0.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 image tarball, SPDX JSON SBOM, `SHA256SUMS`가 첨부되며 GitHub artifact provenance와 SBOM attestation을 함께 발급합니다.

@@ -77,6 +77,14 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "설정을 저장하지 못했습니다.")
 		return
 	}
+	// Cached settings must not outlive the change that an administrator just
+	// confirmed, so the derived caches are dropped immediately.
+	if section == "ai_gateway" {
+		s.Store.InvalidateEmbeddingProvider()
+	}
+	if section == "security" {
+		s.invalidateSecurityPolicy()
+	}
 	s.Store.Audit(r.Context(), &p.User.ID, "settings.update", "settings", section, map[string]any{})
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
@@ -122,6 +130,31 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 		scopes, ok := v["api_key_scopes"].([]any)
 		if !ok || len(scopes) == 0 {
 			return errors.New("하나 이상의 API 키 권한이 필요합니다")
+		}
+		// The abuse guards are optional in the payload so an older client can
+		// still save this section, but a value that is present must be sane:
+		// silently clamping one would hide a misconfiguration from the operator.
+		for _, guard := range []struct {
+			key      string
+			low      float64
+			high     float64
+			message  string
+			optional bool
+		}{
+			{key: "login_max_failures", low: 3, high: 100, message: "로그인 실패 허용 횟수는 3~100회여야 합니다"},
+			{key: "login_lockout_minutes", low: 1, high: 1440, message: "로그인 잠금 시간은 1~1440분이어야 합니다"},
+			{key: "api_rate_per_minute", low: 30, high: 100000, message: "분당 API 요청 한도는 30~100000이어야 합니다"},
+			{key: "ai_rate_per_minute", low: 1, high: 600, message: "분당 AI 요청 한도는 1~600이어야 합니다"},
+			{key: "ai_daily_limit", low: 0, high: 100000, message: "하루 AI 생성 한도는 0~100000이어야 합니다"},
+		} {
+			raw, present := v[guard.key]
+			if !present || raw == nil {
+				continue
+			}
+			value, ok := raw.(float64)
+			if !ok || math.Trunc(value) != value || value < guard.low || value > guard.high {
+				return errors.New(guard.message)
+			}
 		}
 	case "workflow":
 		actions, ok := v["actions"].([]any)
@@ -187,6 +220,14 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 		retries, ok := v["max_retries"].(float64)
 		if !ok || math.Trunc(retries) != retries || retries < 0 || retries > dream.MaxGatewayRetries {
 			return fmt.Errorf("AI Gateway 재시도는 0~%d 사이의 정수여야 합니다", dream.MaxGatewayRetries)
+		}
+		if model := strings.TrimSpace(fmt.Sprint(v["embedding_model"])); model != "" && model != "<nil>" {
+			if raw == "" {
+				return errors.New("임베딩 모델을 사용하려면 AI Gateway 주소가 필요합니다")
+			}
+			if len(model) > 200 {
+				return errors.New("임베딩 모델 이름은 200자 이내여야 합니다")
+			}
 		}
 	}
 	return nil
@@ -286,6 +327,12 @@ func (s *Server) adminMetrics(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"users": users, "activeUsers": active, "notes": notes, "spaces": spaces, "pendingApprovals": pending, "comments": comments, "onboardedUsers": onboarded, "webhookFailures24h": webhookFailures, "aiEvalRuns30d": evalRuns, "aiEvalPassed30d": evalPassed, "dream": dreamMetrics}
 	if s.Metrics != nil {
 		out["http"] = s.Metrics.Snapshot()
+	}
+	if s.Events != nil {
+		subscribers, spaces, delivered, listening := s.Events.Stats()
+		out["realtime"] = map[string]any{
+			"subscribers": subscribers, "spaces": spaces, "delivered": delivered, "listening": listening,
+		}
 	}
 	writeJSON(w, 200, out)
 }

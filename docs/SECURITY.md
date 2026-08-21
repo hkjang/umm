@@ -24,7 +24,9 @@ User API/MCP key (one-time plaintext display)
 
 ## 인증과 권한
 
-- Browser session: random 256-bit token의 digest만 DB 저장, HttpOnly, SameSite=Lax, HTTPS 인지 시 Secure cookie
+- Browser session: random 256-bit token의 digest만 DB 저장, HttpOnly, SameSite=Lax, HTTPS 인지 시 Secure cookie. 사용자는 개인 설정에서 활성 세션 목록을 확인하고 개별 또는 일괄 종료할 수 있음
+- Login throttling: 실패 횟수를 PostgreSQL에 기록해 인스턴스 간에 공유. 주소별 임계값을 넘으면 잠금, 계정별 임계값은 그 3배로 두어 아이디를 아는 사람이 남의 계정을 잠그는 것을 방지
+- Rate limits: 호출자별 API 요청 한도와 AI 생성 전용 분당·일일 한도. 일일 한도는 `ai_calls`에서 세므로 재시작과 인스턴스를 넘어 유지되며, 초과 시 `429`와 `Retry-After` 반환
 - OIDC: Authorization Code flow, state 일회 사용/10분 만료, provider Discovery, ID token 서명·issuer·audience 검증
 - Roles: `user`, `team_lead`, `admin`
 - API/MCP: Bearer key와 세부 scope. MCP는 browser cookie를 허용하지 않음
@@ -54,7 +56,13 @@ TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장하며 
 
 ## 보안 헤더와 제한
 
-응답에는 CSP, frame deny, nosniff, same-origin referrer, device permission 제한이 기본 적용됩니다. JSON body는 1 MiB, MCP body도 1 MiB로 제한합니다. HTTP server는 header/read/write/idle timeout을 둡니다. 공간 SSE는 인증·공간 조회 권한을 먼저 확인하고 event payload에 관리자 secret을 싣지 않습니다. MCP는 Origin 검증과 현재 프로토콜 routing header 일치를 확인합니다. API 오류는 RFC 9457 Problem Details로 반환하며 기존 `error` 필드는 호환성을 위해 유지합니다.
+응답에는 CSP, HSTS(TLS 요청에 한함), frame deny, nosniff, same-origin referrer, COOP/CORP, device permission 제한이 기본 적용됩니다.
+
+`script-src`는 **응답마다 새로 생성되는 nonce와 `strict-dynamic`** 을 사용합니다. 서버가 shell 문서의 script 태그에 그 nonce를 새겨 넣으므로, 주입된 `<script src=…>`는 같은 출처를 가리켜도 실행되지 않습니다. `object-src`와 `frame-src`는 `'none'`입니다.
+
+`style-src`의 `'unsafe-inline'`은 **의도적으로 남겨 두었습니다.** Mantine이 테마 변수를 런타임 `<style>` 요소로 주입하고 React Flow가 모든 노드를 style 속성으로 배치하기 때문에, 제거하면 캔버스가 동작하지 않습니다. style 주입은 script 주입보다 현저히 낮은 심각도이므로, 제품을 깨뜨리면서 얻는 방어보다 이 상태를 문서화하는 편이 정직하다고 판단했습니다. 서비스 워커가 오프라인에 대비해 캐시하는 shell 응답은 헤더와 문서를 함께 저장하므로 캐시된 nonce와 헤더가 어긋나지 않습니다.
+
+HSTS는 TLS로 도착한 요청(또는 `X-Forwarded-Proto: https`)에만 붙입니다. 평문 HTTP로 평가 중인 배포가 자기 브라우저에서 스스로 잠기는 것을 막기 위해서입니다. JSON body는 1 MiB, MCP body도 1 MiB로 제한합니다. HTTP server는 header/read/write/idle timeout을 둡니다. 공간 SSE는 인증·공간 조회 권한을 먼저 확인하고 event payload에 관리자 secret을 싣지 않습니다. MCP는 Origin 검증과 현재 프로토콜 routing header 일치를 확인합니다. API 오류는 RFC 9457 Problem Details로 반환하며 기존 `error` 필드는 호환성을 위해 유지합니다.
 
 ## 웹훅과 공급망
 
@@ -64,7 +72,7 @@ TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장하며 
 - 도메인 변경, SSE log, 구독별 delivery payload는 하나의 PostgreSQL 트랜잭션에 영속화되고 lease 기반 워커가 재시작 후 이어서 처리합니다. 구독 소유자의 활성 상태와 현재 공간 접근 권한을 실제 전송 직전에 다시 확인합니다. 중단 경계에서 같은 delivery가 다시 전송될 수 있으므로 수신 측은 delivery ID를 멱등 키로 사용합니다.
 - terminal delivery의 복사 payload는 즉시 `{}`로 비우고 상태·응답·오류 metadata는 30일 뒤 삭제해 원본 리소스보다 오래 민감 본문을 보존하지 않습니다.
 - 댓글 알림 대상과 Today 활동은 현재 공간 접근 권한 및 생각 삭제 상태를 다시 확인해 탈퇴 사용자나 삭제된 리소스로 정보가 새지 않도록 합니다.
-- CI는 Go 취약점 검사, npm high 이상 audit, PostgreSQL 17 통합·복구 시험을 수행합니다.
+- CI는 Go 취약점 검사, npm high 이상 audit, PostgreSQL 17 통합·복구 시험, 다중 인스턴스 스모크, 마이그레이션 dry-run, 실제 바이너리를 대상으로 한 브라우저 end-to-end 시험을 수행합니다.
 - 태그 릴리스는 SPDX JSON SBOM, SHA-256 checksum, GitHub provenance 및 SBOM attestation을 이미지 archive와 함께 게시합니다.
 
 애플리케이션 권한은 모든 쿼리의 공간 소유자/멤버 조건과 handler scope 검사에서 강제합니다. PostgreSQL RLS는 단일 애플리케이션 DB role이 owner 권한을 갖는 현재 배포 모델에서 잘못된 안전감을 줄 수 있어 이번 버전에는 활성화하지 않았습니다. 별도 제한 DB role과 connection identity를 도입하는 배포에서만 RLS를 추가 방어선으로 검토합니다.
