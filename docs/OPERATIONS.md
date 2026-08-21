@@ -20,7 +20,9 @@ docker image inspect umm:v0.8.1
 
 PostgreSQL user는 대상 database에 schema/table/extension을 생성할 권한이 필요합니다(`pgcrypto`, `citext`, `pg_trgm`). 시작 시 embedded migration이 transaction으로 실행됩니다.
 
-인스턴스는 여유가 있을 때 협업 이벤트 수신용 PostgreSQL 연결 하나를 상시 점유합니다. 연결 풀 자동 최대값은 host CPU 수와 무관하게 인스턴스당 16이며 제공 compose도 이를 명시합니다. Replica 수와 PostgreSQL `max_connections`를 함께 계산해 DSN의 `pool_max_conns`를 조정하세요. 더 작은 값을 명시해도 내부 `pool_min_conns`가 최대값을 넘어 시작에 실패하지 않도록 cap합니다. `pool_max_conns`가 1 또는 2이면 전용 `LISTEN`을 비활성화하고 SSE가 1초 안전 폴링을 사용해 최대 두 연결을 readiness·인증·transaction 요청에 남깁니다. 상한 3부터 listener를 시작하면서 request 연결 두 자리를 보존합니다. 실행 중 listener가 끊기거나 복구되면 상태 전환 신호가 열린 SSE를 즉시 깨워 1초 폴링 또는 30초 safety net으로 타이머를 다시 맞추므로, 단절 직전 설정된 긴 deadline을 기다리지 않습니다. 알림 목록은 한 request 연결에서 unread count와 page를 순차 실행하고 Dream 채택·발전의 권한 확인도 열린 transaction 안에서 수행하지만, 동시 처리량과 worker 여유를 위해 운영에서는 인스턴스당 최소 4 이상을 권장합니다.
+인스턴스는 여유가 있을 때 협업 이벤트 수신용 PostgreSQL 연결 하나를 request pool 안에서 상시 점유합니다. 이 pool의 자동 최대값은 host CPU 수와 무관하게 인스턴스당 16이며 제공 compose도 이를 명시합니다. Replica 수와 PostgreSQL `max_connections`를 함께 계산해 DSN의 `pool_max_conns`를 조정하세요. AI Assist·자동 Dream·재생성·발전이 외부 Gateway 동안 권한 행을 잠그는 transaction은 request pool 밖의 별도 연결을 사용하며 인스턴스당 최대 2개로 고정됩니다. 따라서 PostgreSQL 전역 예산은 replica마다 최악의 경우 `pool_max_conns + 2`로 계산해야 합니다. 이 두 연결은 호출 중에만 열리고 세 번째 AI lease는 slot이 반환될 때까지 DB 연결 없이 대기하므로, 느린 Gateway가 readiness·인증·Canvas 요청 pool을 고갈시키지 않습니다.
+
+더 작은 `pool_max_conns`를 명시해도 내부 `pool_min_conns`가 최대값을 넘어 시작에 실패하지 않도록 cap합니다. `pool_max_conns`가 1 또는 2이면 전용 `LISTEN`을 비활성화하고 SSE가 1초 안전 폴링을 사용해 request pool의 모든 연결을 readiness·인증·transaction 요청에 남깁니다. 상한 3부터 listener를 시작하면서 request 연결 두 자리를 보존합니다. 실행 중 listener가 끊기거나 복구되면 상태 전환 신호가 열린 SSE를 즉시 깨워 1초 폴링 또는 30초 safety net으로 타이머를 다시 맞추므로, 단절 직전 설정된 긴 deadline을 기다리지 않습니다. 알림 목록은 한 request 연결에서 unread count와 page를 순차 실행하고 짧은 Dream 채택 transaction도 연결을 중첩 점유하지 않습니다. 동시 처리량과 worker 여유를 위해 request pool은 운영에서 인스턴스당 최소 4 이상을 권장합니다.
 
 정적 파일은 content hash가 붙은 Vite bundle만 `immutable`로 장기 캐시합니다. `/manifest.webmanifest`, `/umm-sw.js`, `/umm-icon.svg`, `/asset-manifest.json`은 `no-cache`로 재검증되므로 배포 뒤 proxy/CDN이 이 고정 URL에 임의의 1년 immutable 정책을 덧씌우지 않도록 구성하세요.
 

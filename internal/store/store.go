@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,8 +24,12 @@ type Store struct {
 	Pool   *pgxpool.Pool
 	Cipher Decrypter
 
-	embeddings embeddingCache
+	embeddings    embeddingCache
+	aiLeaseConfig *pgx.ConnConfig
+	aiLeaseSlots  chan struct{}
 }
+
+const maxAILeaseConnections = 2
 
 type User struct {
 	ID          uuid.UUID  `json:"id"`
@@ -124,7 +129,56 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
-	return &Store{Pool: pool}, nil
+	return &Store{
+		Pool:          pool,
+		aiLeaseConfig: pool.Config().ConnConfig.Copy(),
+		aiLeaseSlots:  make(chan struct{}, maxAILeaseConnections),
+	}, nil
+}
+
+// BeginAILease starts a long-lived authorization transaction on separately
+// bounded PostgreSQL capacity. External AI calls may retain row locks for the
+// configured Gateway timeout, so they must never consume the request pool that
+// serves readiness, authentication, and ordinary API traffic.
+func (s *Store) BeginAILease(ctx context.Context) (pgx.Tx, func(), error) {
+	// Tests and specialized callers may construct Store directly. Keep that
+	// legacy shape functional, while Store.Open always provisions the isolated
+	// production path below.
+	if s.aiLeaseConfig == nil || s.aiLeaseSlots == nil {
+		tx, err := s.Pool.Begin(ctx)
+		return tx, func() {}, err
+	}
+
+	select {
+	case s.aiLeaseSlots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	}
+	releaseSlot := func() { <-s.aiLeaseSlots }
+	conn, err := pgx.ConnectConfig(ctx, s.aiLeaseConfig.Copy())
+	if err != nil {
+		releaseSlot()
+		return nil, nil, fmt.Errorf("connect AI lease database capacity: %w", err)
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = conn.Close(closeCtx)
+		cancel()
+		releaseSlot()
+		return nil, nil, fmt.Errorf("begin AI lease transaction: %w", err)
+	}
+
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = conn.Close(closeCtx)
+			cancel()
+			releaseSlot()
+		})
+	}
+	return tx, release, nil
 }
 
 // applyPoolDefaults keeps headroom for the connections umm holds open while

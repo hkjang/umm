@@ -22,7 +22,7 @@
 
 TLS 종료 proxy 뒤에서 실행할 때만 직접 연결되는 proxy의 IP 또는 CIDR을 쉼표로 구분해 지정하세요(예: `10.42.0.0/16,fd00:42::/64`). 설정하지 않으면 `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`를 모두 무시하며, `0.0.0.0/0` 또는 `::/0`처럼 인터넷 전체를 신뢰 대상으로 지정해서는 안 됩니다. Proxy는 외부에서 들어온 forwarding header를 제거하고 자신이 확인한 값을 기록하도록 구성하세요.
 
-브라우저 변경 요청의 `Origin`은 공개 URL 또는 신뢰 proxy로 확인한 현재 요청과 scheme·host·port가 모두 같아야 합니다. HTTPS 서비스와 같은 hostname이더라도 `http://` Origin은 거부됩니다. PostgreSQL pool 자동 상한은 host CPU 수와 무관하게 인스턴스당 16이며 compose도 이를 명시합니다. `POSTGRES_DSN`의 `pool_max_conns`는 replica 수와 DB의 전역 연결 한도를 기준으로 조정하세요. 상한 1~2에서는 전용 LISTEN을 끄고 1초 안전 폴링으로 모든 연결을 request에 남기며, 상한 3부터 listener를 시작하면서 request용 두 자리를 보존합니다. 실행 중 listener 상태가 바뀌면 열린 SSE가 즉시 깨어나 단절 시 1초 폴링, 복구 시 30초 safety net으로 전환합니다. 알림 목록과 Dream transaction도 작은 pool에서 연결을 중첩 점유하지 않지만 운영에서는 동시 요청과 worker를 위해 4 이상을 권장합니다.
+브라우저 변경 요청의 `Origin`은 공개 URL 또는 신뢰 proxy로 확인한 현재 요청과 scheme·host·port가 모두 같아야 합니다. HTTPS 서비스와 같은 hostname이더라도 `http://` Origin은 거부됩니다. PostgreSQL request pool 자동 상한은 host CPU 수와 무관하게 인스턴스당 16이며 compose도 이를 명시합니다. `POSTGRES_DSN`의 `pool_max_conns`는 replica 수와 DB의 전역 연결 한도를 기준으로 조정하세요. 외부 AI 호출 동안 권한을 고정하는 lease는 request pool을 점유하지 않는 별도 연결을 인스턴스당 최대 2개 사용하므로, 전역 연결 예산에는 replica마다 `+2`를 더합니다. 세 번째 lease는 연결 없이 대기합니다. request pool 상한 1~2에서는 전용 LISTEN을 끄고 1초 안전 폴링으로 모든 연결을 request에 남기며, 상한 3부터 listener를 시작하면서 request용 두 자리를 보존합니다. 실행 중 listener 상태가 바뀌면 열린 SSE가 즉시 깨어나 단절 시 1초 폴링, 복구 시 30초 safety net으로 전환합니다. 알림 목록과 짧은 Dream transaction도 작은 pool에서 연결을 중첩 점유하지 않지만 운영에서는 동시 요청과 worker를 위해 `pool_max_conns` 4 이상을 권장합니다.
 
 로그인 세션 목록에 표시하는 User-Agent는 공백과 잘못된 UTF-8을 정리한 뒤 최대 300 byte의 완전한 rune 경계에서 저장합니다. 긴 한국어·다국어 브라우저 식별자가 중간 byte에서 잘려 올바른 자격 증명의 세션 생성이 실패하거나 주소별 로그인 실패 횟수로 잘못 누적되지 않습니다.
 
