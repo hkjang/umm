@@ -1117,7 +1117,7 @@ func TestAIExcludedNotesNeverReachRemoteEmbeddingGatewayIntegration(t *testing.T
 	var gatewayCalls atomic.Int64
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		gatewayCalls.Add(1)
-		http.Error(w, "excluded content reached gateway", http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"index": 0, "embedding": []float32{1, 0}}}})
 	}))
 	defer gateway.Close()
 	db.embeddings.provider = intelligence.Provider{Remote: &intelligence.RemoteConfig{
@@ -1158,8 +1158,30 @@ func TestAIExcludedNotesNeverReachRemoteEmbeddingGatewayIntegration(t *testing.T
 		{ID: privateNoteID, SpaceID: mixedSpaceID, Content: "note private secret", AIExcluded: true, Version: 1},
 		{ID: publicNoteID, SpaceID: mixedSpaceID, Content: "ordinary thought", Version: 1},
 	})
+	page, err := db.SearchNotesHybrid(ctx, userID, SearchOptions{
+		Query:   "space private secret",
+		SpaceID: &spaceExcludedID,
+		Limit:   5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Notes) != 1 || page.Notes[0].ID != spaceNoteID {
+		t.Fatalf("AI-excluded space search lost its local result: %#v", page.Notes)
+	}
 	if calls := gatewayCalls.Load(); calls != 0 {
-		t.Fatalf("AI-excluded content reached the remote embedding gateway %d times", calls)
+		t.Fatalf("AI-excluded content or scoped query reached the remote embedding gateway %d times", calls)
+	}
+	page, err = db.SearchNotesHybrid(ctx, userID, SearchOptions{
+		Query:   "ordinary thought",
+		SpaceID: &mixedSpaceID,
+		Limit:   5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Notes) == 0 || page.Notes[0].ID != publicNoteID || gatewayCalls.Load() != 1 {
+		t.Fatalf("ordinary scoped search did not retain the configured gateway: notes=%#v calls=%d", page.Notes, gatewayCalls.Load())
 	}
 	var localRows int
 	if err = db.Pool.QueryRow(ctx, `

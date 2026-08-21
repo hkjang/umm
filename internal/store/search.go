@@ -95,7 +95,8 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 	if options.Offset < 0 {
 		options.Offset = 0
 	}
-	queryVector, algorithm := s.EmbedQuery(ctx, options.Query)
+	provider := s.embeddingProviderForSearch(ctx, userID, options.SpaceID)
+	queryVector, algorithm := s.embedQueryWithProvider(ctx, options.Query, provider)
 
 	b := &queryBuilder{}
 	user := b.bind(userID)

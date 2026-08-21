@@ -185,6 +185,27 @@ func (s *Store) embeddingProviderForNotes(ctx context.Context, notes []Note) int
 	return s.EmbeddingProvider(ctx)
 }
 
+// embeddingProviderForSearch keeps a query scoped to an AI-excluded space on
+// the local provider. Authorization and exclusion are resolved together before
+// any query text can be handed to a configured remote gateway. Missing,
+// inaccessible, or temporarily unreadable spaces also fail closed to local.
+func (s *Store) embeddingProviderForSearch(ctx context.Context, userID uuid.UUID, spaceID *uuid.UUID) intelligence.Provider {
+	if spaceID == nil {
+		return s.EmbeddingProvider(ctx)
+	}
+	var excluded bool
+	err := s.Pool.QueryRow(ctx, `
+		SELECT sp.ai_excluded
+		FROM spaces sp
+		WHERE sp.id=$1
+		  AND (sp.owner_id=$2 OR EXISTS(
+		    SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2))`, *spaceID, userID).Scan(&excluded)
+	if err != nil || excluded {
+		return intelligence.Provider{}
+	}
+	return s.EmbeddingProvider(ctx)
+}
+
 // ensureEmbeddings brings a batch of notes up to date. Before v0.8.0 this issued
 // one no-op UPDATE per note on every canvas load; now it asks the database which
 // vectors are actually stale and embeds only those.
@@ -362,7 +383,10 @@ func (s *Store) loadEmbeddings(ctx context.Context, notes []Note) map[uuid.UUID]
 // returned label rather than the provider's configured label when selecting
 // stored vectors.
 func (s *Store) EmbedQuery(ctx context.Context, query string) ([]float32, string) {
-	provider := s.EmbeddingProvider(ctx)
+	return s.embedQueryWithProvider(ctx, query, s.EmbeddingProvider(ctx))
+}
+
+func (s *Store) embedQueryWithProvider(ctx context.Context, query string, provider intelligence.Provider) ([]float32, string) {
 	vectors, algorithm := provider.Embed(ctx, []string{query})
 	if provider.Algorithm() != intelligence.LocalAlgorithm && algorithm == intelligence.LocalAlgorithm {
 		s.deferRemoteEmbeddings(provider)
