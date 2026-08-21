@@ -35,7 +35,7 @@ User API/MCP key (one-time plaintext display)
 - Collaboration: 공간 소유자 또는 `manage` 멤버만 공유 권한 변경, `view`/`edit`/`manage` 분리
 - Export: 관리자가 `export` 검토를 켠 경우 승인 후 24시간 동안만 허용
 - Admin secret: API 응답에서 항상 마스킹, 감사 로그에 원문 미기록
-- Browser write: `Origin`과 `Sec-Fetch-Site`를 확인해 로그인과 인증된 변경 요청의 cross-site 전송 차단
+- Browser write: `Origin`의 scheme·hostname·effective port와 `Sec-Fetch-Site`를 확인해 로그인과 인증된 변경 요청의 cross-site·cross-scheme 전송 차단. 신뢰 proxy가 정규화한 scheme 또는 관리자 공개 URL origin과 정확히 일치해야 함
 - AI exclusion: 메모 또는 공간의 AI 제외 flag를 원격 임베딩 batch 구성 전에 확인하며, 제외 콘텐츠는 외부 Gateway 대신 서버 내부 로컬 vector만 사용
 - Offline retry: atomic Canvas mutation에 한정한 `Idempotency-Key`, 사용자·키별 advisory lock, 실행 중 갱신되는 2분 pending lease, 도메인/SSE/outbox/응답 원자 커밋과 24시간 성공 replay로 동시 중복·post-commit 기록 유실·crash 고착 방지
 - Aggregate scope: `notes:read`만 가진 API key의 Today 응답에서는 `dreams:read` 데이터와 개수를 제거해 집계 endpoint를 통한 scope 우회를 차단

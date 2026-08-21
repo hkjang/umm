@@ -140,8 +140,15 @@ func applyPoolDefaults(config *pgxpool.Config) {
 			config.MaxConns = minimum
 		}
 	}
-	if config.MinConns < reservedLongLivedConns {
-		config.MinConns = reservedLongLivedConns
+	minimum := int32(reservedLongLivedConns)
+	if minimum > config.MaxConns {
+		minimum = config.MaxConns
+	}
+	if config.MinConns < minimum {
+		config.MinConns = minimum
+	}
+	if config.MinConns > config.MaxConns {
+		config.MinConns = config.MaxConns
 	}
 	if config.MaxConnLifetime == 0 {
 		config.MaxConnLifetime = time.Hour

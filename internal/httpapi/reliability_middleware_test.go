@@ -177,6 +177,49 @@ func TestSensitiveCredentialPathsCannotBeResponseCached(t *testing.T) {
 	}
 }
 
+func TestVerifyWriteOriginRequiresTheSameSchemeHostAndPort(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		origin string
+		want   int
+	}{
+		{name: "same HTTPS origin", target: "https://example.com/api/v1/auth/logout", origin: "https://example.com", want: http.StatusNoContent},
+		{name: "default HTTPS port", target: "https://example.com/api/v1/auth/logout", origin: "https://example.com:443", want: http.StatusNoContent},
+		{name: "downgrade origin", target: "https://example.com/api/v1/auth/logout", origin: "http://example.com", want: http.StatusForbidden},
+		{name: "different port", target: "https://example.com/api/v1/auth/logout", origin: "https://example.com:8443", want: http.StatusForbidden},
+		{name: "same HTTP origin", target: "http://example.com/api/v1/auth/logout", origin: "http://example.com", want: http.StatusNoContent},
+		{name: "origin with credentials", target: "https://example.com/api/v1/auth/logout", origin: "https://user@example.com", want: http.StatusForbidden},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := &Server{}
+			handler := server.verifyWriteOrigin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			request := httptest.NewRequest(http.MethodPost, test.target, nil)
+			request.Header.Set("Origin", test.origin)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status = %d, want %d", response.Code, test.want)
+			}
+		})
+	}
+}
+
+func TestSameOriginUsesTrustedForwardedSchemeAndDefaultPorts(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "http://internal:8080/api/v1/auth/logout", nil)
+	request.Header.Set("X-Forwarded-Proto", "https")
+	origin, err := parseBrowserOrigin("https://internal:8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scheme := effectiveRequestScheme(request); scheme != "https" || !sameOrigin(origin, scheme, request.Host) {
+		t.Fatalf("forwarded request origin mismatch: scheme=%q host=%q", scheme, request.Host)
+	}
+}
+
 func TestIdempotencyRequestIdentityBindsTargetAndBody(t *testing.T) {
 	first := httptest.NewRequest("POST", "/api/v1/notes?mode=one", strings.NewReader(`{"content":"first"}`))
 	same := httptest.NewRequest("POST", "/api/v1/notes?mode=one", strings.NewReader(`{"content":"first"}`))

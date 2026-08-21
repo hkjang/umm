@@ -85,19 +85,19 @@ func (s *Server) verifyWriteOrigin(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		parsed, err := url.Parse(origin)
-		if err != nil || parsed.Host == "" {
+		parsed, err := parseBrowserOrigin(origin)
+		if err != nil {
 			writeProblem(w, r, http.StatusForbidden, "invalid-origin", "Origin 확인 실패", "요청 출처를 확인할 수 없습니다.", nil)
 			return
 		}
-		allowed := strings.EqualFold(parsed.Host, r.Host)
-		if !allowed {
+		allowed := sameOrigin(parsed, effectiveRequestScheme(r), r.Host)
+		if !allowed && s.Store != nil {
 			var general struct {
 				PublicURL string `json:"public_url"`
 			}
 			if s.Store.GetSetting(r.Context(), "general", &general) == nil {
 				configured, parseErr := url.Parse(general.PublicURL)
-				allowed = parseErr == nil && strings.EqualFold(parsed.Scheme, configured.Scheme) && strings.EqualFold(parsed.Host, configured.Host)
+				allowed = parseErr == nil && sameOrigin(parsed, configured.Scheme, configured.Host)
 			}
 		}
 		if !allowed {
@@ -106,6 +106,45 @@ func (s *Server) verifyWriteOrigin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func parseBrowserOrigin(raw string) (*url.URL, error) {
+	origin, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || origin.Host == "" || origin.User != nil ||
+		(origin.Scheme != "http" && origin.Scheme != "https") ||
+		(origin.Path != "" && origin.Path != "/") || origin.RawQuery != "" || origin.Fragment != "" {
+		return nil, errors.New("invalid browser origin")
+	}
+	return origin, nil
+}
+
+func effectiveRequestScheme(r *http.Request) string {
+	if forwarded := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))); forwarded == "http" || forwarded == "https" {
+		return forwarded
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
+func sameOrigin(origin *url.URL, targetScheme, targetHost string) bool {
+	target, err := url.Parse(strings.ToLower(strings.TrimSpace(targetScheme)) + "://" + targetHost)
+	if err != nil || target.Host == "" || !strings.EqualFold(origin.Scheme, target.Scheme) ||
+		!strings.EqualFold(origin.Hostname(), target.Hostname()) {
+		return false
+	}
+	return originPort(origin) == originPort(target)
+}
+
+func originPort(origin *url.URL) string {
+	if port := origin.Port(); port != "" {
+		return port
+	}
+	if strings.EqualFold(origin.Scheme, "https") {
+		return "443"
+	}
+	return "80"
 }
 
 func (s *Server) requireSession(next http.Handler) http.Handler {

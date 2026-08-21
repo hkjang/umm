@@ -20,7 +20,7 @@ docker image inspect umm:v0.8.1
 
 PostgreSQL user는 대상 database에 schema/table/extension을 생성할 권한이 필요합니다(`pgcrypto`, `citext`, `pg_trgm`). 시작 시 embedded migration이 transaction으로 실행됩니다.
 
-인스턴스는 협업 이벤트 수신용 PostgreSQL 연결 하나를 상시 점유합니다. 연결 풀 기본값이 그만큼 여유를 두지만, DSN에 `pool_max_conns`를 직접 지정한다면 인스턴스당 최소 4 이상으로 유지하세요.
+인스턴스는 협업 이벤트 수신용 PostgreSQL 연결 하나를 상시 점유합니다. 연결 풀 기본값이 그만큼 여유를 두지만, DSN에 `pool_max_conns`를 직접 지정한다면 인스턴스당 최소 4 이상으로 유지하세요. 더 작은 값을 명시해도 내부 `pool_min_conns`가 최대값을 넘어 시작에 실패하지 않도록 cap하지만, `pool_max_conns=1`은 실시간 listener와 일반 요청이 한 연결을 다투므로 운영 권장값이 아닙니다.
 
 32-byte encryption key는 연결망 밖의 승인된 비밀 관리 절차로 생성합니다. 예: `openssl rand -base64 32`. Shell history, compose file, ticket, Git에 실제 값을 남기지 마세요.
 
