@@ -384,14 +384,19 @@ func (s *Service) generate(ctx context.Context, cfg Config, jobID, userID uuid.U
 }
 
 type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
-	MaxTokens   int           `json:"max_tokens"`
+	Model              string          `json:"model"`
+	Messages           []chatMessage   `json:"messages"`
+	Temperature        float64         `json:"temperature"`
+	MaxTokens          int             `json:"max_tokens"`
+	ReasoningEffort    string          `json:"reasoning_effort,omitempty"`
+	IncludeReasoning   *bool           `json:"include_reasoning,omitempty"`
+	ChatTemplateKwargs map[string]bool `json:"chat_template_kwargs,omitempty"`
 }
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	Reasoning        string `json:"reasoning,omitempty"`
+	ReasoningContent string `json:"reasoning_content,omitempty"`
 }
 type chatResponse struct {
 	Choices []struct {
@@ -438,6 +443,41 @@ func containsHangul(v string) bool {
 		}
 	}
 	return false
+}
+
+func chatCompletionsEndpoint(baseURL string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || !(u.Scheme == "http" || u.Scheme == "https") || u.Host == "" {
+		return "", errors.New("invalid AI gateway URL")
+	}
+	path := strings.TrimRight(u.Path, "/")
+	switch {
+	case strings.HasSuffix(path, "/chat/completions"):
+	case strings.HasSuffix(path, "/v1"):
+		path += "/chat/completions"
+	default:
+		path += "/v1/chat/completions"
+	}
+	u.Path = path
+	u.RawPath = ""
+	u.Fragment = ""
+	return u.String(), nil
+}
+
+func withoutModelReasoning(body chatRequest) chatRequest {
+	includeReasoning := false
+	body.ReasoningEffort = "none"
+	body.IncludeReasoning = &includeReasoning
+	// vLLM model families use either enable_thinking (for example Qwen)
+	// or thinking (for example Holo/DeepSeek) in their chat templates.
+	body.ChatTemplateKwargs = map[string]bool{"enable_thinking": false, "thinking": false}
+	return body
+}
+
+func containsModelReasoning(message chatMessage) bool {
+	return strings.TrimSpace(message.Reasoning) != "" ||
+		strings.TrimSpace(message.ReasoningContent) != "" ||
+		thoughtTagPattern.MatchString(message.Content)
 }
 
 func requestChat(ctx context.Context, client *http.Client, endpoint, key string, body chatRequest) (chatResponse, error) {
@@ -537,12 +577,8 @@ func (s *Service) callGateway(ctx context.Context, cfg Config, g GatewayConfig, 
 	if strings.TrimSpace(g.BaseURL) == "" || strings.TrimSpace(cfg.Model) == "" {
 		return "", 0, 0, cfg.Model, 0, errors.New("AI gateway URL and model must be configured")
 	}
-	endpoint := strings.TrimRight(g.BaseURL, "/")
-	if !strings.HasSuffix(endpoint, "/chat/completions") {
-		endpoint += "/v1/chat/completions"
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil || !(u.Scheme == "http" || u.Scheme == "https") || u.Host == "" {
+	endpoint, err := chatCompletionsEndpoint(g.BaseURL)
+	if err != nil {
 		return "", 0, 0, cfg.Model, 0, errors.New("invalid AI gateway URL")
 	}
 	key := g.APIKey
@@ -576,21 +612,33 @@ func (s *Service) callGateway(ctx context.Context, cfg Config, g GatewayConfig, 
 	start := time.Now()
 	var lastErr error
 	var inputTokens, outputTokens int
+	retryWithoutReasoning := false
 	for attempt := 0; attempt <= retries; attempt++ {
-		result, requestErr := requestChat(ctx, client, endpoint, key, reqBody)
+		requestBody := reqBody
+		if retryWithoutReasoning {
+			requestBody = withoutModelReasoning(requestBody)
+		}
+		result, requestErr := requestChat(ctx, client, endpoint, key, requestBody)
 		if requestErr != nil {
 			lastErr = requestErr
 			continue
 		}
 		inputTokens += result.Usage.PromptTokens
 		outputTokens += result.Usage.CompletionTokens
+		message := result.Choices[0].Message
 		if result.Choices[0].FinishReason == "length" {
 			lastErr = ErrAIResponseTokenLimit
+			if containsModelReasoning(message) {
+				retryWithoutReasoning = true
+			}
 			continue
 		}
-		text := visibleModelResponse(result.Choices[0].Message.Content)
+		text := visibleModelResponse(message.Content)
 		if text == "" {
 			lastErr = errors.New("empty Dream response")
+			if containsModelReasoning(message) {
+				retryWithoutReasoning = true
+			}
 			continue
 		}
 		text, repairInput, repairOutput := preferKoreanResponse(ctx, client, endpoint, key, cfg.Model, tokenLimit, text)
@@ -721,12 +769,8 @@ func (s *Service) Assist(ctx context.Context, userID uuid.UUID, noteIDs []uuid.U
 }
 
 func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, temperature float64, maxTokens int, system, user string) (string, int, int, time.Duration, error) {
-	endpoint := strings.TrimRight(g.BaseURL, "/")
-	if !strings.HasSuffix(endpoint, "/chat/completions") {
-		endpoint += "/v1/chat/completions"
-	}
-	u, err := url.Parse(endpoint)
-	if err != nil || !(u.Scheme == "http" || u.Scheme == "https") || u.Host == "" {
+	endpoint, err := chatCompletionsEndpoint(g.BaseURL)
+	if err != nil {
 		return "", 0, 0, 0, errors.New("invalid AI gateway URL")
 	}
 	key := g.APIKey
@@ -750,21 +794,33 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 	start := time.Now()
 	var lastErr error
 	var inputTokens, outputTokens int
+	retryWithoutReasoning := false
 	for attempt := 0; attempt <= retries; attempt++ {
-		result, requestErr := requestChat(ctx, client, endpoint, key, reqBody)
+		requestBody := reqBody
+		if retryWithoutReasoning {
+			requestBody = withoutModelReasoning(requestBody)
+		}
+		result, requestErr := requestChat(ctx, client, endpoint, key, requestBody)
 		if requestErr != nil {
 			lastErr = requestErr
 			continue
 		}
 		inputTokens += result.Usage.PromptTokens
 		outputTokens += result.Usage.CompletionTokens
+		message := result.Choices[0].Message
 		if result.Choices[0].FinishReason == "length" {
 			lastErr = ErrAIResponseTokenLimit
+			if containsModelReasoning(message) {
+				retryWithoutReasoning = true
+			}
 			continue
 		}
-		text := visibleModelResponse(result.Choices[0].Message.Content)
+		text := visibleModelResponse(message.Content)
 		if text == "" {
 			lastErr = errors.New("empty AI response")
+			if containsModelReasoning(message) {
+				retryWithoutReasoning = true
+			}
 			continue
 		}
 		text, repairInput, repairOutput := preferKoreanResponse(ctx, client, endpoint, key, model, maxTokens, text)

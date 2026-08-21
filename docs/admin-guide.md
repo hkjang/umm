@@ -62,9 +62,10 @@ Dream Layer는 사용자가 밤사이 휴식하는 동안 캔버스에 쌓인 �
 
 사내망 내부의 LLM Gateway (vLLM, Ollama, TGI, SGLang 등 OpenAI 호환 서버)를 연결합니다.
 
-- **Base URL**: `http://llm-gateway.internal:8000`
+- **Base URL**: `http://llm-gateway.internal:8000`, `.../v1`, 전체 `.../chat/completions` 주소를 모두 사용할 수 있습니다.
 - **API Key**: 내부 보안 게이트웨이 인증 토큰
 - **Timeout**: 긴 추론 모델을 위해 최대 1800초까지 설정 가능
+- **vLLM 추론 모델**: 가능하면 서버에 모델별 `--reasoning-parser`를 설정합니다. 최종 본문 없이 `reasoning`/`reasoning_content`만 반환하거나 `<think>` 도중 출력 한도에 도달하면, 재시도가 1 이상일 때 umm이 비추론 모드로 다시 요청하고 최종 `content`만 사용합니다.
 - **비용 통계 관리**: 입력/출력 1M 토큰당 비용을 입력하면 관리자 대시보드에서 월간 예상 비용과 사용자당 비용을 실시간으로 추산합니다.
 
 ---

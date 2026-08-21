@@ -10,7 +10,7 @@
 ![로그인 화면](./screenshots/01_login.png)
 - **로컬 부트스트랩 관리자**: 초기 환경변수(`BOOTSTRAP_ADMIN`, `BOOTSTRAP_ADMIN_PASSWORD`) 기반 보안 로그인
 - **Keycloak OIDC SSO**: 설정 시 `Keycloak SSO로 계속` 버튼을 통한 엔터프라이즈 통합 로그인 지원
-- **버전 및 서비스명**: 하단에 현재 릴리스 버전(`v0.5.0`)과 서비스명 실시간 표시
+- **버전 및 서비스명**: 하단에 현재 릴리스 버전(`v0.5.1`)과 서비스명 실시간 표시
 
 ---
 

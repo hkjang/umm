@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.5.0-success?style=flat-square" alt="v0.5.0" />
+  <img src="https://img.shields.io/badge/Release-v0.5.1-success?style=flat-square" alt="v0.5.1" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -123,7 +123,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.5.0
+  umm:v0.5.1
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

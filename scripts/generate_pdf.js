@@ -224,7 +224,7 @@ const HTML_TEMPLATE = (title, content, date = '2026. 08') => `<!DOCTYPE html>
     </div>
     <div class="doc-meta">
       <strong>${title}</strong><br>
-      Spatial Thought Memory Platform · v0.5.0 (${date})
+      Spatial Thought Memory Platform · v0.5.1 (${date})
     </div>
   </div>
   ${content}

@@ -72,6 +72,28 @@ func TestContainsHangul(t *testing.T) {
 	}
 }
 
+func TestChatCompletionsEndpoint(t *testing.T) {
+	tests := map[string]string{
+		"http://vllm.internal:8000":                       "http://vllm.internal:8000/v1/chat/completions",
+		"http://vllm.internal:8000/v1/":                   "http://vllm.internal:8000/v1/chat/completions",
+		"https://gateway.internal/openai/v1":              "https://gateway.internal/openai/v1/chat/completions",
+		"https://gateway.internal/v1/chat/completions/":   "https://gateway.internal/v1/chat/completions",
+		"https://gateway.internal/proxy?tenant=knowledge": "https://gateway.internal/proxy/v1/chat/completions?tenant=knowledge",
+	}
+	for baseURL, want := range tests {
+		got, err := chatCompletionsEndpoint(baseURL)
+		if err != nil {
+			t.Fatalf("chatCompletionsEndpoint(%q) failed: %v", baseURL, err)
+		}
+		if got != want {
+			t.Errorf("chatCompletionsEndpoint(%q) = %q, want %q", baseURL, got, want)
+		}
+	}
+	if _, err := chatCompletionsEndpoint("file:///tmp/model"); err == nil {
+		t.Fatal("non-HTTP gateway URL was accepted")
+	}
+}
+
 func TestCallTextReturnsOnlyKoreanBodyAfterClosingThinkTag(t *testing.T) {
 	var received chatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -153,13 +175,19 @@ func TestCallTextKeepsUsableResponseWhenKoreanRepairFails(t *testing.T) {
 func TestCallTextReportsTokenLimitBeforeFinalAnswer(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+		call := calls.Add(1)
 		var received chatRequest
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
 		if received.MaxTokens != MaxTokenLimit {
 			t.Errorf("unexpected max_tokens: %d", received.MaxTokens)
+		}
+		if call == 1 && received.ReasoningEffort != "" {
+			t.Errorf("initial request unexpectedly changed reasoning mode: %q", received.ReasoningEffort)
+		}
+		if call == 2 && (received.ReasoningEffort != "none" || received.IncludeReasoning == nil || *received.IncludeReasoning) {
+			t.Errorf("reasoning recovery options missing: %#v", received)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []any{map[string]any{
@@ -181,5 +209,114 @@ func TestCallTextReportsTokenLimitBeforeFinalAnswer(t *testing.T) {
 	}
 	if inputTokens != 10 || outputTokens != 524288 {
 		t.Fatalf("truncated usage was not accumulated: input=%d output=%d", inputTokens, outputTokens)
+	}
+}
+
+func TestCallTextRecoversFromVLLMReasoningOnlyResponse(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("unexpected chat completions path: %s", r.URL.Path)
+		}
+		var received map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if call == 1 {
+			if _, ok := received["reasoning_effort"]; ok {
+				t.Error("initial compatible request unexpectedly changed reasoning mode")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []any{map[string]any{
+					"finish_reason": "stop",
+					"message": map[string]any{
+						"role":              "assistant",
+						"content":           nil,
+						"reasoning_content": "internal reasoning without a final answer",
+					},
+				}},
+				"usage": map[string]any{"prompt_tokens": 7, "completion_tokens": 200},
+			})
+			return
+		}
+
+		if received["reasoning_effort"] != "none" || received["include_reasoning"] != false {
+			t.Errorf("reasoning recovery options missing: %#v", received)
+		}
+		kwargs, _ := received["chat_template_kwargs"].(map[string]any)
+		if kwargs["enable_thinking"] != false || kwargs["thinking"] != false {
+			t.Errorf("model-specific thinking switches missing: %#v", kwargs)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{
+				"finish_reason": "stop",
+				"message":       map[string]any{"role": "assistant", "content": "두 생각을 작은 실험으로 연결해 보세요."},
+			}},
+			"usage": map[string]any{"prompt_tokens": 7, "completion_tokens": 12},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{}
+	text, inputTokens, outputTokens, _, err := service.callText(context.Background(), GatewayConfig{
+		BaseURL: server.URL + "/v1", TimeoutSeconds: 2, MaxRetries: 1,
+	}, "test-model", .2, 200, koreanOnlyInstruction, "사용자 메모")
+	if err != nil {
+		t.Fatalf("callText did not recover from a reasoning-only response: %v", err)
+	}
+	if text != "두 생각을 작은 실험으로 연결해 보세요." || calls.Load() != 2 {
+		t.Fatalf("unexpected recovery result: text=%q calls=%d", text, calls.Load())
+	}
+	if inputTokens != 14 || outputTokens != 212 {
+		t.Fatalf("recovery usage was not accumulated: input=%d output=%d", inputTokens, outputTokens)
+	}
+}
+
+func TestCallGatewayRecoversFromTruncatedThinkingBlock(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		var received chatRequest
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if call == 1 {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []any{map[string]any{
+					"finish_reason": "length",
+					"message":       map[string]any{"role": "assistant", "content": "<think>unfinished reasoning"},
+				}},
+				"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 200},
+			})
+			return
+		}
+		if received.ReasoningEffort != "none" || received.IncludeReasoning == nil || *received.IncludeReasoning {
+			t.Errorf("Dream recovery did not disable reasoning: %#v", received)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{
+				"finish_reason": "stop",
+				"message":       map[string]any{"role": "assistant", "content": "메모의 공통 가정을 작은 검증 과제로 바꿔 보세요."},
+			}},
+			"usage": map[string]any{"prompt_tokens": 9, "completion_tokens": 14},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{}
+	text, inputTokens, outputTokens, model, _, err := service.callGateway(context.Background(), Config{
+		Model: "test-model", Temperature: .2, TokenLimit: 200,
+	}, GatewayConfig{BaseURL: server.URL, TimeoutSeconds: 2, MaxRetries: 1}, []sourceNote{
+		{Content: "첫 번째 메모의 가정"}, {Content: "두 번째 메모의 검증 방법"},
+	}, "connection")
+	if err != nil {
+		t.Fatalf("callGateway did not recover from truncated reasoning: %v", err)
+	}
+	if text != "메모의 공통 가정을 작은 검증 과제로 바꿔 보세요." || model != "test-model" || calls.Load() != 2 {
+		t.Fatalf("unexpected Dream recovery result: text=%q model=%q calls=%d", text, model, calls.Load())
+	}
+	if inputTokens != 18 || outputTokens != 214 {
+		t.Fatalf("Dream recovery usage was not accumulated: input=%d output=%d", inputTokens, outputTokens)
 	}
 }

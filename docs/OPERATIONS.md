@@ -64,6 +64,8 @@ Schema migration은 forward-only입니다. 새 버전 실행 후 schema가 변�
 
 AI Gateway 오류는 retry 후 failed job과 `ai_calls`에 기록됩니다. 일반 Canvas는 계속 동작합니다. 장애가 길어지면 관리자에서 자동 생성을 OFF하고, 복구 후 “지금 큐 생성”을 실행합니다. 품질 기준 미달은 failure가 아니라 skip이며 사용자에게 빈 Dream을 억지로 노출하지 않습니다.
 
+vLLM이 최종 본문 없이 추론만 반환한다면 모델에 맞는 `--reasoning-parser` 설정과 Dream 출력 Token 한도를 먼저 확인합니다. `재시도`가 1 이상이면 umm은 추론-only 또는 추론 중 잘린 응답을 감지해 비추론 모드로 한 번 더 요청합니다. 저장·노출되는 값은 최종 `content`뿐이며 분리된 `reasoning`/`reasoning_content`와 `<think>` 블록은 제외됩니다.
+
 ## Release 규칙
 
 `VERSION`이 `0.2.1`이면 tag는 `v0.2.1`, image는 `umm:v0.2.1`, GitHub asset은 `umm-v0.2.1.tar.gz`입니다. Release workflow는 세 값이 다르면 중단합니다. Release에는 서비스 Docker image tarball만 첨부합니다.
