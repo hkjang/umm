@@ -68,7 +68,7 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 `/search`, `/notifications`, `/dreams`, `/admin/audit`는 응답의 `nextCursor`를 다음 요청의 `cursor`에 그대로 전달합니다. cursor 내부 형식에 의존하지 마세요.
 
-하이브리드 검색은 접근 가능한 전체 메모에서 키워드 일치를 먼저 보존한 뒤 최근 비키워드 후보에 로컬 의미 점수를 결합합니다. 따라서 메모가 2,000개를 넘더라도 오래된 정확한 키워드 결과를 누락하지 않습니다.
+하이브리드 검색은 접근 가능한 전체 메모에서 키워드 일치를 먼저 보존한 뒤 최근 비키워드 후보에 로컬 의미 점수를 결합합니다. 따라서 메모가 2,000개를 넘거나 검색어가 본문 2,000자 이후에 있어도 오래된 정확한 키워드 결과를 누락하지 않습니다.
 
 ### 🪝 서명 웹훅
 
@@ -79,7 +79,7 @@ signed = X-Umm-Timestamp + "." + raw_request_body
 X-Umm-Signature-256 = "sha256=" + hex(HMAC-SHA256(secret, signed))
 ```
 
-이벤트는 응답 경로에서 활성 구독별 PostgreSQL queue에 먼저 저장되며, 프로세스가 재시작되어도 워커가 대기 항목을 이어서 처리합니다. 전달 시도는 at-least-once 방식이므로 수신 측은 `X-Umm-Delivery`를 멱등 키로 사용해 중복을 무시하고 timestamp 허용 시간도 함께 확인해야 합니다. 이벤트에는 `space.updated`, `note.*`, `edge.created`, `comment.*`, `member.*`, `dream.accepted`가 있습니다.
+도메인 변경과 활성 구독별 PostgreSQL outbox는 같은 트랜잭션에서 확정되며, 프로세스가 재시작되어도 워커가 대기 항목을 이어서 처리합니다. 전달 시도는 at-least-once 방식이므로 수신 측은 `X-Umm-Delivery`를 멱등 키로 사용해 중복을 무시하고 timestamp 허용 시간도 함께 확인해야 합니다. terminal payload는 즉시 비워지고 delivery metadata는 30일 보존됩니다. 이벤트에는 `space.updated`, `note.*`, `edge.created`, `comment.*`, `member.*`, `dream.accepted`가 있습니다.
 
 ### 안전한 재시도와 오류
 

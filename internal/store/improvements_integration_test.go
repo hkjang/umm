@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -104,7 +105,8 @@ func TestHybridSearchKeepsOlderLexicalMatchesIntegration(t *testing.T) {
 	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'large search corpus')`, spaceID, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,title,content,created_at,updated_at) VALUES($1,$2,$3,$4,$4,now()-interval '10 years',now()-interval '10 years')`, noteID, spaceID, userID, needle); err != nil {
+	deepContent := strings.Repeat("unrelated archival prefix ", 100) + needle
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,title,content,created_at,updated_at) VALUES($1,$2,$3,'',$4,now()-interval '10 years',now()-interval '10 years')`, noteID, spaceID, userID, deepContent); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO notes(space_id,author_id,content,created_at,updated_at) SELECT $1,$2,'recent semantic decoy '||value,now(),now() FROM generate_series(1,2001) AS value`, spaceID, userID); err != nil {
@@ -232,6 +234,54 @@ func TestTodayReviewExcludesActivityFromDeletedNotesIntegration(t *testing.T) {
 		if activity.ID == comment.ID || activity.NoteID == noteID {
 			t.Fatalf("activity from deleted note was returned: %#v", activity)
 		}
+	}
+}
+
+func TestNoteMutationAndWebhookOutboxCommitTogetherIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	userID, spaceID, subscriptionID := uuid.New(), uuid.New(), uuid.New()
+	username := "atomic_outbox_" + userID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'atomic outbox')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO webhook_subscriptions(id,owner_id,name,url,secret_ciphertext,events) VALUES($1,$2,'atomic outbox','https://example.com/webhook','test-ciphertext',ARRAY['note.created'])`, subscriptionID, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	note, err := db.CreateNote(ctx, userID, Note{SpaceID: spaceID, Content: "mutation and outbox share one commit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notes, events, deliveries int
+	var eventType, resourceID, content string
+	err = db.Pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM notes WHERE id=$1),
+		  (SELECT count(*) FROM space_events WHERE space_id=$2 AND resource_id=$1 AND event_type='note.created'),
+		  (SELECT count(*) FROM webhook_deliveries WHERE subscription_id=$3 AND event_type='note.created' AND payload->>'resourceId'=CAST($1 AS text)),
+		  (SELECT event_type FROM webhook_deliveries WHERE subscription_id=$3 LIMIT 1),
+		  (SELECT payload->>'resourceId' FROM webhook_deliveries WHERE subscription_id=$3 LIMIT 1),
+		  (SELECT payload->'data'->>'content' FROM webhook_deliveries WHERE subscription_id=$3 LIMIT 1)`,
+		note.ID, spaceID, subscriptionID).Scan(&notes, &events, &deliveries, &eventType, &resourceID, &content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notes != 1 || events != 1 || deliveries != 1 || eventType != "note.created" || resourceID != note.ID.String() || content != note.Content {
+		t.Fatalf("atomic mutation/outbox mismatch notes=%d events=%d deliveries=%d type=%q resource=%q content=%q", notes, events, deliveries, eventType, resourceID, content)
 	}
 }
 

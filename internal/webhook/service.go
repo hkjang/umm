@@ -32,6 +32,11 @@ var SupportedEvents = []string{
 	"member.updated", "member.removed", "dream.accepted", "*",
 }
 
+const (
+	deliveryRetentionDays = 30
+	deliveryCleanupPeriod = 6 * time.Hour
+)
+
 type Event struct {
 	ID         uuid.UUID `json:"id"`
 	Type       string    `json:"type"`
@@ -86,6 +91,7 @@ func (s *Service) Start(ctx context.Context) {
 	for range 3 {
 		go s.worker(ctx)
 	}
+	go s.cleanupLoop(ctx)
 	s.signal()
 }
 
@@ -295,7 +301,7 @@ func (s *Service) finishSuccess(ctx context.Context, item delivery, status, atte
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `UPDATE webhook_deliveries SET status='delivered',attempt_count=attempt_count+$2,response_status=$3,error='',claimed_at=NULL,attempted_at=now(),delivered_at=now() WHERE id=$1 AND status='processing'`, item.ID, attempts, status); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE webhook_deliveries SET status='delivered',payload='{}'::jsonb,attempt_count=attempt_count+$2,response_status=$3,error='',claimed_at=NULL,attempted_at=now(),delivered_at=now() WHERE id=$1 AND status='processing'`, item.ID, attempts, status); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE webhook_subscriptions SET failure_count=0,last_error='',last_delivered_at=now(),updated_at=now() WHERE id=$1`, item.SubscriptionID); err != nil {
@@ -321,7 +327,7 @@ func (s *Service) finishFailure(ctx context.Context, item delivery, status int, 
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `UPDATE webhook_deliveries SET status='failed',attempt_count=attempt_count+$2,response_status=$3,error=$4,claimed_at=NULL,attempted_at=now() WHERE id=$1 AND status='processing'`, item.ID, attempts, responseStatus, message); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE webhook_deliveries SET status='failed',payload='{}'::jsonb,attempt_count=attempt_count+$2,response_status=$3,error=$4,claimed_at=NULL,attempted_at=now() WHERE id=$1 AND status='processing'`, item.ID, attempts, responseStatus, message); err != nil {
 		return err
 	}
 	if countSubscription {
@@ -330,6 +336,29 @@ func (s *Service) finishFailure(ctx context.Context, item delivery, status int, 
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+func (s *Service) cleanupLoop(ctx context.Context) {
+	s.cleanupDeliveries(ctx)
+	ticker := time.NewTicker(deliveryCleanupPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.cleanupDeliveries(ctx)
+		}
+	}
+}
+
+func (s *Service) cleanupDeliveries(ctx context.Context) {
+	if _, err := s.Store.Pool.Exec(ctx, `UPDATE webhook_deliveries SET payload='{}'::jsonb WHERE status IN ('delivered','failed') AND payload<>'{}'::jsonb`); err != nil && ctx.Err() == nil {
+		slog.Warn("webhook terminal payload cleanup failed", "error", err)
+	}
+	if _, err := s.Store.Pool.Exec(ctx, `DELETE FROM webhook_deliveries WHERE status IN ('delivered','failed') AND attempted_at<now()-make_interval(days=>$1)`, deliveryRetentionDays); err != nil && ctx.Err() == nil {
+		slog.Warn("webhook delivery retention cleanup failed", "error", err)
+	}
 }
 
 func ValidateEvents(events []string) bool {

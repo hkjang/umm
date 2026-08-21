@@ -181,7 +181,7 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 		    SELECT * FROM eligible WHERE NOT lexical_match ORDER BY updated_at DESC,id DESC LIMIT 2000
 		  ) recent_semantic
 		)
-		SELECT id,space_id,space_name,title,content,kind,updated_at,vector FROM candidates`,
+		SELECT id,space_id,space_name,title,content,kind,updated_at,vector,lexical_match FROM candidates`,
 		userID, options.SpaceID, strings.TrimSpace(options.Kind), options.UpdatedFrom, options.UpdatedTo, patterns)
 	if err != nil {
 		return HybridSearchPage{}, err
@@ -192,13 +192,18 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 	for rows.Next() {
 		var result NoteSearchResult
 		var vector []float32
-		if err := rows.Scan(&result.ID, &result.SpaceID, &result.SpaceName, &result.Title, &result.Content, &result.Kind, &result.UpdatedAt, &vector); err != nil {
+		var fullLexicalMatch bool
+		if err := rows.Scan(&result.ID, &result.SpaceID, &result.SpaceName, &result.Title, &result.Content, &result.Kind, &result.UpdatedAt, &vector, &fullLexicalMatch); err != nil {
 			return HybridSearchPage{}, err
 		}
 		if len(vector) == 0 {
 			vector = intelligence.Embed(result.Title + " " + result.Content)
 		}
 		lexical, reasons := lexicalScore(options.Query, result.Title, result.Content, result.SpaceName)
+		if fullLexicalMatch && lexical < .35 {
+			lexical = .35
+			reasons = append(reasons, "전체 본문 키워드 일치")
+		}
 		semantic := math.Max(0, intelligence.Cosine(queryVector, vector))
 		if lexical == 0 && semantic < .18 {
 			continue
@@ -561,6 +566,9 @@ func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, par
 	if err != nil {
 		return Comment{}, uuid.Nil, err
 	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, spaceID, "comment.created", comment.ID, comment); err != nil {
+		return Comment{}, uuid.Nil, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return Comment{}, uuid.Nil, err
 	}
@@ -568,8 +576,13 @@ func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, par
 }
 
 func (s *Store) ResolveComment(ctx context.Context, userID, commentID uuid.UUID, resolved bool) (Comment, uuid.UUID, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return Comment{}, uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
 	var noteID, spaceID uuid.UUID
-	err := s.Pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE note_comments c SET resolved_at=CASE WHEN $3 THEN now() ELSE NULL END,resolved_by=CASE WHEN $3 THEN $2 ELSE NULL END,updated_at=now()
 		FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
 		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL AND (c.author_id=$2 OR sp.owner_id=$2 OR sm.permission IN ('edit','manage'))
@@ -577,19 +590,42 @@ func (s *Store) ResolveComment(ctx context.Context, userID, commentID uuid.UUID,
 	if err != nil {
 		return Comment{}, uuid.Nil, err
 	}
-	comment, err := scanComment(s.Pool.QueryRow(ctx, commentSelect+` FROM note_comments c JOIN users u ON u.id=c.author_id WHERE c.id=$1`, commentID))
-	return comment, spaceID, err
+	comment, err := scanComment(tx.QueryRow(ctx, commentSelect+` FROM note_comments c JOIN users u ON u.id=c.author_id WHERE c.id=$1`, commentID))
+	if err != nil {
+		return Comment{}, uuid.Nil, err
+	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, spaceID, "comment.resolved", comment.ID, comment); err != nil {
+		return Comment{}, uuid.Nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Comment{}, uuid.Nil, err
+	}
+	return comment, spaceID, nil
 }
 
 func (s *Store) DeleteComment(ctx context.Context, userID, commentID uuid.UUID) (uuid.UUID, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
 	var spaceID uuid.UUID
-	err := s.Pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE note_comments c SET deleted_at=now(),updated_at=now()
 		FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
 		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL
 		  AND (c.author_id=$2 OR sp.owner_id=$2 OR sm.permission='manage')
 		RETURNING n.space_id`, commentID, userID).Scan(&spaceID)
-	return spaceID, err
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, spaceID, "comment.deleted", commentID, map[string]any{}); err != nil {
+		return uuid.Nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return uuid.Nil, err
+	}
+	return spaceID, nil
 }
 
 func (s *Store) Track(ctx context.Context, userID *uuid.UUID, event, resourceType string, resourceID *uuid.UUID, metadata any) {

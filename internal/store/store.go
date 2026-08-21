@@ -320,10 +320,24 @@ func (s *Store) CreateSpace(ctx context.Context, userID uuid.UUID, name string) 
 
 func (s *Store) UpdateSpace(ctx context.Context, userID, spaceID uuid.UUID, name string, aiExcluded *bool) (Space, error) {
 	name = strings.TrimSpace(name)
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return Space{}, err
+	}
+	defer tx.Rollback(ctx)
 	var v Space
-	err := s.Pool.QueryRow(ctx, `UPDATE spaces sp SET name=$3,ai_excluded=COALESCE($4,ai_excluded),updated_at=now() WHERE sp.id=$1 AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2 AND sm.permission='manage')) RETURNING id,owner_id,name,color,ai_excluded`, spaceID, userID, name, aiExcluded).
+	err = tx.QueryRow(ctx, `UPDATE spaces sp SET name=$3,ai_excluded=COALESCE($4,ai_excluded),updated_at=now() WHERE sp.id=$1 AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2 AND sm.permission='manage')) RETURNING id,owner_id,name,color,ai_excluded`, spaceID, userID, name, aiExcluded).
 		Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded)
-	return v, err
+	if err != nil {
+		return Space{}, err
+	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, spaceID, "space.updated", spaceID, v); err != nil {
+		return Space{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Space{}, err
+	}
+	return v, nil
 }
 
 func (s *Store) DeleteSpace(ctx context.Context, userID, spaceID uuid.UUID) error {
@@ -445,9 +459,6 @@ func (s *Store) CanViewSpace(ctx context.Context, userID, spaceID uuid.UUID) boo
 }
 
 func (s *Store) CreateNote(ctx context.Context, userID uuid.UUID, n Note) (Note, error) {
-	if !s.CanEditSpace(ctx, userID, n.SpaceID) {
-		return Note{}, pgx.ErrNoRows
-	}
 	if n.Color == "" {
 		n.Color = "yellow"
 	}
@@ -463,14 +474,36 @@ func (s *Store) CreateNote(ctx context.Context, userID uuid.UUID, n Note) (Note,
 	if n.Height == 0 {
 		n.Height = 160
 	}
-	err := s.Pool.QueryRow(ctx, `INSERT INTO notes(space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id,space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation,version,created_at,updated_at`, n.SpaceID, userID, n.Content, n.Title, n.Color, n.Kind, n.Source, n.AIExcluded, n.X, n.Y, n.Width, n.Height, n.Rotation).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.AIExcluded, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
-	if err == nil {
-		_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return Note{}, err
 	}
-	return n, err
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO notes(space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation)
+		SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+		WHERE EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2 WHERE s.id=$1 AND (s.owner_id=$2 OR m.permission IN ('edit','manage')))
+		RETURNING id,space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation,version,created_at,updated_at`,
+		n.SpaceID, userID, n.Content, n.Title, n.Color, n.Kind, n.Source, n.AIExcluded, n.X, n.Y, n.Width, n.Height, n.Rotation).
+		Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.AIExcluded, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+	if err != nil {
+		return Note{}, err
+	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, n.SpaceID, "note.created", n.ID, n); err != nil {
+		return Note{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Note{}, err
+	}
+	_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
+	return n, nil
 }
 
 func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcluded *bool) (Note, error) {
+	return s.updateNote(ctx, userID, n, aiExcluded, "note.updated")
+}
+
+func (s *Store) updateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcluded *bool, eventType string) (Note, error) {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return Note{}, err
@@ -484,6 +517,9 @@ func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcl
 	if err != nil {
 		return Note{}, err
 	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, n.SpaceID, eventType, n.ID, n); err != nil {
+		return Note{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return Note{}, err
 	}
@@ -492,25 +528,48 @@ func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcl
 }
 
 func (s *Store) DeleteNote(ctx context.Context, userID, noteID uuid.UUID) error {
-	cmd, err := s.Pool.Exec(ctx, `UPDATE notes SET deleted_at=now(),updated_at=now() WHERE id=$1 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2 WHERE s.id=notes.space_id AND (s.owner_id=$2 OR m.permission IN ('edit','manage')))`, noteID, userID)
+	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if cmd.RowsAffected() == 0 {
-		return pgx.ErrNoRows
+	defer tx.Rollback(ctx)
+	var spaceID uuid.UUID
+	err = tx.QueryRow(ctx, `UPDATE notes SET deleted_at=now(),updated_at=now() WHERE id=$1 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2 WHERE s.id=notes.space_id AND (s.owner_id=$2 OR m.permission IN ('edit','manage'))) RETURNING space_id`, noteID, userID).Scan(&spaceID)
+	if err != nil {
+		return err
 	}
-	return nil
+	if err = s.AppendSpaceEvent(ctx, tx, userID, spaceID, "note.deleted", noteID, map[string]any{}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) CreateEdge(ctx context.Context, userID uuid.UUID, e Edge) (Edge, error) {
-	if !s.CanEditSpace(ctx, userID, e.SpaceID) {
-		return Edge{}, pgx.ErrNoRows
-	}
 	if e.Relation == "" {
 		e.Relation = "related"
 	}
-	err := s.Pool.QueryRow(ctx, `INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by) SELECT $1,$2,$3,$4,$5 WHERE EXISTS(SELECT 1 FROM notes WHERE id=$2 AND space_id=$1 AND deleted_at IS NULL) AND EXISTS(SELECT 1 FROM notes WHERE id=$3 AND space_id=$1 AND deleted_at IS NULL) RETURNING id`, e.SpaceID, e.SourceID, e.TargetID, e.Relation, userID).Scan(&e.ID)
-	return e, err
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return Edge{}, err
+	}
+	defer tx.Rollback(ctx)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by)
+		SELECT $1,$2,$3,$4,$5
+		WHERE EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$5 WHERE s.id=$1 AND (s.owner_id=$5 OR m.permission IN ('edit','manage')))
+		  AND EXISTS(SELECT 1 FROM notes WHERE id=$2 AND space_id=$1 AND deleted_at IS NULL)
+		  AND EXISTS(SELECT 1 FROM notes WHERE id=$3 AND space_id=$1 AND deleted_at IS NULL)
+		RETURNING id`, e.SpaceID, e.SourceID, e.TargetID, e.Relation, userID).Scan(&e.ID)
+	if err != nil {
+		return Edge{}, err
+	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, e.SpaceID, "edge.created", e.ID, e); err != nil {
+		return Edge{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Edge{}, err
+	}
+	return e, nil
 }
 
 func (s *Store) Audit(ctx context.Context, actor *uuid.UUID, action, resourceType, resourceID string, metadata any) {
@@ -654,5 +713,5 @@ func (s *Store) RestoreNote(ctx context.Context, userID, noteID uuid.UUID, versi
 	if err != nil {
 		return Note{}, err
 	}
-	return s.UpdateNote(ctx, userID, n, &n.AIExcluded)
+	return s.updateNote(ctx, userID, n, &n.AIExcluded, "note.restored")
 }

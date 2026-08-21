@@ -139,6 +139,9 @@ CREATE INDEX IF NOT EXISTS webhook_deliveries_subscription_idx
 CREATE INDEX IF NOT EXISTS webhook_deliveries_queue_idx
   ON webhook_deliveries(status,next_attempt_at,created_at)
   WHERE status IN ('queued','processing');
+CREATE INDEX IF NOT EXISTS webhook_deliveries_terminal_idx
+  ON webhook_deliveries(attempted_at)
+  WHERE status IN ('delivered','failed');
 
 UPDATE app_settings
 SET value = jsonb_set(

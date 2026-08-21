@@ -267,6 +267,12 @@ func (s *Service) Accept(ctx context.Context, userID, dreamID uuid.UUID, overrid
 	if err != nil {
 		return store.Note{}, err
 	}
+	if err = s.Store.AppendSpaceEvent(ctx, tx, userID, spaceID, "dream.accepted", dreamID, map[string]any{"dreamId": dreamID, "note": note}); err != nil {
+		return store.Note{}, err
+	}
+	if err = s.Store.AppendSpaceEvent(ctx, tx, userID, spaceID, "note.created", note.ID, note); err != nil {
+		return store.Note{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return store.Note{}, err
 	}
@@ -380,6 +386,12 @@ func (s *Service) MaterializeDevelopment(ctx context.Context, userID, dreamID uu
 		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by)
 		VALUES($1,$2,$3,$4,$5)
 		RETURNING id`, spaceID, sourceID, result.Note.ID, result.Edge.Relation, userID).Scan(&result.Edge.ID); err != nil {
+		return DevelopmentMaterialization{}, err
+	}
+	if err = s.Store.AppendSpaceEvent(ctx, tx, userID, spaceID, "note.created", result.Note.ID, result.Note); err != nil {
+		return DevelopmentMaterialization{}, err
+	}
+	if err = s.Store.AppendSpaceEvent(ctx, tx, userID, spaceID, "edge.created", result.Edge.ID, result.Edge); err != nil {
 		return DevelopmentMaterialization{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {

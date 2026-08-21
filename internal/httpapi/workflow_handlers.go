@@ -136,12 +136,15 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "검토 결과를 저장하지 못했습니다.")
 		return
 	}
+	if body.Decision == "approved" && action == "space_share" {
+		if err = s.Store.AppendSpaceEvent(r.Context(), tx, p.User.ID, resourceID, "member.updated", sharePayload.TargetUserID, sharePayload); err != nil {
+			writeError(w, 500, "공유 변경 이벤트를 저장하지 못했습니다.")
+			return
+		}
+	}
 	if err = tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "검토 결과를 확정하지 못했습니다.")
 		return
-	}
-	if body.Decision == "approved" && action == "space_share" {
-		s.publishSpaceEvent(r, resourceID, "member.updated", sharePayload.TargetUserID, sharePayload)
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "approval."+body.Decision, "approval", id.String(), map[string]any{})
 	writeJSON(w, 200, map[string]string{"status": body.Decision})

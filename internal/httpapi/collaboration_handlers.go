@@ -3,7 +3,6 @@ package httpapi
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -11,27 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/hkjang/umm/internal/webhook"
 )
-
-func (s *Server) publishSpaceEvent(r *http.Request, spaceID uuid.UUID, eventType string, resourceID uuid.UUID, payload any) {
-	p := principal(r)
-	raw, _ := json.Marshal(payload)
-	var resource any = resourceID
-	if resourceID == uuid.Nil {
-		resource = nil
-	}
-	tag, err := s.Store.Pool.Exec(r.Context(), `INSERT INTO space_events(space_id,actor_id,event_type,resource_id,payload) VALUES($1,$2,$3,$4,$5)`, spaceID, p.User.ID, eventType, resource, raw)
-	if err != nil {
-		slog.Warn("space event publish failed", "space_id", spaceID, "event_type", eventType, "error", err)
-	} else if tag.RowsAffected() != 1 {
-		slog.Warn("space event was not stored", "space_id", spaceID, "event_type", eventType)
-	} else if s.Webhooks != nil {
-		if _, enqueueErr := s.Webhooks.Enqueue(r.Context(), webhook.Event{Type: eventType, SpaceID: spaceID, ResourceID: resourceID, ActorID: p.User.ID, Data: payload}); enqueueErr != nil {
-			slog.Warn("webhook delivery persistence failed", "space_id", spaceID, "event_type", eventType, "error", enqueueErr)
-		}
-	}
-}
 
 func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:read") {
@@ -182,21 +161,40 @@ func (s *Server) shareSpace(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 202, map[string]any{"required": true, "requestId": requestID, "status": "pending"})
 		return
 	}
-	if err := s.applySpaceShare(r, spaceID, targetID, body.Permission); err != nil {
+	if err := s.applySpaceShare(r, spaceID, targetID, body.Permission, payload); err != nil {
 		writeError(w, 500, "공간을 공유하지 못했습니다.")
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "space.share", "space", spaceID.String(), payload)
-	s.publishSpaceEvent(r, spaceID, "member.updated", targetID, payload)
 	writeJSON(w, 201, map[string]any{"required": false, "status": "shared"})
 }
 
-func (s *Server) applySpaceShare(r *http.Request, spaceID, targetID uuid.UUID, permission string) error {
-	_, err := s.Store.Pool.Exec(r.Context(), `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,$3) ON CONFLICT(space_id,user_id) DO UPDATE SET permission=EXCLUDED.permission`, spaceID, targetID, permission)
-	if err == nil {
-		_, _ = s.Store.Pool.Exec(r.Context(), `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id) VALUES($1,'space_shared','새 공간이 공유되었습니다','공유된 공간을 열어 생각을 함께 발전시켜 보세요.','space',$2)`, targetID, spaceID)
+func (s *Server) applySpaceShare(r *http.Request, spaceID, targetID uuid.UUID, permission string, payload any) error {
+	actorID := principal(r).User.ID
+	tx, err := s.Store.Pool.Begin(r.Context())
+	if err != nil {
+		return err
 	}
-	return err
+	defer tx.Rollback(r.Context())
+	command, err := tx.Exec(r.Context(), `
+		INSERT INTO space_members(space_id,user_id,permission)
+		SELECT $1,$2,$3 WHERE EXISTS(
+		  SELECT 1 FROM spaces sp LEFT JOIN space_members actor_member ON actor_member.space_id=sp.id AND actor_member.user_id=$4
+		  WHERE sp.id=$1 AND (sp.owner_id=$4 OR actor_member.permission='manage'))
+		ON CONFLICT(space_id,user_id) DO UPDATE SET permission=EXCLUDED.permission`, spaceID, targetID, permission, actorID)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf("space share permission changed before commit")
+	}
+	if _, err = tx.Exec(r.Context(), `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id) VALUES($1,'space_shared','새 공간이 공유되었습니다','공유된 공간을 열어 생각을 함께 발전시켜 보세요.','space',$2)`, targetID, spaceID); err != nil {
+		return err
+	}
+	if err = s.Store.AppendSpaceEvent(r.Context(), tx, actorID, spaceID, "member.updated", targetID, payload); err != nil {
+		return err
+	}
+	return tx.Commit(r.Context())
 }
 
 func (s *Server) removeSpaceMember(w http.ResponseWriter, r *http.Request) {
@@ -216,12 +214,33 @@ func (s *Server) removeSpaceMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "공간 공유를 관리할 권한이 없습니다.")
 		return
 	}
-	cmd, err := s.Store.Pool.Exec(r.Context(), `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID)
-	if err != nil || cmd.RowsAffected() == 0 {
+	tx, err := s.Store.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "공유 사용자를 제거하지 못했습니다.")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	cmd, err := tx.Exec(r.Context(), `
+		DELETE FROM space_members target USING spaces sp
+		LEFT JOIN space_members actor_member ON actor_member.space_id=sp.id AND actor_member.user_id=$3
+		WHERE target.space_id=$1 AND target.user_id=$2 AND sp.id=target.space_id
+		  AND (sp.owner_id=$3 OR actor_member.permission='manage')`, spaceID, memberID, p.User.ID)
+	if err != nil {
+		writeError(w, 500, "공유 사용자를 제거하지 못했습니다.")
+		return
+	}
+	if cmd.RowsAffected() == 0 {
 		writeError(w, 404, "공유 사용자를 찾을 수 없습니다.")
 		return
 	}
-	s.publishSpaceEvent(r, spaceID, "member.removed", memberID, map[string]any{})
+	if err = s.Store.AppendSpaceEvent(r.Context(), tx, p.User.ID, spaceID, "member.removed", memberID, map[string]any{}); err != nil {
+		writeError(w, 500, "공유 변경 이벤트를 저장하지 못했습니다.")
+		return
+	}
+	if err = tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "공유 사용자 제거를 확정하지 못했습니다.")
+		return
+	}
 	s.Store.Audit(r.Context(), &p.User.ID, "space.unshare", "space", spaceID.String(), map[string]any{"userId": memberID})
 	w.WriteHeader(http.StatusNoContent)
 }

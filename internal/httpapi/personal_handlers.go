@@ -268,8 +268,6 @@ func (s *Server) acceptDream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "dream.accept", "dream", id.String(), map[string]any{"noteId": note.ID, "spaceId": note.SpaceID})
-	s.publishSpaceEvent(r, note.SpaceID, "dream.accepted", id, map[string]any{"dreamId": id, "note": note})
-	s.publishSpaceEvent(r, note.SpaceID, "note.created", note.ID, note)
 	writeJSON(w, http.StatusCreated, note)
 }
 
@@ -341,8 +339,6 @@ func (s *Server) saveDevelopedDream(w http.ResponseWriter, r *http.Request) {
 	if result.Created {
 		status = http.StatusCreated
 		s.Store.Audit(r.Context(), &p.User.ID, "dream.development.save", "dream", id.String(), map[string]any{"noteId": result.Note.ID, "spaceId": result.Note.SpaceID})
-		s.publishSpaceEvent(r, result.Note.SpaceID, "note.created", result.Note.ID, result.Note)
-		s.publishSpaceEvent(r, result.Edge.SpaceID, "edge.created", result.Edge.ID, result.Edge)
 	}
 	writeJSON(w, status, result)
 }

@@ -210,7 +210,7 @@ func (s *Server) createComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	comment, spaceID, err := s.Store.CreateComment(r.Context(), p.User.ID, noteID, body.ParentID, body.Body, mentionedUsernames(body.Body))
+	comment, _, err := s.Store.CreateComment(r.Context(), p.User.ID, noteID, body.ParentID, body.Body, mentionedUsernames(body.Body))
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusNotFound, "댓글을 남길 수 있는 생각을 찾지 못했습니다.")
@@ -221,7 +221,6 @@ func (s *Server) createComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "comment.create", "comment", comment.ID.String(), map[string]any{"noteId": noteID})
-	s.publishSpaceEvent(r, spaceID, "comment.created", comment.ID, comment)
 	writeJSON(w, http.StatusCreated, comment)
 }
 
@@ -241,12 +240,11 @@ func (s *Server) resolveComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	comment, spaceID, err := s.Store.ResolveComment(r.Context(), p.User.ID, commentID, body.Resolved)
+	comment, _, err := s.Store.ResolveComment(r.Context(), p.User.ID, commentID, body.Resolved)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "댓글 상태를 변경할 권한이 없습니다.")
 		return
 	}
-	s.publishSpaceEvent(r, spaceID, "comment.resolved", comment.ID, comment)
 	writeJSON(w, http.StatusOK, comment)
 }
 
@@ -259,13 +257,12 @@ func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	spaceID, err := s.Store.DeleteComment(r.Context(), p.User.ID, commentID)
+	_, err := s.Store.DeleteComment(r.Context(), p.User.ID, commentID)
 	if err != nil {
 		writeError(w, http.StatusForbidden, "댓글을 삭제할 권한이 없습니다.")
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "comment.delete", "comment", commentID.String(), map[string]any{})
-	s.publishSpaceEvent(r, spaceID, "comment.deleted", commentID, map[string]any{})
 	w.WriteHeader(http.StatusNoContent)
 }
 

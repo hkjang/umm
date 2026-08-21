@@ -181,7 +181,6 @@ func (s *Server) updateSpace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "space.update", "space", spaceID.String(), map[string]any{"name": name, "aiExcluded": body.AIExcluded})
-	s.publishSpaceEvent(r, spaceID, "space.updated", spaceID, updated)
 	writeJSON(w, 200, updated)
 }
 
@@ -311,7 +310,6 @@ func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "note.create", "note", created.ID.String(), map[string]any{"spaceId": spaceID})
-	s.publishSpaceEvent(r, spaceID, "note.created", created.ID, created)
 	writeJSON(w, 201, created)
 }
 
@@ -351,7 +349,6 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 			_ = s.Dreams.Feedback(r.Context(), p.User.ID, dreamID, "edited")
 		}
 	}
-	s.publishSpaceEvent(r, updated.SpaceID, "note.updated", updated.ID, updated)
 	writeJSON(w, 200, updated)
 }
 
@@ -364,8 +361,6 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	var spaceID uuid.UUID
-	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT space_id FROM notes WHERE id=$1`, id).Scan(&spaceID)
 	var dreamID uuid.UUID
 	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT dream_id FROM dream_notes WHERE note_id=$1 AND user_id=$2`, id, p.User.ID).Scan(&dreamID)
 	if err := s.Store.DeleteNote(r.Context(), p.User.ID, id); err != nil {
@@ -376,9 +371,6 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 		_ = s.Dreams.Feedback(r.Context(), p.User.ID, dreamID, "deleted")
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "note.delete", "note", id.String(), map[string]any{})
-	if spaceID != uuid.Nil {
-		s.publishSpaceEvent(r, spaceID, "note.deleted", id, map[string]any{})
-	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -408,7 +400,6 @@ func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
 	if s.Store.Pool.QueryRow(r.Context(), `SELECT dream_id FROM dream_notes WHERE note_id IN ($1,$2) AND user_id=$3 LIMIT 1`, e.SourceID, e.TargetID, p.User.ID).Scan(&dreamID) == nil {
 		_ = s.Dreams.Feedback(r.Context(), p.User.ID, dreamID, "connected")
 	}
-	s.publishSpaceEvent(r, spaceID, "edge.created", created.ID, created)
 	writeJSON(w, 201, created)
 }
 
@@ -512,7 +503,6 @@ func (s *Server) restoreNote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "복원할 기록을 찾을 수 없습니다.")
 		return
 	}
-	s.publishSpaceEvent(r, restored.SpaceID, "note.restored", restored.ID, restored)
 	s.Store.Audit(r.Context(), &p.User.ID, "note.restore", "note", id.String(), map[string]any{"fromVersion": version})
 	writeJSON(w, 200, restored)
 }

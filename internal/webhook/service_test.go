@@ -155,6 +155,15 @@ func TestDurableQueueSurvivesServiceRestartIntegration(t *testing.T) {
 	if elapsed := time.Since(persisted.CreatedAt); elapsed < 0 || elapsed > time.Minute {
 		t.Fatalf("unexpected persisted event timestamp %s", persisted.CreatedAt)
 	}
+	if err = afterRestart.finishSuccess(ctx, claimed, http.StatusNoContent, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Pool.QueryRow(ctx, `SELECT status,payload FROM webhook_deliveries WHERE id=$1`, deliveryID).Scan(&status, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if status != "delivered" || string(payload) != "{}" {
+		t.Fatalf("terminal delivery status=%q payload=%s, want delivered/{}", status, payload)
+	}
 
 	spaceID, revokedEventID := uuid.New(), uuid.New()
 	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'webhook authorization')`, spaceID, ownerID); err != nil {
@@ -187,10 +196,21 @@ func TestDurableQueueSurvivesServiceRestartIntegration(t *testing.T) {
 		t.Fatal("delivery proceeded after the subscription owner lost space access")
 	}
 	var failureCount int
-	if err = db.Pool.QueryRow(ctx, `SELECT d.status,s.failure_count FROM webhook_deliveries d JOIN webhook_subscriptions s ON s.id=d.subscription_id WHERE d.id=$1`, revoked.ID).Scan(&status, &failureCount); err != nil {
+	if err = db.Pool.QueryRow(ctx, `SELECT d.status,d.payload,s.failure_count FROM webhook_deliveries d JOIN webhook_subscriptions s ON s.id=d.subscription_id WHERE d.id=$1`, revoked.ID).Scan(&status, &payload, &failureCount); err != nil {
 		t.Fatal(err)
 	}
-	if status != "failed" || failureCount != 0 {
-		t.Fatalf("revoked delivery status=%q failure_count=%d, want failed/0", status, failureCount)
+	if status != "failed" || string(payload) != "{}" || failureCount != 0 {
+		t.Fatalf("revoked delivery status=%q payload=%s failure_count=%d, want failed/{}/0", status, payload, failureCount)
+	}
+	if _, err = db.Pool.Exec(ctx, `UPDATE webhook_deliveries SET attempted_at=now()-interval '31 days' WHERE subscription_id=$1`, subscriptionID); err != nil {
+		t.Fatal(err)
+	}
+	afterRestart.cleanupDeliveries(ctx)
+	var retained int
+	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM webhook_deliveries WHERE subscription_id=$1`, subscriptionID).Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained != 0 {
+		t.Fatalf("terminal delivery retention kept %d rows older than %d days", retained, deliveryRetentionDays)
 	}
 }

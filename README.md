@@ -30,7 +30,7 @@
 - **오늘의 리뷰**: 다시 볼 생각, 연결되지 않은 생각, 대기 중인 Dream, 최근 댓글을 한 화면에서 검토합니다.
 - **찾기와 맥락**: 로컬 의미 벡터와 키워드를 결합한 하이브리드 검색, 필터, 백링크, 연관 생각으로 탐색합니다.
 - **협업 신뢰성**: 댓글·멘션·딥링크 알림, SSE, 오프라인 변경 큐, 멱등 재전송, 시각적 버전 충돌 병합을 지원합니다.
-- **자동화와 운영**: PostgreSQL에 먼저 보존되는 SSRF 방어·HMAC-SHA256 서명 웹훅, Prometheus 지표, 선택적 OpenTelemetry OTLP trace, AI 평가 세트를 제공합니다.
+- **자동화와 운영**: 도메인 변경과 원자적으로 PostgreSQL에 보존되는 SSRF 방어·HMAC-SHA256 서명 웹훅, Prometheus 지표, 선택적 OpenTelemetry OTLP trace, AI 평가 세트를 제공합니다.
 - **보안과 복구**: 무중단 master-key keyring 회전, RFC 9457 오류, 공급망 SBOM·provenance attestation, CI 백업 복구 리허설을 포함합니다.
 
 ---
