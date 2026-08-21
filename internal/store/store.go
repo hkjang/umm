@@ -396,12 +396,6 @@ func (s *Store) DeleteSpace(ctx context.Context, userID, spaceID uuid.UUID) erro
 	return nil
 }
 
-func (s *Store) CanEditSpace(ctx context.Context, userID, spaceID uuid.UUID) bool {
-	var ok bool
-	_ = s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$1 WHERE s.id=$2 AND (s.owner_id=$1 OR m.permission IN ('edit','manage')))`, userID, spaceID).Scan(&ok)
-	return ok
-}
-
 func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query string) ([]Note, []Edge, error) {
 	patterns := noteSearchPatterns(query)
 	b := &queryBuilder{}

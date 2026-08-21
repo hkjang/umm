@@ -3,8 +3,10 @@ package dream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -12,6 +14,145 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/store"
 )
+
+func TestDreamAcceptanceUsesSinglePoolConnectionIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not set")
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("pool_max_conns", "1")
+	parsed.RawQuery = query.Encode()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	db, err := store.Open(ctx, parsed.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if db.Pool.Config().MaxConns != 1 {
+		t.Fatalf("test requires one pool connection, got %d", db.Pool.Config().MaxConns)
+	}
+
+	ownerID, editorID, spaceID, sourceID, dreamID := uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	ownerName, editorName := "dream_pool_owner_"+ownerID.String(), "dream_pool_editor_"+editorID.String()
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO users(id,username,display_name) VALUES
+		($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, editorID, editorName); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, editorID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'single-pool Dream acceptance')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'edit')`, spaceID, editorID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content,x,y) VALUES($1,$2,$3,'Dream source',10,20)`, sourceID, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO dream_notes(dream_id,user_id,space_id,dream_type,content) VALUES($1,$2,$3,'connection','single connection candidate')`, dreamID, editorID, spaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO dream_sources(dream_id,source_note_id,rank,cited) VALUES($1,$2,1,true)`, dreamID, sourceID); err != nil {
+		t.Fatal(err)
+	}
+
+	service := &Service{Store: db}
+	accepted, err := service.Accept(ctx, editorID, dreamID, "")
+	if err != nil {
+		t.Fatalf("Dream acceptance exhausted its single transaction connection: %v", err)
+	}
+	if accepted.SpaceID != spaceID || accepted.AuthorID != editorID || accepted.Source != "dream" {
+		t.Fatalf("unexpected accepted Dream note: %#v", accepted)
+	}
+}
+
+func TestDreamEditPermissionLockSerializesDowngradeIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not set")
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("pool_max_conns", "2")
+	parsed.RawQuery = query.Encode()
+	ctx := context.Background()
+	db, err := store.Open(ctx, parsed.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if db.Pool.Config().MaxConns != 2 {
+		t.Fatalf("test requires two pool connections, got %d", db.Pool.Config().MaxConns)
+	}
+
+	ownerID, editorID, spaceID := uuid.New(), uuid.New(), uuid.New()
+	ownerName, editorName := "dream_lock_owner_"+ownerID.String(), "dream_lock_editor_"+editorID.String()
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO users(id,username,display_name) VALUES
+		($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, editorID, editorName); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, editorID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'Dream permission lock')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'edit')`, spaceID, editorID); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canEdit, err := canEditSpaceTx(ctx, tx, editorID, spaceID)
+	if err != nil || !canEdit {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("editor permission check = %v, err=%v", canEdit, err)
+	}
+	downgradeCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	_, downgradeErr := db.Pool.Exec(downgradeCtx, `UPDATE space_members SET permission='view' WHERE space_id=$1 AND user_id=$2`, spaceID, editorID)
+	if downgradeErr == nil {
+		cancel()
+		_ = tx.Rollback(ctx)
+		t.Fatal("permission downgrade bypassed the Dream transaction membership lock")
+	}
+	if !errors.Is(downgradeErr, context.DeadlineExceeded) && !errors.Is(downgradeCtx.Err(), context.DeadlineExceeded) {
+		cancel()
+		_ = tx.Rollback(ctx)
+		t.Fatalf("permission downgrade failed for an unexpected reason: %v", downgradeErr)
+	}
+	cancel()
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `UPDATE space_members SET permission='view' WHERE space_id=$1 AND user_id=$2`, spaceID, editorID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	canEdit, err = canEditSpaceTx(ctx, tx, editorID, spaceID)
+	if err != nil || canEdit {
+		t.Fatalf("downgraded permission check = %v, err=%v", canEdit, err)
+	}
+}
 
 func TestDreamInboxAcceptanceIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")

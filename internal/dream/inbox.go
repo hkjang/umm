@@ -221,7 +221,11 @@ func (s *Service) Accept(ctx context.Context, userID, dreamID uuid.UUID, overrid
 		_ = s.Feedback(ctx, userID, dreamID, "kept")
 		return s.noteByID(ctx, userID, *existingNoteID)
 	}
-	if !s.Store.CanEditSpace(ctx, userID, spaceID) {
+	canEdit, err := canEditSpaceTx(ctx, tx, userID, spaceID)
+	if err != nil {
+		return store.Note{}, err
+	}
+	if !canEdit {
 		return store.Note{}, errors.New("Dream을 붙일 공간의 편집 권한이 없습니다")
 	}
 	if strings.TrimSpace(override) != "" {
@@ -238,7 +242,8 @@ func (s *Service) Accept(ctx context.Context, userID, dreamID uuid.UUID, overrid
 		JOIN notes n ON n.id=ds.source_note_id AND n.deleted_at IS NULL
 		WHERE ds.dream_id=$1 AND n.space_id=$2
 		ORDER BY ds.cited DESC,ds.rank
-		LIMIT 1`, dreamID, spaceID).Scan(&baseID, &x, &y)
+		LIMIT 1
+		FOR SHARE OF n`, dreamID, spaceID).Scan(&baseID, &x, &y)
 	if err != nil {
 		return store.Note{}, errors.New("Dream의 원본 생각을 찾을 수 없습니다")
 	}
@@ -285,6 +290,29 @@ func (s *Service) Accept(ctx context.Context, userID, dreamID uuid.UUID, overrid
 	return note, nil
 }
 
+// canEditSpaceTx keeps the authorization decision on the transaction's
+// connection and holds the current membership permission stable until commit.
+func canEditSpaceTx(ctx context.Context, tx pgx.Tx, userID, spaceID uuid.UUID) (bool, error) {
+	var ownerID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT owner_id FROM spaces WHERE id=$1 FOR KEY SHARE`, spaceID).Scan(&ownerID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if ownerID == userID {
+		return true, nil
+	}
+	var permission string
+	if err := tx.QueryRow(ctx, `SELECT permission FROM space_members WHERE space_id=$1 AND user_id=$2 FOR SHARE`, spaceID, userID).Scan(&permission); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return permission == "edit" || permission == "manage", nil
+}
+
 func (s *Service) noteByID(ctx context.Context, userID, noteID uuid.UUID) (store.Note, error) {
 	var note store.Note
 	err := s.Store.Pool.QueryRow(ctx, `
@@ -326,13 +354,8 @@ func (s *Service) MaterializeDevelopment(ctx context.Context, userID, dreamID uu
 	if err != nil {
 		return DevelopmentMaterialization{}, err
 	}
-	var canEdit bool
-	if err = tx.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM spaces sp
-			LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$1
-			WHERE sp.id=$2 AND (sp.owner_id=$1 OR sm.permission IN ('edit','manage'))
-		)`, userID, spaceID).Scan(&canEdit); err != nil {
+	canEdit, err := canEditSpaceTx(ctx, tx, userID, spaceID)
+	if err != nil {
 		return DevelopmentMaterialization{}, err
 	}
 	if !canEdit {

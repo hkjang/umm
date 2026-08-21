@@ -40,6 +40,7 @@ User API/MCP key (one-time plaintext display)
 - Offline retry: atomic Canvas mutation에 한정한 `Idempotency-Key`, 사용자·키별 advisory lock, 실행 중 갱신되는 2분 pending lease, 도메인/SSE/outbox/응답 원자 커밋과 24시간 성공 replay로 동시 중복·post-commit 기록 유실·crash 고착 방지
 - Aggregate scope: `notes:read`만 가진 API key의 Today 응답에서는 `dreams:read` 데이터와 개수를 제거해 집계 endpoint를 통한 scope 우회를 차단
 - One-time secrets: API key와 webhook signing key 생성·회전 응답은 멱등 캐시 대상에서 제외해 평문 자격 증명을 PostgreSQL에 남기지 않음
+- Dream materialization: 채택·발전 transaction이 공간과 현재 편집 membership을 같은 연결에서 잠가, 권한 강등·회수와 메모·연결선·이벤트 생성이 엇갈리거나 작은 pool에서 중첩 연결을 기다리지 않도록 함
 
 TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장합니다. 이 경우 직접 연결되는 proxy IP/CIDR만 `UMM_TRUSTED_PROXY_CIDRS`에 지정하고 proxy가 `X-Forwarded-For`와 `X-Forwarded-Proto: https`를 정규화해 전달하도록 구성하세요. 목록이 비어 있거나 socket peer가 목록 밖이면 umm은 모든 forwarding header를 제거합니다. Keycloak redirect URI는 wildcard가 아니라 callback 전체 경로로 제한하세요.
 

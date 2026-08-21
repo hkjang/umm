@@ -62,7 +62,9 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | `POST` | `/dreams/{id}/develop` | 확장·반대 관점·실행 항목으로 발전 | `dreams:read` |
 | `POST` | `/dreams/{id}/developed-note` | 발전 결과를 새 메모와 `expanded` 연결선으로 원자 저장(동일 재시도 무중복) | `dreams:read`, `notes:write` |
 
-`GET /notifications`의 각 항목에는 `resourceType`, `resourceId`, `resourceSpaceId`, `metadata`가 포함됩니다. Dream 알림은 `/dreams?focus={resourceId}`, 공간 공유 알림은 `/space/{resourceId}`, 댓글·멘션은 `/space/{resourceSpaceId}?note={resourceId}`로 연결할 수 있습니다. note 알림은 현재 생각의 soft-delete 상태와 실제 공간 접근권한을 목록·unread count 양쪽에서 확인하며, 이전 행에 `resourceSpaceId`가 없어도 생각이 속한 공간으로 권한을 계산합니다. unread count와 page 조회는 DB 연결을 겹쳐 잡지 않고 순차 실행하므로 realtime listener가 한 연결을 점유한 작은 pool에서도 endpoint가 자기 자신을 기다리지 않습니다.
+Dream 채택과 발전 결과 저장은 열린 transaction 안에서 현재 공간과 편집 membership을 잠근 뒤 메모·연결선·이벤트를 확정합니다. 권한 강등이 먼저 끝나면 생성하지 않고, 생성이 먼저 잠금을 얻으면 권한 변경이 commit 뒤까지 기다립니다. 별도 pool 연결로 권한을 다시 조회하지 않으므로 `pool_max_conns=1`에서도 자신이 보유한 transaction 연결을 기다리지 않습니다.
+
+`GET /notifications`의 각 항목에는 `resourceType`, `resourceId`, `resourceSpaceId`, `metadata`가 포함됩니다. Dream 알림은 `/dreams?focus={resourceId}`, 공간 공유 알림은 `/space/{resourceId}`, 댓글·멘션은 `/space/{resourceSpaceId}?note={resourceId}`로 연결할 수 있습니다. note 알림은 현재 생각의 soft-delete 상태와 실제 공간 접근권한을 목록·unread count 양쪽에서 확인하며, 이전 행에 `resourceSpaceId`가 없어도 생각이 속한 공간으로 권한을 계산합니다. unread count와 page 조회는 DB 연결을 겹쳐 잡지 않고 순차 실행합니다. `pool_max_conns` 1~2에서는 realtime listener도 안전 폴링으로 전환하므로 endpoint가 자신이 필요한 request 연결을 기다리지 않습니다.
 
 개인 설정과 API key 생성·회전·폐기, 세션 관리, 모든 `/admin/*` 작업은 API key가 아니라 로그인한 브라우저 세션에서만 허용됩니다. 제한된 자동화 key가 새 자격 증명을 만들거나 관리자 role을 상속해 권한을 넓힐 수 없습니다.
 

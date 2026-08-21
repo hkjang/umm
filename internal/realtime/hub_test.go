@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -108,57 +109,112 @@ func TestParsePayload(t *testing.T) {
 	}
 }
 
-func TestRunLeavesSingleConnectionPoolForRequestsIntegration(t *testing.T) {
+func TestRunReservesTwoRequestConnectionsIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("POSTGRES_DSN is not configured")
 	}
+	for _, maximum := range []int{1, 2} {
+		t.Run(strconv.Itoa(maximum), func(t *testing.T) {
+			pool := poolWithMaxConnections(t, dsn, maximum)
+			hub := New(pool)
+			runCtx, runCancel := context.WithCancel(context.Background())
+			defer runCancel()
+			done := make(chan struct{})
+			go func() {
+				hub.Run(runCtx)
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(500 * time.Millisecond):
+				runCancel()
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+				}
+				t.Fatalf("LISTEN hub occupied a pool with only %d request connections", maximum)
+			}
+			if hub.Listening() {
+				t.Fatal("small-pool fallback must report the listener as unavailable")
+			}
+			acquireCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			connections := make([]*pgxpool.Conn, 0, maximum)
+			for range maximum {
+				connection, err := pool.Acquire(acquireCtx)
+				if err != nil {
+					t.Fatalf("request connection was unavailable: acquired=%d/%d err=%v", len(connections), maximum, err)
+				}
+				connections = append(connections, connection)
+			}
+			for _, connection := range connections {
+				connection.Release()
+			}
+		})
+	}
+
+	t.Run("three starts listener", func(t *testing.T) {
+		pool := poolWithMaxConnections(t, dsn, 3)
+		hub := New(pool)
+		runCtx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			hub.Run(runCtx)
+			close(done)
+		}()
+		deadline := time.Now().Add(2 * time.Second)
+		for !hub.Listening() && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !hub.Listening() {
+			cancel()
+			<-done
+			t.Fatal("three-connection pool did not start the collaboration listener")
+		}
+		acquireCtx, acquireCancel := context.WithTimeout(context.Background(), time.Second)
+		first, err := pool.Acquire(acquireCtx)
+		if err != nil {
+			acquireCancel()
+			cancel()
+			<-done
+			t.Fatal(err)
+		}
+		second, err := pool.Acquire(acquireCtx)
+		acquireCancel()
+		if err != nil {
+			first.Release()
+			cancel()
+			<-done
+			t.Fatalf("listener did not leave two request connections: %v", err)
+		}
+		second.Release()
+		first.Release()
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("LISTEN hub did not stop after cancellation")
+		}
+	})
+}
+
+func poolWithMaxConnections(t *testing.T, dsn string, maximum int) *pgxpool.Pool {
+	t.Helper()
 	parsed, err := url.Parse(dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	query := parsed.Query()
-	query.Set("pool_max_conns", "1")
+	query.Set("pool_max_conns", strconv.Itoa(maximum))
 	parsed.RawQuery = query.Encode()
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, parsed.String())
+	pool, err := pgxpool.New(context.Background(), parsed.String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Close()
-	if pool.Config().MaxConns != 1 {
-		t.Fatalf("test requires a one-connection pool, got %d", pool.Config().MaxConns)
+	t.Cleanup(pool.Close)
+	if pool.Config().MaxConns != int32(maximum) {
+		t.Fatalf("pool maximum = %d, want %d", pool.Config().MaxConns, maximum)
 	}
-
-	hub := New(pool)
-	runCtx, cancel := context.WithCancel(ctx)
-	done := make(chan struct{})
-	go func() {
-		hub.Run(runCtx)
-		close(done)
-	}()
-	returned := false
-	select {
-	case <-done:
-		returned = true
-	case <-time.After(500 * time.Millisecond):
-	}
-	if !returned {
-		cancel()
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-			t.Fatal("LISTEN hub did not release the single pool connection after cancellation")
-		}
-		t.Fatal("LISTEN hub must disable itself instead of occupying the only request connection")
-	}
-	cancel()
-	if hub.Listening() {
-		t.Fatal("single-connection fallback must report the listener as unavailable")
-	}
-	pingCtx, pingCancel := context.WithTimeout(ctx, time.Second)
-	defer pingCancel()
-	if err = pool.Ping(pingCtx); err != nil {
-		t.Fatalf("single request connection was unavailable: %v", err)
-	}
+	return pool
 }

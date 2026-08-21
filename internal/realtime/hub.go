@@ -123,8 +123,8 @@ func (h *Hub) Publish(spaceID uuid.UUID) {
 // Run holds one connection in LISTEN mode until the context is cancelled,
 // reconnecting with backoff whenever PostgreSQL or the network drops it.
 func (h *Hub) Run(ctx context.Context) {
-	if maxConnections := h.pool.Config().MaxConns; maxConnections < 2 {
-		slog.Warn("collaboration listener disabled because the pool has no spare connection", "pool_max_conns", maxConnections)
+	if maxConnections := h.pool.Config().MaxConns; maxConnections < 3 {
+		slog.Warn("collaboration listener disabled because the pool cannot reserve two request connections", "pool_max_conns", maxConnections)
 		return
 	}
 	backoff := time.Second
