@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {
+  commentMutationForbiddenProblem,
   isTerminalOfflineRejection,
   mergeOfflineQueues,
   noteReadOnlyProblem,
@@ -59,6 +60,11 @@ assert.deepEqual(
 );
 
 assert.equal(isTerminalOfflineRejection(403, noteReadOnlyProblem), true, 'a typed read-only response must remove an impossible mutation');
+assert.equal(
+  isTerminalOfflineRejection(403, commentMutationForbiddenProblem),
+  true,
+  'a typed forbidden comment mutation must not block later offline changes',
+);
 assert.equal(isTerminalOfflineRejection(403), false, 'generic authorization failures must remain queued');
 assert.equal(isTerminalOfflineRejection(404), true, 'missing resources are terminal');
 assert.equal(isTerminalOfflineRejection(409), false, 'version conflicts require user reconciliation');

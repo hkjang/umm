@@ -202,6 +202,14 @@ func commentMutationError(err error, forbiddenMessage, failureMessage string) (i
 	return http.StatusInternalServerError, failureMessage
 }
 
+func writeCommentMutationError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if status == http.StatusForbidden {
+		writeProblem(w, r, status, "comment-mutation-forbidden", "댓글 변경 권한 없음", message, nil)
+		return
+	}
+	writeError(w, status, message)
+}
+
 func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:read") {
 		return
@@ -280,7 +288,7 @@ func (s *Server) resolveComment(w http.ResponseWriter, r *http.Request) {
 		if status >= http.StatusInternalServerError {
 			slog.Warn("comment resolution failed", "comment_id", commentID, "user_id", p.User.ID, "error", err)
 		}
-		writeError(w, status, message)
+		writeCommentMutationError(w, r, status, message)
 		return
 	}
 	writeJSON(w, http.StatusOK, comment)
@@ -301,7 +309,7 @@ func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
 		if status >= http.StatusInternalServerError {
 			slog.Warn("comment deletion failed", "comment_id", commentID, "user_id", p.User.ID, "error", err)
 		}
-		writeError(w, status, message)
+		writeCommentMutationError(w, r, status, message)
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "comment.delete", "comment", commentID.String(), map[string]any{})

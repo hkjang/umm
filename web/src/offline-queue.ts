@@ -8,9 +8,12 @@ export interface OfflineMutation {
 }
 
 export const noteReadOnlyProblem = 'https://umm.local/problems/note-read-only';
+export const commentMutationForbiddenProblem = 'https://umm.local/problems/comment-mutation-forbidden';
+
+const terminalForbiddenProblems = new Set([noteReadOnlyProblem, commentMutationForbiddenProblem]);
 
 export function isTerminalOfflineRejection(status: number, problemType = ''): boolean {
-  if (status === 403 && problemType === noteReadOnlyProblem) return true;
+  if (status === 403 && terminalForbiddenProblems.has(problemType)) return true;
   if (status < 400 || status >= 500) return false;
   return ![401, 403, 408, 409, 425, 429].includes(status);
 }

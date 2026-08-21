@@ -271,7 +271,7 @@ paths:
     put:
       operationId: put_comments_commentId_resolve
       tags: [Collaboration]
-      summary: Resolve or reopen a comment thread
+      summary: Resolve or reopen a comment thread; permanently forbidden replays return comment-mutation-forbidden
       x-required-scope: notes:write
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
@@ -280,17 +280,20 @@ paths:
         content: { application/json: { schema: { type: object, required: [resolved], properties: { resolved: { type: boolean } } } } }
       responses:
         '200': { description: Updated comment, content: { application/json: { schema: { $ref: '#/components/schemas/Comment' } } } }
+        '403': { description: Terminal comment-mutation-forbidden Problem Details when the current session can no longer mutate the comment, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /comments/{commentId}:
     parameters:
       - { $ref: '#/components/parameters/CommentID' }
     delete:
       operationId: delete_comments_commentId
       tags: [Collaboration]
-      summary: Soft-delete an authored or managed comment
+      summary: Soft-delete an authored or managed comment; permanently forbidden replays return comment-mutation-forbidden
       x-required-scope: notes:write
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
-      responses: { '204': { description: Comment deleted } }
+      responses:
+        '204': { description: Comment deleted }
+        '403': { description: Terminal comment-mutation-forbidden Problem Details when the current session can no longer mutate the comment, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /notes/{noteId}/history:
     parameters:
       - { $ref: '#/components/parameters/NoteID' }

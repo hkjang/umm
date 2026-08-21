@@ -9,6 +9,7 @@ import {
   setOfflineQueueOwner,
 } from './api';
 import { setLocale } from './i18n/translate';
+import { commentMutationForbiddenProblem } from './offline-queue';
 
 const jsonResponse = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -141,6 +142,33 @@ describe('offline queue', () => {
     );
     const result = await flushOfflineQueue();
     expect(result.remaining).toBe(0);
+  });
+
+  it('drops a forbidden comment mutation and continues syncing later changes', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('network down'))),
+    );
+    await api('/comments/c1/resolve', {
+      method: 'PUT',
+      body: '{"resolved":true}',
+      queueIfOffline: true,
+      silent: true,
+    }).catch(() => undefined);
+    await api('/notes/n2', { method: 'PUT', body: '{"content":"later"}', queueIfOffline: true, silent: true }).catch(
+      () => undefined,
+    );
+
+    const replay = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(403, { type: commentMutationForbiddenProblem, detail: 'forbidden' }))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', replay);
+    const result = await flushOfflineQueue();
+
+    expect(result).toEqual({ synced: 1, remaining: 0 });
+    expect(replay).toHaveBeenCalledTimes(2);
+    expect(offlineQueueCount()).toBe(0);
   });
 
   it('keeps a conflicted change for the merge dialog', async () => {

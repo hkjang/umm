@@ -210,6 +210,7 @@ const problemTitles: Record<string, string> = {
   'ai-daily-limit': msg('오늘의 AI 사용량을 모두 썼습니다'),
   'login-locked': msg('로그인이 일시적으로 잠겼습니다'),
   'note-version-conflict': msg('메모 변경이 겹쳤습니다'),
+  'comment-mutation-forbidden': msg('댓글 변경 권한이 없습니다'),
 };
 
 export function problemMessage(payload: Record<string, any>): string {

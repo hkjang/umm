@@ -84,7 +84,7 @@ Dream 채택과 발전 결과 저장은 열린 transaction 안에서 현재 공�
 
 Canvas 목록·수정 이력·댓글·백링크처럼 본문을 반환하는 조회는 사전 권한 확인 결과를 재사용하지 않고, 콘텐츠를 읽는 PostgreSQL statement 자체에서 현재 공간 owner/member 조건을 확인합니다. 멤버가 제거된 뒤 시작된 조회는 빈 본문을 반환하지 않고 404로 종료됩니다.
 
-댓글 작성은 생각과 공간을 확인한 뒤 호출자의 현재 멤버십 행을 transaction 종료까지 잠급니다. 작성과 권한 회수가 겹치면 먼저 잠금을 얻은 작업이 끝난 뒤 다음 작업이 진행되며, 권한 회수가 먼저 확정된 요청은 댓글·알림·실시간 이벤트·webhook outbox를 만들지 않고 404로 종료됩니다. 생각이 soft-delete된 뒤 보관한 댓글 ID로 해결·재개·삭제를 요청해도 현재 생각 상태를 mutation statement에서 확인해 행·이벤트·webhook을 바꾸지 않습니다. `review_digest=false`는 `/today`의 협업 활동만 제외하고 고정·다시 보기 기한·오래된 생각의 기본 검토 목록은 유지합니다.
+댓글 작성은 생각과 공간을 확인한 뒤 호출자의 현재 멤버십 행을 transaction 종료까지 잠급니다. 작성과 권한 회수가 겹치면 먼저 잠금을 얻은 작업이 끝난 뒤 다음 작업이 진행되며, 권한 회수가 먼저 확정된 요청은 댓글·알림·실시간 이벤트·webhook outbox를 만들지 않고 404로 종료됩니다. 생각이 soft-delete되었거나 공간에서 제거된 뒤 보관한 댓글 ID로 해결·재개·삭제를 요청하면 현재 상태를 mutation statement에서 확인하고 `comment-mutation-forbidden` 403 Problem Details로 종료해 행·이벤트·webhook을 바꾸지 않습니다. 이 타입은 재시도해도 적용할 수 없는 오프라인 변경임을 뜻합니다. `review_digest=false`는 `/today`의 협업 활동만 제외하고 고정·다시 보기 기한·오래된 생각의 기본 검토 목록은 유지합니다.
 
 `/search`, `/notifications`, `/dreams`, `/admin/audit`는 응답의 `nextCursor`를 다음 요청의 `cursor`에 그대로 전달합니다. cursor 내부 형식에 의존하지 마세요.
 
@@ -121,7 +121,7 @@ Canvas의 메모·연결·댓글 생성/수정/삭제 요청에 8~128자의 `Ide
 
 오류 본문은 `application/problem+json`이며 `type`, `title`, `status`, `detail`을 제공합니다. 기존 클라이언트를 위해 `error`도 같은 설명을 유지합니다. 접근 가능한 메모의 version 충돌만 409와 `clientVersion`, 최신 서버 `latest` 메모를 반환합니다. 메모가 삭제되었거나 공간 접근 권한을 잃은 경우에는 404로 종료합니다.
 
-브라우저 오프라인 queue는 409 충돌과 408·425·429·5xx처럼 다시 시도할 수 있는 응답만 보존하고 일시 오류는 `Retry-After` 또는 기본 5초 뒤 자동 재시도합니다. 400·404 등 영구적인 client 오류는 사용자에게 사유를 알린 뒤 queue에서 제거해 무한 재시도를 막습니다. 메모를 볼 수는 있지만 공간 권한이 `edit`에서 `view`로 낮아진 경우에는 `note-read-only` 403 Problem Details를 반환하며, 클라이언트는 일반 인증/권한 403과 구분해 적용 불가능한 변경만 제거합니다. flush 도중 다른 탭이나 새 편집이 추가한 항목은 최신 queue와 ID 단위로 병합하고 탭 간 Web Lock으로 저장을 직렬화해 진행 중이던 snapshot이 덮어쓰지 않습니다.
+브라우저 오프라인 queue는 409 충돌과 408·425·429·5xx처럼 다시 시도할 수 있는 응답만 보존하고 일시 오류는 `Retry-After` 또는 기본 5초 뒤 자동 재시도합니다. 400·404 등 영구적인 client 오류는 사용자에게 사유를 알린 뒤 queue에서 제거해 무한 재시도를 막습니다. 메모를 볼 수는 있지만 공간 권한이 `edit`에서 `view`로 낮아진 `note-read-only`, 더는 댓글을 바꿀 수 없는 `comment-mutation-forbidden` 403은 일반 인증/권한 403과 구분해 해당 변경만 제거하고 이후 항목을 계속 동기화합니다. flush 도중 다른 탭이나 새 편집이 추가한 항목은 최신 queue와 ID 단위로 병합하고 탭 간 Web Lock으로 저장을 직렬화해 진행 중이던 snapshot이 덮어쓰지 않습니다.
 
 ### ⚡ 실시간 이벤트 스트림 (SSE)
 - **경로**: `GET /api/v1/spaces/{spaceID}/events`

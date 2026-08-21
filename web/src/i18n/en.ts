@@ -56,6 +56,7 @@ export const en: Dictionary = {
   '요청 오류': 'Request error',
   '서버가 변경을 거부했습니다 ({status}).': 'The server rejected this change ({status}).',
   '오프라인 변경을 적용하지 못했습니다': 'Could not apply an offline change',
+  '댓글 변경 권한이 없습니다': 'You no longer have permission to change this comment',
   '요청을 완료하지 못했습니다.': 'The request could not be completed.',
   '완료되었습니다.': 'Done.',
   안내: 'Notice',
