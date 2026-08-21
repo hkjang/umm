@@ -359,7 +359,7 @@ func (s *Store) TodayReview(ctx context.Context, userID uuid.UUID) (TodayReview,
 	activityRows, err := s.Pool.Query(ctx, `
 		SELECT c.id,c.note_id,n.space_id,sp.name,u.display_name,left(c.body,500),c.created_at
 		FROM note_comments c JOIN notes n ON n.id=c.note_id JOIN spaces sp ON sp.id=n.space_id JOIN users u ON u.id=c.author_id
-		WHERE c.deleted_at IS NULL AND c.author_id<>$1
+		WHERE c.deleted_at IS NULL AND n.deleted_at IS NULL AND c.author_id<>$1
 		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
 		  AND COALESCE((SELECT review_digest FROM user_preferences WHERE user_id=$1),true)
 		ORDER BY c.created_at DESC,c.id DESC LIMIT 8`, userID)
@@ -489,7 +489,14 @@ func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, par
 	}
 	defer tx.Rollback(ctx)
 	var spaceID, noteAuthor uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT n.space_id,n.author_id FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2 WHERE n.id=$1 AND n.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.user_id=$2)`, noteID, userID).Scan(&spaceID, &noteAuthor)
+	var noteAuthorCanView bool
+	err = tx.QueryRow(ctx, `
+		SELECT n.space_id,n.author_id,
+		       (sp.owner_id=n.author_id OR EXISTS(SELECT 1 FROM space_members author_member WHERE author_member.space_id=sp.id AND author_member.user_id=n.author_id))
+		FROM notes n JOIN spaces sp ON sp.id=n.space_id
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
+		WHERE n.id=$1 AND n.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.user_id=$2)`, noteID, userID).
+		Scan(&spaceID, &noteAuthor, &noteAuthorCanView)
 	if err != nil {
 		return Comment{}, uuid.Nil, err
 	}
@@ -542,7 +549,7 @@ func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, par
 			}
 		}
 	}
-	if noteAuthor != userID && !mentioned[noteAuthor] {
+	if noteAuthor != userID && noteAuthorCanView && !mentioned[noteAuthor] {
 		if _, err = tx.Exec(ctx, `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id,resource_space_id,metadata) VALUES($1,'comment','내 생각에 새 댓글이 달렸습니다',left($2,500),'note',$3,$4,jsonb_build_object('commentId',$5::uuid))`, noteAuthor, body, noteID, spaceID, commentID); err != nil {
 			return Comment{}, uuid.Nil, err
 		}

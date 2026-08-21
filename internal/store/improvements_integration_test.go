@@ -127,6 +127,114 @@ func TestHybridSearchKeepsOlderLexicalMatchesIntegration(t *testing.T) {
 	t.Fatalf("older exact match %s was omitted from %#v", noteID, page.Notes)
 }
 
+func TestCreateCommentDoesNotNotifyRemovedNoteAuthorIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	ownerID, formerMemberID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	ownerName, formerName := "comment_owner_"+ownerID.String(), "former_author_"+formerMemberID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, formerMemberID, formerName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'removed author notification')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'edit')`, spaceID, formerMemberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'former member note')`, noteID, spaceID, formerMemberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, formerMemberID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, formerMemberID)
+
+	if _, _, err = db.CreateComment(ctx, ownerID, noteID, nil, "access-scoped comment", nil); err != nil {
+		t.Fatal(err)
+	}
+	var notifications int
+	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id=$1 AND resource_id=$2`, formerMemberID, noteID).Scan(&notifications); err != nil {
+		t.Fatal(err)
+	}
+	if notifications != 0 {
+		t.Fatalf("removed note author received %d inaccessible comment notifications", notifications)
+	}
+}
+
+func TestTodayReviewExcludesActivityFromDeletedNotesIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	ownerID, memberID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	ownerName, memberName := "deleted_activity_owner_"+ownerID.String(), "deleted_activity_member_"+memberID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, memberID, memberName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO user_preferences(user_id) VALUES($1),($2)`, ownerID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'deleted activity')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'view')`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'soon deleted note')`, noteID, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, memberID)
+
+	comment, _, err := db.CreateComment(ctx, memberID, noteID, nil, "must disappear with its note", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.DeleteNote(ctx, ownerID, noteID); err != nil {
+		t.Fatal(err)
+	}
+	review, err := db.TodayReview(ctx, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, activity := range review.Activity {
+		if activity.ID == comment.ID || activity.NoteID == noteID {
+			t.Fatalf("activity from deleted note was returned: %#v", activity)
+		}
+	}
+}
+
 func reviewContains(items []ReviewItem, noteID uuid.UUID, requirePinned bool) bool {
 	for _, item := range items {
 		if item.ID == noteID && (!requirePinned || item.Pinned) {

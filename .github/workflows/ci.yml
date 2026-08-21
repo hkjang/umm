@@ -51,6 +51,10 @@ jobs:
         env:
           POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
         run: go test ./internal/store -run 'Test.*Integration' -count=1
+      - name: Webhook persistence regression
+        env:
+          POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
+        run: go test ./internal/webhook -run 'Test.*Integration' -count=1
       - name: Backup and restore drill
         env:
           POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}

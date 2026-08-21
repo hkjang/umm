@@ -1,10 +1,18 @@
 package webhook
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
+	"os"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/cryptoutil"
+	"github.com/hkjang/umm/internal/store"
 )
 
 func TestNewUsesGuardedDirectTransport(t *testing.T) {
@@ -67,5 +75,122 @@ func TestValidateEvents(t *testing.T) {
 	}
 	if ValidateEvents(nil) || ValidateEvents([]string{"unknown.event"}) {
 		t.Fatal("unsupported webhook events were accepted")
+	}
+}
+
+func TestDurableQueueSurvivesServiceRestartIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := cryptoutil.New(bytes.Repeat([]byte{0x42}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := cipher.Encrypt("restart-safe-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	userID, ownerID, subscriptionID, eventID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	username := "webhook_restart_" + userID.String()
+	ownerName := "webhook_space_owner_" + ownerID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, userID, username, ownerID, ownerName); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1 OR id=$2`, userID, ownerID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO webhook_subscriptions(id,owner_id,name,url,secret_ciphertext,events) VALUES($1,$2,'restart queue','https://example.com/webhook',$3,ARRAY['note.created'])`, subscriptionID, userID, ciphertext); err != nil {
+		t.Fatal(err)
+	}
+
+	beforeRestart := New(db, cipher)
+	queued, err := beforeRestart.Enqueue(ctx, Event{ID: eventID, Type: "note.created", ActorID: userID, Data: map[string]any{"source": "integration"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued != 1 {
+		t.Fatalf("persisted deliveries = %d, want 1", queued)
+	}
+	var deliveryID uuid.UUID
+	var status string
+	var payload []byte
+	if err = db.Pool.QueryRow(ctx, `UPDATE webhook_deliveries SET next_attempt_at='2000-01-01',created_at='2000-01-01' WHERE subscription_id=$1 AND event_id=$2 RETURNING id,status,payload`, subscriptionID, eventID).
+		Scan(&deliveryID, &status, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if status != "queued" {
+		t.Fatalf("delivery status = %q, want queued", status)
+	}
+	var persisted Event
+	if err = json.Unmarshal(payload, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.ID != eventID || persisted.Type != "note.created" || persisted.CreatedAt.IsZero() {
+		t.Fatalf("persisted event is incomplete: %#v", persisted)
+	}
+
+	afterRestart := New(db, cipher)
+	claimed, ok, err := afterRestart.claimNext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || claimed.ID != deliveryID || claimed.SubscriptionID != subscriptionID {
+		t.Fatalf("restarted service claimed %#v, ok=%v; want delivery %s", claimed, ok, deliveryID)
+	}
+	if err = db.Pool.QueryRow(ctx, `SELECT status FROM webhook_deliveries WHERE id=$1`, deliveryID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "processing" {
+		t.Fatalf("claimed delivery status = %q, want processing", status)
+	}
+	if elapsed := time.Since(persisted.CreatedAt); elapsed < 0 || elapsed > time.Minute {
+		t.Fatalf("unexpected persisted event timestamp %s", persisted.CreatedAt)
+	}
+
+	spaceID, revokedEventID := uuid.New(), uuid.New()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'webhook authorization')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'view')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	queued, err = afterRestart.Enqueue(ctx, Event{ID: revokedEventID, Type: "note.created", SpaceID: spaceID, ActorID: ownerID, Data: map[string]any{"scope": "current"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued != 1 {
+		t.Fatalf("authorized deliveries = %d, want 1", queued)
+	}
+	if _, err = db.Pool.Exec(ctx, `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `UPDATE webhook_deliveries SET next_attempt_at='2000-01-01',created_at='2000-01-01' WHERE subscription_id=$1 AND event_id=$2`, subscriptionID, revokedEventID); err != nil {
+		t.Fatal(err)
+	}
+	revoked, ok, err := afterRestart.claimNext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("delivery was not claimable after access revocation")
+	}
+	if err = afterRestart.deliverClaimed(ctx, revoked); err == nil {
+		t.Fatal("delivery proceeded after the subscription owner lost space access")
+	}
+	var failureCount int
+	if err = db.Pool.QueryRow(ctx, `SELECT d.status,s.failure_count FROM webhook_deliveries d JOIN webhook_subscriptions s ON s.id=d.subscription_id WHERE d.id=$1`, revoked.ID).Scan(&status, &failureCount); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || failureCount != 0 {
+		t.Fatalf("revoked delivery status=%q failure_count=%d, want failed/0", status, failureCount)
 	}
 }

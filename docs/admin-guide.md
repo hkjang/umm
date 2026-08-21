@@ -115,4 +115,4 @@ Dream Layer는 사용자가 밤사이 휴식하는 동안 캔버스에 쌓인 �
 
 ## 9. 서명 웹훅 운영
 
-사용자는 개인 설정에서 허용된 `webhooks:write` scope로 subscription을 관리합니다. 대상은 공개 HTTPS 443만 허용합니다. 수신 시스템은 timestamp와 raw body의 HMAC-SHA256, delivery UUID 중복, 허용 시간 창을 검증해야 합니다. 일시 실패는 세 번 재시도하고 연속 10회 실패 subscription은 자동 중지되므로 운영 지표와 개인 설정의 마지막 오류를 함께 확인하세요.
+사용자는 개인 설정에서 허용된 `webhooks:write` scope로 subscription을 관리합니다. 대상은 공개 HTTPS 443만 허용합니다. 이벤트는 외부 전송 전에 PostgreSQL delivery queue에 저장되고, 재시작 시 대기 또는 lease가 만료된 항목을 이어서 처리합니다. 수신 시스템은 timestamp와 raw body의 HMAC-SHA256, 허용 시간 창을 검증하고 at-least-once 요청의 delivery UUID를 멱등 처리해야 합니다. 일시 실패는 세 번 재시도하고 연속 10회 실패 subscription은 자동 중지되므로 운영 지표와 개인 설정의 마지막 오류를 함께 확인하세요.

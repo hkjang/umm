@@ -79,7 +79,7 @@ signed = X-Umm-Timestamp + "." + raw_request_body
 X-Umm-Signature-256 = "sha256=" + hex(HMAC-SHA256(secret, signed))
 ```
 
-수신 측은 `X-Umm-Delivery` 중복과 timestamp 허용 시간도 함께 확인해야 합니다. 이벤트에는 `space.updated`, `note.*`, `edge.created`, `comment.*`, `member.*`, `dream.accepted`가 있습니다.
+이벤트는 응답 경로에서 활성 구독별 PostgreSQL queue에 먼저 저장되며, 프로세스가 재시작되어도 워커가 대기 항목을 이어서 처리합니다. 전달 시도는 at-least-once 방식이므로 수신 측은 `X-Umm-Delivery`를 멱등 키로 사용해 중복을 무시하고 timestamp 허용 시간도 함께 확인해야 합니다. 이벤트에는 `space.updated`, `note.*`, `edge.created`, `comment.*`, `member.*`, `dream.accepted`가 있습니다.
 
 ### 안전한 재시도와 오류
 

@@ -61,6 +61,8 @@ TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장하며 
 - 웹훅 URL은 HTTPS 기본 포트만 허용하고 credential·fragment를 거부합니다.
 - 등록 시와 실제 연결 시 DNS를 각각 확인해 DNS rebinding을 완화하고, 사설·loopback·link-local·multicast·문서·benchmark·reserved 대역을 차단합니다.
 - payload는 일회 공개되는 subscription secret으로 HMAC-SHA256 서명되며 delivery ID와 Unix timestamp를 포함합니다.
+- 구독별 delivery와 payload는 외부 요청 전에 PostgreSQL에 영속화되고 lease 기반 워커가 재시작 후 이어서 처리합니다. 구독 소유자의 활성 상태와 현재 공간 접근 권한을 실제 전송 직전에 다시 확인합니다. 중단 경계에서 같은 delivery가 다시 전송될 수 있으므로 수신 측은 delivery ID를 멱등 키로 사용합니다.
+- 댓글 알림 대상과 Today 활동은 현재 공간 접근 권한 및 생각 삭제 상태를 다시 확인해 탈퇴 사용자나 삭제된 리소스로 정보가 새지 않도록 합니다.
 - CI는 Go 취약점 검사, npm high 이상 audit, PostgreSQL 17 통합·복구 시험을 수행합니다.
 - 태그 릴리스는 SPDX JSON SBOM, SHA-256 checksum, GitHub provenance 및 SBOM attestation을 이미지 archive와 함께 게시합니다.
 

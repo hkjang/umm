@@ -72,12 +72,12 @@
 
 ### 4. Daily review와 하이브리드 탐색
 
-- `/today`는 14일 이상 검토하지 않은 생각, 사용자가 지정한 다시 보기, 연결선이 없는 생각, 대기 Dream, 최근 댓글을 권한 범위 안에서 집계합니다. `note_reviews`가 공유 메모의 검토·고정 상태를 사용자별로 분리합니다.
+- `/today`는 14일 이상 검토하지 않은 생각, 사용자가 지정한 다시 보기, 연결선이 없는 생각, 대기 Dream, 최근 댓글을 현재 권한과 삭제 상태 범위 안에서 집계합니다. `note_reviews`가 공유 메모의 검토·고정 상태를 사용자별로 분리합니다.
 - 검색은 완전 로컬 192차원 feature-hash cosine 점수와 제목·본문·공간 키워드 점수를 결합합니다. 공간·종류·수정 시각 필터와 opaque cursor를 지원합니다.
 - 백링크는 실제 `note_edges`의 incoming/outgoing 방향을 반환하며 연관 생각은 의미 유사성을 보완합니다.
 
 ### 5. 자동화·관측성·공급망
 
-- 공간 이벤트는 PostgreSQL SSE log에 먼저 저장된 뒤 bounded in-memory webhook queue로 전달됩니다. 웹훅은 HMAC 서명, SSRF 재검증, 제한 재시도와 자동 중지를 적용합니다.
+- 공간 이벤트는 PostgreSQL SSE log에 저장되고, 활성 구독별 webhook payload도 `webhook_deliveries`에 영속화됩니다. 세 워커가 `FOR UPDATE SKIP LOCKED`로 대기 또는 lease가 만료된 처리 항목을 선점하므로 프로세스 재시작과 순간 부하 뒤에도 전달을 이어갑니다. HMAC 서명, SSRF 재검증, 제한 재시도와 자동 중지를 적용하며, at-least-once 전달 시도의 중복은 delivery UUID로 수신 측이 제거합니다.
 - HTTP 계층은 low-cardinality route pattern으로 Prometheus count·latency를 기록합니다. 표준 OTLP 환경변수가 있을 때만 OpenTelemetry exporter를 초기화합니다.
 - 태그 파이프라인은 offline image archive와 SPDX SBOM을 만들고 checksum 및 GitHub artifact attestation을 발급합니다.

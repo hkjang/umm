@@ -122,14 +122,23 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   subscription_id uuid NOT NULL REFERENCES webhook_subscriptions(id) ON DELETE CASCADE,
   event_id uuid NOT NULL,
   event_type text NOT NULL,
-  status text NOT NULL CHECK (status IN ('queued','delivered','failed')),
+  payload jsonb NOT NULL,
+  status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','processing','delivered','failed')),
+  attempt_count integer NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
   response_status integer,
   error text NOT NULL DEFAULT '',
+  next_attempt_at timestamptz NOT NULL DEFAULT now(),
+  claimed_at timestamptz,
   attempted_at timestamptz NOT NULL DEFAULT now(),
-  delivered_at timestamptz
+  delivered_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(subscription_id,event_id)
 );
 CREATE INDEX IF NOT EXISTS webhook_deliveries_subscription_idx
   ON webhook_deliveries(subscription_id, attempted_at DESC);
+CREATE INDEX IF NOT EXISTS webhook_deliveries_queue_idx
+  ON webhook_deliveries(status,next_attempt_at,created_at)
+  WHERE status IN ('queued','processing');
 
 UPDATE app_settings
 SET value = jsonb_set(

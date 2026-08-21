@@ -27,8 +27,8 @@ func (s *Server) publishSpaceEvent(r *http.Request, spaceID uuid.UUID, eventType
 	} else if tag.RowsAffected() != 1 {
 		slog.Warn("space event was not stored", "space_id", spaceID, "event_type", eventType)
 	} else if s.Webhooks != nil {
-		if queued := s.Webhooks.Enqueue(webhook.Event{Type: eventType, SpaceID: spaceID, ResourceID: resourceID, ActorID: p.User.ID, Data: payload}); !queued {
-			slog.Warn("webhook queue full", "space_id", spaceID, "event_type", eventType)
+		if _, enqueueErr := s.Webhooks.Enqueue(r.Context(), webhook.Event{Type: eventType, SpaceID: spaceID, ResourceID: resourceID, ActorID: p.User.ID, Data: payload}); enqueueErr != nil {
+			slog.Warn("webhook delivery persistence failed", "space_id", spaceID, "event_type", eventType, "error", enqueueErr)
 		}
 	}
 }
