@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TranslationProvider } from '../i18n';
 import { setLocale } from '../i18n/translate';
-import type { ImportedThought } from '../lib/markdown-import';
+import { maxImportedThoughts, type ImportedThought } from '../lib/markdown-import';
 import ImportThoughtsModal from './ImportThoughtsModal';
 
 describe('ImportThoughtsModal', () => {
@@ -38,5 +38,33 @@ describe('ImportThoughtsModal', () => {
     expect(
       screen.getByText('1개의 생각을 가져오지 못했습니다. 입력란에 남겨 두었으니 다시 시도해 주세요.'),
     ).toBeInTheDocument();
+  });
+
+  it('rejects an oversized draft without importing or clearing its tail', async () => {
+    const onClose = vi.fn();
+    const onImport = vi.fn(async () => ({ created: 0, failed: [] }));
+    render(
+      <MantineProvider>
+        <TranslationProvider>
+          <ImportThoughtsModal opened onClose={onClose} onImport={onImport} />
+        </TranslationProvider>
+      </MantineProvider>,
+    );
+
+    const source = Array.from({ length: maxImportedThoughts + 1 }, (_, index) => `# 생각 ${index + 1}\n\n본문`).join(
+      '\n\n',
+    );
+    const editor = await screen.findByRole('textbox', { name: '가져올 내용' });
+    fireEvent.change(editor, { target: { value: source } });
+
+    expect(editor).toHaveValue(source);
+    expect(screen.getByRole('button', { name: '가져오기' })).toBeDisabled();
+    expect(
+      screen.getByText(
+        `한 번에 최대 ${maxImportedThoughts}개의 생각을 가져올 수 있습니다. 현재 ${maxImportedThoughts + 1}개입니다. 입력을 나누어 다시 시도해 주세요.`,
+      ),
+    ).toBeInTheDocument();
+    expect(onImport).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

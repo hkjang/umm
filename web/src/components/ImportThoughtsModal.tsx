@@ -32,6 +32,13 @@ export default function ImportThoughtsModal({ opened, onClose, onImport }: Props
   const [error, setError] = useState('');
 
   const thoughts = useMemo(() => splitMarkdownThoughts(text), [text]);
+  const overLimit = thoughts.length > maxImportedThoughts;
+  const limitError = overLimit
+    ? t('한 번에 최대 {max}개의 생각을 가져올 수 있습니다. 현재 {count}개입니다. 입력을 나누어 다시 시도해 주세요.', {
+        max: maxImportedThoughts,
+        count: thoughts.length,
+      })
+    : '';
 
   const readFiles = async (files: File[] | null) => {
     if (!files || files.length === 0) return;
@@ -42,6 +49,10 @@ export default function ImportThoughtsModal({ opened, onClose, onImport }: Props
   };
 
   const run = async () => {
+    if (overLimit) {
+      setError(limitError);
+      return 0;
+    }
     setBusy(true);
     setError('');
     setDone(0);
@@ -93,18 +104,18 @@ export default function ImportThoughtsModal({ opened, onClose, onImport }: Props
           value={text}
           onChange={(event) => setText(event.currentTarget.value)}
         />
-        {error && <Alert color="red">{error}</Alert>}
+        {(limitError || error) && <Alert color="red">{limitError || error}</Alert>}
         {busy && <Progress value={thoughts.length ? (done / thoughts.length) * 100 : 0} striped animated />}
         <Group justify="space-between">
           <Text size="sm" c="dimmed">
             {busy
               ? t('가져오는 중 {done}/{total}', { done, total: thoughts.length })
-              : t('{count}개의 생각을 가져옵니다.', { count: Math.min(thoughts.length, maxImportedThoughts) })}
+              : t('{count}개의 생각을 가져옵니다.', { count: thoughts.length })}
           </Text>
           <Button
             leftSection={<IconFileImport size={17} />}
             loading={busy}
-            disabled={thoughts.length === 0}
+            disabled={thoughts.length === 0 || overLimit}
             onClick={() => void run()}
           >
             {t('가져오기')}

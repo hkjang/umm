@@ -35,9 +35,11 @@ describe('splitMarkdownThoughts', () => {
     expect(splitMarkdownThoughts('   \n\n  \n')).toEqual([]);
   });
 
-  it('caps a very large document', () => {
+  it('reports every section so the importer can reject an oversized draft without losing its tail', () => {
     const source = Array.from({ length: maxImportedThoughts + 50 }, (_, index) => `# H${index}\nbody`).join('\n');
-    expect(splitMarkdownThoughts(source)).toHaveLength(maxImportedThoughts);
+    const thoughts = splitMarkdownThoughts(source);
+    expect(thoughts).toHaveLength(maxImportedThoughts + 50);
+    expect(thoughts.at(-1)).toEqual({ title: `H${maxImportedThoughts + 49}`, content: 'body' });
   });
 
   it('handles CRLF line endings', () => {

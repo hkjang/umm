@@ -71,7 +71,6 @@ export function splitMarkdownThoughts(source: string): ImportedThought[] {
     // A heading with nothing under it still carries an idea, so keep the
     // heading itself as the content rather than dropping the section.
     thoughts.push({ title, content: content || title });
-    if (thoughts.length >= maxImportedThoughts) break;
   }
   return thoughts.filter((thought) => thought.content !== '');
 }
