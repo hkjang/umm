@@ -177,6 +177,52 @@ func TestHybridSearchRanksAcrossBoundedLexicalCandidatesIntegration(t *testing.T
 	}
 }
 
+func TestHybridSearchRanksExactBodyAcrossBoundedCandidatesIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	userID, spaceID, exactID := uuid.New(), uuid.New(), uuid.New()
+	username := "exact_body_search_" + userID.String()
+	needle := "exact-body-rank-" + exactID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'exact body bounded search')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,title,content,created_at,updated_at) VALUES($1,$2,$3,'',$4,now()-interval '10 years',now()-interval '10 years')`, exactID, spaceID, userID, needle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(space_id,author_id,title,content,created_at,updated_at) SELECT $1,$2,'','prefix '||$3||' suffix '||value,now(),now() FROM generate_series(1,$4) AS value`, spaceID, userID, needle, hybridLexicalCandidateLimit+1); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+
+	page, err := db.SearchNotesHybrid(ctx, userID, SearchOptions{Query: needle, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Notes) == 0 || page.Notes[0].ID != exactID {
+		t.Fatalf("old exact-body match was not ranked into the bounded candidate set: %#v", page.Notes)
+	}
+}
+
 func TestCreateCommentDoesNotNotifyRemovedNoteAuthorIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {

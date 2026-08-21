@@ -18,3 +18,11 @@ func TestNoteSearchPatternsEmptyQuery(t *testing.T) {
 		t.Fatalf("empty query returned patterns: %#v", got)
 	}
 }
+
+func TestLexicalScorePrefersExactBody(t *testing.T) {
+	exact, _ := lexicalScore("bounded phrase", "", "bounded phrase", "")
+	partial, _ := lexicalScore("bounded phrase", "", "prefix bounded phrase suffix", "")
+	if exact <= partial {
+		t.Fatalf("exact body score=%f, partial body score=%f", exact, partial)
+	}
+}

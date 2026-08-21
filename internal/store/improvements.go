@@ -128,10 +128,18 @@ func lexicalScore(query, title, content, space string) (float64, []string) {
 	if strings.Contains(title, q) {
 		score += .72
 		reasons = append(reasons, "제목 일치")
+		if title == q {
+			score += .18
+			reasons = append(reasons, "제목 정확히 일치")
+		}
 	}
 	if strings.Contains(content, q) {
 		score += .55
 		reasons = append(reasons, "본문 일치")
+		if content == q {
+			score += .12
+			reasons = append(reasons, "본문 정확히 일치")
+		}
 	}
 	if strings.Contains(space, q) {
 		score += .25
@@ -169,6 +177,10 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 	rows, err := s.Pool.Query(ctx, `
 		WITH eligible AS NOT MATERIALIZED (
 		  SELECT n.id,n.space_id,sp.name AS space_name,n.title,left(n.content,2000) AS content,n.kind,n.updated_at,e.vector,
+		    lower(btrim(n.title))=lower(btrim($8::text)) AS exact_title,
+		    lower(btrim(n.content))=lower(btrim($8::text)) AS exact_content,
+		    strpos(lower(n.title),lower(btrim($8::text)))>0 AS title_phrase,
+		    strpos(lower(n.content),lower(btrim($8::text)))>0 AS content_phrase,
 		    NOT EXISTS(
 		      SELECT 1 FROM unnest($6::text[]) AS term(pattern)
 		      WHERE concat_ws(' ',n.title,n.content,sp.name) NOT ILIKE term.pattern ESCAPE E'\\'
@@ -187,7 +199,8 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 		    AND ($5::timestamptz IS NULL OR n.updated_at <= $5)
 		), lexical_candidates AS (
 		  SELECT * FROM eligible WHERE lexical_match
-		  ORDER BY title_matches DESC,content_matches DESC,space_matches DESC,updated_at DESC,id DESC
+		  ORDER BY exact_title DESC,exact_content DESC,title_phrase DESC,content_phrase DESC,
+		           title_matches DESC,content_matches DESC,space_matches DESC,updated_at DESC,id DESC
 		  LIMIT $7
 		), candidates AS (
 		  SELECT * FROM lexical_candidates
@@ -197,7 +210,7 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 		  ) recent_semantic
 		)
 		SELECT id,space_id,space_name,title,content,kind,updated_at,vector,lexical_match FROM candidates`,
-		userID, options.SpaceID, strings.TrimSpace(options.Kind), options.UpdatedFrom, options.UpdatedTo, patterns, hybridLexicalCandidateLimit)
+		userID, options.SpaceID, strings.TrimSpace(options.Kind), options.UpdatedFrom, options.UpdatedTo, patterns, hybridLexicalCandidateLimit, strings.TrimSpace(options.Query))
 	if err != nil {
 		return HybridSearchPage{}, err
 	}
