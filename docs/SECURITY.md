@@ -30,6 +30,7 @@ User API/MCP key (one-time plaintext display)
 - OIDC: Authorization Code flow, state 일회 사용/10분 만료, provider Discovery, ID token 서명·issuer·audience 검증
 - Roles: `user`, `team_lead`, `admin`
 - API/MCP: Bearer key와 세부 scope. MCP는 browser cookie를 허용하지 않음
+- AI Assist scope: 선택 note 본문을 외부 Gateway로 전송하고 AI 쿼터를 소비하는 `/ai/assist`는 전용 `ai:assist`를 요구하며, 일반 `notes:read` key에는 이 권한을 암묵적으로 부여하지 않음
 - Session boundary: 관리자 API, 개인 설정, API key 생성·회전·폐기는 브라우저 세션만 허용해 제한 key의 권한 상승을 차단
 - Workflow: 팀장은 자신의 team 요청만 결정, 관리자는 전체 결정
 - Collaboration: 공간 소유자 또는 `manage` 멤버만 공유 권한 변경, `view`/`edit`/`manage` 분리

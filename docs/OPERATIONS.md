@@ -54,7 +54,7 @@ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
 ## 최초 설정 순서
 
 1. bootstrap 관리자 로그인 후 서비스 관리자 → 일반에서 서비스 이름, 공개 URL, `Asia/Seoul` 같은 IANA 시간대를 저장합니다.
-2. 보안 → 허용 API/MCP scope, 기본 만료, 회전 중첩 시간과 **남용 방지**(로그인 실패 허용 횟수·잠금 시간, 분당 API 요청, 분당·하루 AI 한도)를 확인합니다. 기본값은 로그인 8회/15분, API 600/분, AI 6/분, AI 80/일입니다. 롤링 배포 중 구버전 관리 화면이 새 한도 필드를 생략해 저장해도 서버가 최신 확정값을 transaction 안에서 병합하므로 조정값이 기본값으로 되돌아가지 않습니다.
+2. 보안 → 허용 API/MCP scope, 기본 만료, 회전 중첩 시간과 **남용 방지**(로그인 실패 허용 횟수·잠금 시간, 분당 API 요청, 분당·하루 AI 한도)를 확인합니다. 마이그레이션 009가 전용 `ai:assist` scope를 자동 추가하며, `notes:read`만 가진 key는 외부 Gateway 호출과 AI 쿼터 소비를 할 수 없습니다. 기본값은 로그인 8회/15분, API 600/분, AI 6/분, AI 80/일입니다. 롤링 배포 중 구버전 관리 화면이 새 한도 필드를 생략해 저장해도 서버가 최신 확정값을 transaction 안에서 병합하므로 조정값이 기본값으로 되돌아가지 않습니다.
 3. 필요할 때만 Keycloak SSO를 저장하고 연결 시험 후 활성화합니다.
 4. 필요할 때만 AI Gateway를 저장합니다. 임베딩 모델을 비워 두면 외부 호출 없이 내장 로컬 임베딩을 사용합니다.
 5. Dream은 Gateway 확인 뒤 기능과 자동 생성을 각각 활성화합니다.
@@ -73,6 +73,7 @@ docker stop umm
 Schema migration은 기동 시 forward 방향으로만 자동 적용됩니다. 되돌려야 할 때를 위해 `migrations/down/`에 되돌리기 스크립트를 둡니다. 자동으로는 절대 실행되지 않습니다 — 컬럼을 지우는 일은 그 안의 데이터를 지우는 일이므로, 백업을 확보한 운영자가 의도적으로 실행해야 합니다.
 
 ```bash
+psql "$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/down/009_ai_assist_scope.down.sql
 psql "$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/down/008_atomic_ai_quota.down.sql
 psql "$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/down/007_scale_and_security.down.sql
 ```

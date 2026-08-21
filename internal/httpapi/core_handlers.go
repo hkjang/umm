@@ -539,7 +539,7 @@ func (s *Server) thoughtClusters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) aiAssist(w http.ResponseWriter, r *http.Request) {
-	if !requireScope(w, r, "notes:read") {
+	if !requireScope(w, r, "ai:assist") {
 		return
 	}
 	var body struct {

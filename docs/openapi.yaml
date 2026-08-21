@@ -395,6 +395,7 @@ paths:
       tags: [AI]
       summary: Quietly develop selected thoughts with the configured internal AI Gateway
       description: Revalidates and locks every selected note, space, and current membership through the external AI call; completed access revocation or AI exclusion prevents prompt dispatch.
+      x-required-scope: ai:assist
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [noteIds, mode], properties: { noteIds: { type: array, minItems: 1, maxItems: 20, items: { type: string, format: uuid } }, mode: { type: string, enum: [summarize, questions, expand, challenge, actions] } } } } } }
       responses: { '200': { description: Generated thought aid }, '400': { $ref: '#/components/responses/Error' }, '429': { $ref: '#/components/responses/Error' }, '503': { $ref: '#/components/responses/Error' } }
   /preferences:

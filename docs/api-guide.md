@@ -49,7 +49,7 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | :--- | :--- | :--- | :--- |
 | `POST` | `/ai/assist` | 선택한 1~20개 생각을 요약·질문·확장·반대 관점·실행 항목으로 발전 | `ai:assist` |
 
-서버는 선택한 모든 생각이 현재 접근 가능하고 AI 제외 상태가 아닌지 외부 호출 직전에 다시 확인합니다. 해당 note·space·membership 행을 Gateway 응답이 끝날 때까지 잠그므로 공유 회수나 AI 제외가 먼저 확정되면 본문을 보내지 않고 미사용 쿼터를 취소하며, AI lease가 먼저 시작되면 정책 변경은 호출 종료까지 기다립니다. 긴 lease는 일반 요청 pool과 분리된 인스턴스당 최대 2개 PostgreSQL 연결만 사용하므로, 추가 AI 호출이 대기해도 readiness·인증·Canvas용 `pool_max_conns`를 점유하지 않습니다.
+`ai:assist`는 선택한 본문을 외부 Gateway로 보내고 AI 쿼터를 소비하는 기능만 따로 허용하는 최소 권한 scope입니다. `notes:read`만 가진 API key는 일반 생각 조회를 할 수 있어도 AI Assist를 호출할 수 없습니다. 서버는 선택한 모든 생각이 현재 접근 가능하고 AI 제외 상태가 아닌지 외부 호출 직전에 다시 확인합니다. 해당 note·space·membership 행을 Gateway 응답이 끝날 때까지 잠그므로 공유 회수나 AI 제외가 먼저 확정되면 본문을 보내지 않고 미사용 쿼터를 취소하며, AI lease가 먼저 시작되면 정책 변경은 호출 종료까지 기다립니다. 긴 lease는 일반 요청 pool과 분리된 인스턴스당 최대 2개 PostgreSQL 연결만 사용하므로, 추가 AI 호출이 대기해도 readiness·인증·Canvas용 `pool_max_conns`를 점유하지 않습니다.
 
 ### ☀️ Today 리뷰
 

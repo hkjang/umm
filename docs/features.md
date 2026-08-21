@@ -91,7 +91,7 @@
 ### 10. 개인 API · MCP 키 관리
 ![API 키 발급 모달](./screenshots/14_api_keys_create_modal.png)
 ![API 키 목록](./screenshots/15_api_keys_list.png)
-- **최소 권한 Scoped API Key**: 필요한 권한(`spaces:read`, `notes:read`, `notes:write`, `ai:assist` 등)만 선택하여 발급
+- **최소 권한 Scoped API Key**: 필요한 권한(`spaces:read`, `notes:read`, `notes:write`, `ai:assist` 등)만 선택하여 발급. 외부 Gateway와 AI 쿼터를 쓰는 AI Assist는 `notes:read`와 분리된 `ai:assist`만 허용
 - **일회성 Secret 표시**: 발급 시 1회만 노출되는 보안 토큰
 - **무중단 키 회전 (Zero-Downtime Rotation)**: 설정된 중첩 시간(예: 24시간) 동안 기존 키와 신규 키를 동시 지원하여 서비스 중단 없는 안전한 키 교체. 보안 난수 생성이 실패하면 새 키나 짧은 대체 키를 저장하지 않고 기존 상태를 그대로 유지
 
