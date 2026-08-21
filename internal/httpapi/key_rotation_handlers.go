@@ -92,12 +92,12 @@ func (s *Server) encryptionKeyStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	pending, unreadable := 0, 0
 	for _, item := range values {
-		payload, _ := encryptedPayload(item.value)
+		payload, prefixed := encryptedPayload(item.value)
 		if _, decryptErr := s.Cipher.Decrypt(payload); decryptErr != nil {
 			unreadable++
 			continue
 		}
-		if s.Cipher.NeedsRotation(payload) {
+		if (item.kind == "ai_prompt" && !prefixed) || s.Cipher.NeedsRotation(payload) {
 			pending++
 		}
 	}
@@ -224,7 +224,7 @@ func (s *Server) rotateEncryptionKey(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 	for _, item := range prompts {
 		payload, prefixed := encryptedPayload(item.value)
-		if !prefixed || !s.Cipher.NeedsRotation(payload) {
+		if prefixed && !s.Cipher.NeedsRotation(payload) {
 			continue
 		}
 		plain, decryptErr := s.Cipher.Decrypt(payload)

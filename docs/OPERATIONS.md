@@ -91,7 +91,7 @@ CI는 `scripts/restore-smoke.sh`로 PostgreSQL custom-format dump를 별도 `umm
 3. **현재 키로 회전**을 실행합니다. OIDC/AI 설정 비밀, AI prompt 로그, 웹훅 HMAC 비밀이 한 트랜잭션에서 다시 암호화됩니다.
 4. `pendingRotation=0`, `unreadable=0`을 확인하고 백업을 새로 만든 뒤 `ENCRYPTION_KEY_PREVIOUS`를 제거해 재시작합니다.
 
-암호문은 `v2.<key-id>.<payload>` 형식이며 기존 v1 암호문도 fallback key로 읽어 회전할 수 있습니다. 이전 키를 먼저 제거하면 해당 값은 복구할 수 없습니다.
+암호문은 `v2.<key-id>.<payload>` 형식이며 기존 v1 암호문도 fallback key로 읽어 회전할 수 있습니다. `enc:` wrapper 도입 전에 저장된 AI prompt의 raw v1 암호문도 회전 작업이 자동으로 `enc:v2.<key-id>.<payload>`로 정규화합니다. 이전 키를 먼저 제거하면 해당 값은 복구할 수 없습니다.
 
 ## 관측성과 자동화
 
