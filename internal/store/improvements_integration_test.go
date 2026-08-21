@@ -1728,7 +1728,7 @@ func TestAIExcludedNotesNeverReachRemoteEmbeddingGatewayIntegration(t *testing.T
 		INSERT INTO notes(id,space_id,author_id,content,ai_excluded) VALUES
 		($1,$4,$6,'space private secret',false),
 		($2,$5,$6,'note private secret',true),
-		($3,$5,$6,'ordinary thought',false)`, spaceNoteID, privateNoteID, publicNoteID, spaceExcludedID, mixedSpaceID, userID); err != nil {
+		($3,$5,$6,'semanticresilience',false)`, spaceNoteID, privateNoteID, publicNoteID, spaceExcludedID, mixedSpaceID, userID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1740,7 +1740,7 @@ func TestAIExcludedNotesNeverReachRemoteEmbeddingGatewayIntegration(t *testing.T
 	}
 	db.ensureEmbeddings(ctx, []Note{
 		{ID: privateNoteID, SpaceID: mixedSpaceID, Content: "note private secret", AIExcluded: true, Version: 1},
-		{ID: publicNoteID, SpaceID: mixedSpaceID, Content: "ordinary thought", Version: 1},
+		{ID: publicNoteID, SpaceID: mixedSpaceID, Content: "semanticresilience", Version: 1},
 	})
 	page, err := db.SearchNotesHybrid(ctx, userID, SearchOptions{
 		Query:   "space private secret",
@@ -1757,15 +1757,15 @@ func TestAIExcludedNotesNeverReachRemoteEmbeddingGatewayIntegration(t *testing.T
 		t.Fatalf("AI-excluded content or scoped query reached the remote embedding gateway %d times", calls)
 	}
 	page, err = db.SearchNotesHybrid(ctx, userID, SearchOptions{
-		Query:   "ordinary thought",
+		Query:   "semanticreliability",
 		SpaceID: &mixedSpaceID,
 		Limit:   5,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Notes) == 0 || page.Notes[0].ID != publicNoteID || gatewayCalls.Load() != 1 {
-		t.Fatalf("ordinary scoped search did not retain the configured gateway: notes=%#v calls=%d", page.Notes, gatewayCalls.Load())
+	if len(page.Notes) == 0 || page.Notes[0].ID != publicNoteID || !strings.Contains(page.Notes[0].Reason, "의미상 유사") || gatewayCalls.Load() != 0 {
+		t.Fatalf("mixed-exclusion search did not use its complete local vector space: notes=%#v calls=%d", page.Notes, gatewayCalls.Load())
 	}
 	var localRows int
 	if err = db.Pool.QueryRow(ctx, `

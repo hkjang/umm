@@ -79,10 +79,15 @@ func (s *Store) embeddingProviderFromSettings(settings embeddingSettings) intell
 		return intelligence.Provider{}
 	}
 	key := settings.APIKey
-	if s.Cipher != nil && strings.HasPrefix(key, "enc:") {
-		if plain, err := s.Cipher.Decrypt(strings.TrimPrefix(key, "enc:")); err == nil {
-			key = plain
+	if strings.HasPrefix(key, "enc:") {
+		if s.Cipher == nil {
+			return intelligence.Provider{}
 		}
+		plain, err := s.Cipher.Decrypt(strings.TrimPrefix(key, "enc:"))
+		if err != nil {
+			return intelligence.Provider{}
+		}
+		key = plain
 	}
 	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
 	if settings.TimeoutSeconds <= 0 {
@@ -230,9 +235,9 @@ func (s *Store) beginEmbeddingNotesLease(ctx context.Context, targets []embeddin
 	return lease, true, nil
 }
 
-// beginEmbeddingSearchLease keeps both the configured destination and a
-// scoped space's exclusion/access decision stable until the query text has
-// left (or failed to leave) the process.
+// beginEmbeddingSearchLease keeps the configured destination and every row
+// that selected a scoped comparison algorithm stable until the caller has
+// embedded the query and consumed the search rows.
 func (s *Store) beginEmbeddingSearchLease(ctx context.Context, userID uuid.UUID, spaceID *uuid.UUID, origin intelligence.Provider) (*embeddingPolicyLease, bool, error) {
 	lease, err := s.beginEmbeddingPolicyLease(ctx, origin)
 	if err != nil {
@@ -254,18 +259,49 @@ func (s *Store) beginEmbeddingSearchLease(ctx context.Context, userID uuid.UUID,
 		lease.rollback()
 		return nil, false, nil
 	}
-	if ownerID == userID {
-		return lease, true, nil
-	}
-	var memberID uuid.UUID
-	if err = lease.tx.QueryRow(ctx, `SELECT user_id FROM space_members WHERE space_id=$1 AND user_id=$2 FOR SHARE`, *spaceID, userID).Scan(&memberID); err != nil {
-		lease.rollback()
-		if errors.Is(err, pgx.ErrNoRows) {
+	if ownerID != userID {
+		var memberID uuid.UUID
+		if err = lease.tx.QueryRow(ctx, `SELECT user_id FROM space_members WHERE space_id=$1 AND user_id=$2 FOR SHARE`, *spaceID, userID).Scan(&memberID); err != nil {
+			lease.rollback()
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+		if memberID != userID {
+			lease.rollback()
 			return nil, false, nil
 		}
+	}
+	rows, err := lease.tx.Query(ctx, `
+		SELECT ai_excluded
+		FROM notes
+		WHERE space_id=$1 AND deleted_at IS NULL
+		ORDER BY id
+		FOR SHARE`, *spaceID)
+	if err != nil {
+		lease.rollback()
 		return nil, false, err
 	}
-	if memberID != userID {
+	allowed := true
+	for rows.Next() {
+		var noteExcluded bool
+		if err = rows.Scan(&noteExcluded); err != nil {
+			rows.Close()
+			lease.rollback()
+			return nil, false, err
+		}
+		if noteExcluded {
+			allowed = false
+		}
+	}
+	rowsErr := rows.Err()
+	rows.Close()
+	if rowsErr != nil {
+		lease.rollback()
+		return nil, false, rowsErr
+	}
+	if !allowed {
 		lease.rollback()
 		return nil, false, nil
 	}
@@ -323,17 +359,20 @@ func (s *Store) embeddingProviderForNotes(ctx context.Context, notes []Note) int
 	return s.EmbeddingProvider(ctx)
 }
 
-// embeddingProviderForSearch keeps a query scoped to an AI-excluded space on
-// the local provider. Authorization and exclusion are resolved together before
-// any query text can be handed to a configured remote gateway. Missing,
-// inaccessible, or temporarily unreadable spaces also fail closed to local.
+// embeddingProviderForSearch keeps a query scoped to a space or note-level AI
+// exclusion on the same local vector space as its canvas. Authorization and
+// exclusion are resolved together before any query text can be handed to a
+// configured remote gateway. Missing, inaccessible, or temporarily unreadable
+// spaces also fail closed to local.
 func (s *Store) embeddingProviderForSearch(ctx context.Context, userID uuid.UUID, spaceID *uuid.UUID) intelligence.Provider {
 	if spaceID == nil {
 		return s.EmbeddingProvider(ctx)
 	}
 	var excluded bool
 	err := s.Pool.QueryRow(ctx, `
-		SELECT sp.ai_excluded
+		SELECT sp.ai_excluded OR EXISTS(
+		  SELECT 1 FROM notes n
+		  WHERE n.space_id=sp.id AND n.deleted_at IS NULL AND n.ai_excluded)
 		FROM spaces sp
 		WHERE sp.id=$1
 		  AND (sp.owner_id=$2 OR EXISTS(
@@ -453,8 +492,8 @@ func (s *Store) writeEmbeddings(ctx context.Context, targets []embeddingTarget, 
 }
 
 // requireCurrentEmbeddingProviderTx locks the settings generation that selected
-// a managed remote provider and rejects work captured under an older vector
-// space before it can be dispatched or persisted.
+// a managed remote provider and rejects work captured under an older endpoint,
+// credential, model, or timeout before it can be dispatched or persisted.
 func (s *Store) requireCurrentEmbeddingProviderTx(ctx context.Context, tx pgx.Tx, origin intelligence.Provider) error {
 	if origin.Remote == nil || !origin.Remote.SettingsManaged {
 		return nil
@@ -561,25 +600,32 @@ func (s *Store) loadEmbeddings(ctx context.Context, notes []Note) map[uuid.UUID]
 // stored vectors.
 func (s *Store) EmbedQuery(ctx context.Context, query string) ([]float32, string) {
 	provider := s.EmbeddingProvider(ctx)
-	return s.embedQueryWithPolicy(ctx, uuid.Nil, nil, query, provider)
+	vector, algorithm, lease := s.embedQueryWithPolicy(ctx, uuid.Nil, nil, query, provider)
+	if lease != nil {
+		defer lease.rollback()
+	}
+	return vector, algorithm
 }
 
-func (s *Store) embedQueryWithPolicy(ctx context.Context, userID uuid.UUID, spaceID *uuid.UUID, query string, provider intelligence.Provider) ([]float32, string) {
+func (s *Store) embedQueryWithPolicy(ctx context.Context, userID uuid.UUID, spaceID *uuid.UUID, query string, provider intelligence.Provider) ([]float32, string, *embeddingPolicyLease) {
 	if provider.Algorithm() == intelligence.LocalAlgorithm {
-		return s.embedQueryWithProvider(ctx, query, provider)
+		vector, algorithm := s.embedQueryWithProvider(ctx, query, provider)
+		return vector, algorithm, nil
 	}
 	// An unmanaged provider exists only in tests or specialized embedding
 	// callers. A scoped search still needs its space policy lease; a global one
 	// has no database-managed destination or exclusion row to fence.
 	if provider.Remote != nil && !provider.Remote.SettingsManaged && spaceID == nil {
-		return s.embedQueryWithProvider(ctx, query, provider)
+		vector, algorithm := s.embedQueryWithProvider(ctx, query, provider)
+		return vector, algorithm, nil
 	}
 	lease, allowed, err := s.beginEmbeddingSearchLease(ctx, userID, spaceID, provider)
 	if err != nil || !allowed {
-		return s.embedQueryWithProvider(ctx, query, intelligence.Provider{})
+		vector, algorithm := s.embedQueryWithProvider(ctx, query, intelligence.Provider{})
+		return vector, algorithm, nil
 	}
-	defer lease.rollback()
-	return s.embedQueryWithProvider(ctx, query, provider)
+	vector, algorithm := s.embedQueryWithProvider(ctx, query, provider)
+	return vector, algorithm, lease
 }
 
 func (s *Store) embedQueryWithProvider(ctx context.Context, query string, provider intelligence.Provider) ([]float32, string) {

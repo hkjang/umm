@@ -96,7 +96,10 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 		options.Offset = 0
 	}
 	provider := s.embeddingProviderForSearch(ctx, userID, options.SpaceID)
-	queryVector, algorithm := s.embedQueryWithPolicy(ctx, userID, options.SpaceID, options.Query, provider)
+	queryVector, algorithm, policyLease := s.embedQueryWithPolicy(ctx, userID, options.SpaceID, options.Query, provider)
+	if policyLease != nil {
+		defer policyLease.rollback()
+	}
 
 	b := &queryBuilder{}
 	user := b.bind(userID)

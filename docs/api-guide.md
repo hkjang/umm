@@ -43,6 +43,8 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | `PUT` | `/comments/{id}/resolve` | 댓글 해결·재개 | `notes:write` |
 | `POST` | `/spaces/{id}/edges` | 두 포스트잇 간 연결선 생성 (`source`, `target`, `relation`) | `notes:write` |
 
+공간 범위 하이브리드 검색은 공간과 개별 메모의 AI 제외 상태를 함께 사용해 Canvas와 같은 임베딩 알고리즘을 선택합니다. 메모 하나라도 제외된 공간은 일반 메모까지 완전한 로컬 비교 공간에서 검색해 혼합 vector 때문에 의미 결과가 빠지지 않으며 검색어도 외부 Gateway로 보내지 않습니다. 원격 검색을 선택한 경우에는 현재 space·membership·활성 note 정책을 검색 결과를 읽을 때까지 고정합니다.
+
 ### 🧠 AI Assist
 
 | 메서드 | 경로 | 설명 | 권한 스코프 |
