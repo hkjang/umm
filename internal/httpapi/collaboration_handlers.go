@@ -136,11 +136,20 @@ func (s *Server) listSpaceMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	if !s.Store.CanViewSpace(r.Context(), p.User.ID, spaceID) {
-		writeError(w, 404, "공간을 찾을 수 없습니다.")
-		return
-	}
-	rows, err := s.Store.Pool.Query(r.Context(), `SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),'owner'::text FROM spaces sp JOIN users u ON u.id=sp.owner_id WHERE sp.id=$1 UNION ALL SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),sm.permission FROM space_members sm JOIN users u ON u.id=sm.user_id WHERE sm.space_id=$1 ORDER BY 5,3`, spaceID)
+	rows, err := s.Store.Pool.Query(r.Context(), `
+		WITH authorized_space AS (
+		  SELECT sp.id,sp.owner_id FROM spaces sp
+		  LEFT JOIN space_members caller ON caller.space_id=sp.id AND caller.user_id=$2
+		  WHERE sp.id=$1 AND (sp.owner_id=$2 OR caller.user_id=$2)
+		)
+		SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),'owner'::text
+		FROM authorized_space asp JOIN users u ON u.id=asp.owner_id
+		UNION ALL
+		SELECT u.id,u.username,u.display_name,COALESCE(u.email,''),member.permission
+		FROM authorized_space asp
+		JOIN space_members member ON member.space_id=asp.id
+		JOIN users u ON u.id=member.user_id
+		ORDER BY 5,3`, spaceID, p.User.ID)
 	if err != nil {
 		writeError(w, 500, "공유 사용자를 불러오지 못했습니다.")
 		return
@@ -150,9 +159,19 @@ func (s *Server) listSpaceMembers(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id uuid.UUID
 		var username, name, email, permission string
-		if rows.Scan(&id, &username, &name, &email, &permission) == nil {
-			members = append(members, map[string]any{"id": id, "username": username, "displayName": name, "email": email, "permission": permission})
+		if err := rows.Scan(&id, &username, &name, &email, &permission); err != nil {
+			writeError(w, 500, "공유 사용자를 읽지 못했습니다.")
+			return
 		}
+		members = append(members, map[string]any{"id": id, "username": username, "displayName": name, "email": email, "permission": permission})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "공유 사용자를 불러오지 못했습니다.")
+		return
+	}
+	if len(members) == 0 {
+		writeError(w, 404, "공간을 찾을 수 없습니다.")
+		return
 	}
 	writeJSON(w, 200, map[string]any{"members": members, "canManage": s.canManageSpace(r, p.User.ID, spaceID)})
 }

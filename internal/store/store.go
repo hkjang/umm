@@ -397,17 +397,23 @@ func (s *Store) CanEditSpace(ctx context.Context, userID, spaceID uuid.UUID) boo
 }
 
 func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query string) ([]Note, []Edge, error) {
-	if !s.CanViewSpace(ctx, userID, spaceID) {
-		return nil, nil, pgx.ErrNoRows
-	}
 	patterns := noteSearchPatterns(query)
 	b := &queryBuilder{}
 	space := b.bind(spaceID)
+	user := b.bind(userID)
 	match := "true"
 	if len(patterns) > 0 {
 		match = allMatch(noteTextExpression, patterns, b)
 	}
-	rows, err := s.Pool.Query(ctx, fmt.Sprintf(`SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at FROM notes n WHERE n.space_id=%s AND n.deleted_at IS NULL AND %s ORDER BY n.created_at`, space, match), b.args...)
+	rows, err := s.Pool.Query(ctx, fmt.Sprintf(`
+		SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
+		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at
+		FROM notes n
+		JOIN spaces sp ON sp.id=n.space_id
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=%s
+		WHERE n.space_id=%s AND n.deleted_at IS NULL AND (sp.owner_id=%s OR sm.user_id=%s)
+		  AND %s
+		ORDER BY n.created_at`, user, space, user, user, match), b.args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -419,6 +425,19 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 			return nil, nil, err
 		}
 		notes = append(notes, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	rows.Close()
+	if len(notes) == 0 {
+		allowed, accessErr := s.checkSpaceViewAccess(ctx, userID, spaceID)
+		if accessErr != nil {
+			return nil, nil, accessErr
+		}
+		if !allowed {
+			return nil, nil, pgx.ErrNoRows
+		}
 	}
 	noteIDs := make([]uuid.UUID, len(notes))
 	for i := range notes {
@@ -433,7 +452,13 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 			}
 		}
 	}
-	edgeRows, err := s.Pool.Query(ctx, `SELECT id,space_id,source_note_id,target_note_id,relation FROM note_edges WHERE space_id=$1 AND source_note_id=ANY($2) AND target_note_id=ANY($2)`, spaceID, noteIDs)
+	edgeRows, err := s.Pool.Query(ctx, `
+		SELECT e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation
+		FROM note_edges e
+		JOIN spaces sp ON sp.id=e.space_id
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$3
+		WHERE e.space_id=$1 AND e.source_note_id=ANY($2) AND e.target_note_id=ANY($2)
+		  AND (sp.owner_id=$3 OR sm.user_id=$3)`, spaceID, noteIDs, userID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -450,9 +475,14 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 }
 
 func (s *Store) CanViewSpace(ctx context.Context, userID, spaceID uuid.UUID) bool {
-	var ok bool
-	_ = s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$1 WHERE s.id=$2 AND (s.owner_id=$1 OR m.user_id=$1))`, userID, spaceID).Scan(&ok)
+	ok, _ := s.checkSpaceViewAccess(ctx, userID, spaceID)
 	return ok
+}
+
+func (s *Store) checkSpaceViewAccess(ctx context.Context, userID, spaceID uuid.UUID) (bool, error) {
+	var ok bool
+	err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$1 WHERE s.id=$2 AND (s.owner_id=$1 OR m.user_id=$1))`, userID, spaceID).Scan(&ok)
+	return ok, err
 }
 
 func (s *Store) CreateNote(ctx context.Context, userID uuid.UUID, n Note) (Note, error) {
@@ -650,12 +680,14 @@ func (s *Store) Clusters(ctx context.Context, userID, spaceID uuid.UUID) ([]Thou
 }
 
 func (s *Store) NoteHistory(ctx context.Context, userID, noteID uuid.UUID) ([]NoteRevision, error) {
-	var allowed bool
-	_ = s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2 WHERE n.id=$1 AND (sp.owner_id=$2 OR sm.user_id=$2))`, noteID, userID).Scan(&allowed)
-	if !allowed {
-		return nil, pgx.ErrNoRows
-	}
-	rows, err := s.Pool.Query(ctx, `SELECT version,content,title,color,kind,x,y,width,height,rotation,created_at FROM note_revisions WHERE note_id=$1 ORDER BY version DESC LIMIT 50`, noteID)
+	rows, err := s.Pool.Query(ctx, `
+		SELECT r.version,r.content,r.title,r.color,r.kind,r.x,r.y,r.width,r.height,r.rotation,r.created_at
+		FROM note_revisions r
+		JOIN notes n ON n.id=r.note_id AND n.deleted_at IS NULL
+		JOIN spaces sp ON sp.id=n.space_id
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
+		WHERE r.note_id=$1 AND (sp.owner_id=$2 OR sm.user_id=$2)
+		ORDER BY r.version DESC LIMIT 50`, noteID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -668,7 +700,20 @@ func (s *Store) NoteHistory(ctx context.Context, userID, noteID uuid.UUID) ([]No
 		}
 		out = append(out, v)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if len(out) == 0 {
+		allowed, accessErr := s.noteViewAccess(ctx, userID, noteID)
+		if accessErr != nil {
+			return nil, accessErr
+		}
+		if !allowed {
+			return nil, pgx.ErrNoRows
+		}
+	}
+	return out, nil
 }
 func (s *Store) RestoreNote(ctx context.Context, userID, noteID uuid.UUID, version int) (Note, error) {
 	var n Note

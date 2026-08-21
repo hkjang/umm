@@ -8,6 +8,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/auth"
 	"github.com/hkjang/umm/internal/store"
@@ -103,5 +104,76 @@ func TestNotificationAccessRevocationIntegration(t *testing.T) {
 	}
 	if persisted != 3 {
 		t.Fatalf("test expected access filtering without deletion, persisted=%d", persisted)
+	}
+}
+
+func TestSpaceMemberListRechecksAccessIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	ownerID, memberID, otherID, spaceID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	ownerName, memberName, otherName := "members_owner_"+ownerID.String(), "members_viewer_"+memberID.String(), "members_other_"+otherID.String()
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO users(id,username,display_name) VALUES
+		($1,$2::citext,$2::text),($3,$4::citext,$4::text),($5,$6::citext,$6::text)`,
+		ownerID, ownerName, memberID, memberName, otherID, otherName); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::uuid[])`, []uuid.UUID{ownerID, memberID, otherID})
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'member list access')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'view'),($1,$3,'edit')`, spaceID, memberID, otherID); err != nil {
+		t.Fatal(err)
+	}
+
+	authService := &auth.Service{Store: db}
+	session, err := authService.CreateSession(ctx, memberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{Store: db}
+	router := chi.NewRouter()
+	router.Get("/api/v1/spaces/{spaceID}/members", server.listSpaceMembers)
+	handler := authService.Middleware(auth.Require(router))
+	fetch := func() *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/spaces/"+spaceID.String()+"/members", nil)
+		request.AddCookie(&http.Cookie{Name: auth.CookieName, Value: session})
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	before := fetch()
+	if before.Code != http.StatusOK {
+		t.Fatalf("member list before revocation=%d body=%s", before.Code, before.Body.String())
+	}
+	var payload struct {
+		Members []map[string]any `json:"members"`
+	}
+	if err = json.Unmarshal(before.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Members) != 3 {
+		t.Fatalf("member list before revocation=%#v", payload.Members)
+	}
+	if _, err = db.Pool.Exec(ctx, `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	after := fetch()
+	if after.Code != http.StatusNotFound {
+		t.Fatalf("member list after revocation=%d body=%s", after.Code, after.Body.String())
 	}
 }

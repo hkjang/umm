@@ -148,7 +148,12 @@ func (s *Server) noteBacklinks(w http.ResponseWriter, r *http.Request) {
 	}
 	links, err := s.Store.Backlinks(r.Context(), principal(r).User.ID, noteID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "연결된 생각을 찾을 수 없습니다.")
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "연결된 생각을 찾을 수 없습니다.")
+			return
+		}
+		slog.Warn("backlink list failed", "note_id", noteID, "user_id", principal(r).User.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "연결된 생각을 불러오지 못했습니다.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"backlinks": links})
@@ -207,7 +212,12 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 	}
 	comments, err := s.Store.ListComments(r.Context(), principal(r).User.ID, noteID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "댓글을 볼 수 있는 생각을 찾지 못했습니다.")
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "댓글을 볼 수 있는 생각을 찾지 못했습니다.")
+			return
+		}
+		slog.Warn("comment list failed", "note_id", noteID, "user_id", principal(r).User.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "댓글을 불러오지 못했습니다.")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"comments": comments})

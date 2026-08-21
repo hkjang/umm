@@ -156,20 +156,32 @@ func lexicalScore(query, title, content, space string) (float64, []string) {
 	return math.Min(score, 1), reasons
 }
 
+func (s *Store) noteViewAccess(ctx context.Context, userID, noteID uuid.UUID) (bool, error) {
+	var allowed bool
+	err := s.Pool.QueryRow(ctx, `
+		SELECT EXISTS(
+		  SELECT 1 FROM notes n
+		  JOIN spaces sp ON sp.id=n.space_id
+		  LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
+		  WHERE n.id=$1 AND n.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.user_id=$2))`, noteID, userID).Scan(&allowed)
+	return allowed, err
+}
 func (s *Store) Backlinks(ctx context.Context, userID, noteID uuid.UUID) ([]Backlink, error) {
-	var spaceID uuid.UUID
-	if err := s.Pool.QueryRow(ctx, `SELECT space_id FROM notes WHERE id=$1 AND deleted_at IS NULL`, noteID).Scan(&spaceID); err != nil || !s.CanViewSpace(ctx, userID, spaceID) {
-		return nil, pgx.ErrNoRows
-	}
 	rows, err := s.Pool.Query(ctx, `
 		SELECT e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation,
 		       n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
 		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at,
 		       CASE WHEN e.target_note_id=$1 THEN 'incoming' ELSE 'outgoing' END
-		FROM note_edges e
-		JOIN notes n ON n.id=CASE WHEN e.target_note_id=$1 THEN e.source_note_id ELSE e.target_note_id END
-		WHERE (e.source_note_id=$1 OR e.target_note_id=$1) AND n.deleted_at IS NULL
-		ORDER BY n.updated_at DESC`, noteID)
+		FROM notes anchor
+		JOIN spaces sp ON sp.id=anchor.space_id
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
+		JOIN note_edges e ON e.space_id=anchor.space_id
+		JOIN notes n ON n.id=CASE WHEN e.target_note_id=anchor.id THEN e.source_note_id ELSE e.target_note_id END
+		  AND n.space_id=anchor.space_id
+		WHERE anchor.id=$1 AND anchor.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.user_id=$2)
+		  AND (e.source_note_id=anchor.id OR e.target_note_id=anchor.id) AND e.space_id=anchor.space_id
+		  AND n.deleted_at IS NULL
+		ORDER BY n.updated_at DESC`, noteID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +197,20 @@ func (s *Store) Backlinks(ctx context.Context, userID, noteID uuid.UUID) ([]Back
 		}
 		out = append(out, item)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if len(out) == 0 {
+		allowed, accessErr := s.noteViewAccess(ctx, userID, noteID)
+		if accessErr != nil {
+			return nil, accessErr
+		}
+		if !allowed {
+			return nil, pgx.ErrNoRows
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) NoteByID(ctx context.Context, userID, noteID uuid.UUID) (Note, error) {
@@ -397,12 +422,14 @@ const commentSelect = `SELECT c.id,c.note_id,c.author_id,u.display_name,u.userna
 const mentionTrailingSyntax = ".,;:!?…，。！？；：)]}>\"'”’"
 
 func (s *Store) ListComments(ctx context.Context, userID, noteID uuid.UUID) ([]Comment, error) {
-	var canView bool
-	err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2 WHERE n.id=$1 AND n.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.user_id=$2))`, noteID, userID).Scan(&canView)
-	if err != nil || !canView {
-		return nil, pgx.ErrNoRows
-	}
-	rows, err := s.Pool.Query(ctx, commentSelect+` FROM note_comments c JOIN users u ON u.id=c.author_id WHERE c.note_id=$1 AND c.deleted_at IS NULL ORDER BY c.created_at,c.id`, noteID)
+	rows, err := s.Pool.Query(ctx, commentSelect+`
+		FROM note_comments c
+		JOIN users u ON u.id=c.author_id
+		JOIN notes n ON n.id=c.note_id AND n.deleted_at IS NULL
+		JOIN spaces sp ON sp.id=n.space_id
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
+		WHERE c.note_id=$1 AND c.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.user_id=$2)
+		ORDER BY c.created_at,c.id`, noteID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +442,20 @@ func (s *Store) ListComments(ctx context.Context, userID, noteID uuid.UUID) ([]C
 		}
 		out = append(out, c)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if len(out) == 0 {
+		allowed, accessErr := s.noteViewAccess(ctx, userID, noteID)
+		if accessErr != nil {
+			return nil, accessErr
+		}
+		if !allowed {
+			return nil, pgx.ErrNoRows
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, parentID *uuid.UUID, body string, mentionTokens []string) (Comment, uuid.UUID, error) {

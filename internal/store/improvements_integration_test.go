@@ -334,6 +334,92 @@ func TestCreateCommentResolvesLongestPunctuationUsernameIntegration(t *testing.T
 	}
 }
 
+func TestContentQueriesRejectRevokedMemberIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	ownerID, memberID, spaceID := uuid.New(), uuid.New(), uuid.New()
+	sourceID, linkedID, edgeID := uuid.New(), uuid.New(), uuid.New()
+	ownerName, memberName := "content_owner_"+ownerID.String(), "content_member_"+memberID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, ownerID, ownerName, memberID, memberName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'revoked content reads')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'view')`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO notes(id,space_id,author_id,content) VALUES
+		($1,$2,$3,'source secret'),($4,$2,$3,'linked secret')`, sourceID, spaceID, ownerID, linkedID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO note_edges(id,space_id,source_note_id,target_note_id,created_by) VALUES($1,$2,$3,$4,$5)`, edgeID, spaceID, sourceID, linkedID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO note_revisions(note_id,version,content,title,color,kind,x,y,width,height,rotation,changed_by) VALUES($1,1,'revision secret','','yellow','thought',0,0,240,160,0,$2)`, sourceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1 OR id=$2`, ownerID, memberID)
+	if _, _, err = db.CreateComment(ctx, ownerID, sourceID, nil, "comment secret", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	comments, err := db.ListComments(ctx, memberID, sourceID)
+	if err != nil || len(comments) != 1 || comments[0].Body != "comment secret" {
+		t.Fatalf("member comment access before revocation: %#v err=%v", comments, err)
+	}
+	backlinks, err := db.Backlinks(ctx, memberID, sourceID)
+	if err != nil || len(backlinks) != 1 || backlinks[0].Note.Content != "linked secret" {
+		t.Fatalf("member backlink access before revocation: %#v err=%v", backlinks, err)
+	}
+	notes, _, err := db.ListNotes(ctx, memberID, spaceID, "")
+	if err != nil || len(notes) != 2 {
+		t.Fatalf("member canvas access before revocation: %d err=%v", len(notes), err)
+	}
+	history, err := db.NoteHistory(ctx, memberID, sourceID)
+	if err != nil || len(history) != 1 || history[0].Content != "revision secret" {
+		t.Fatalf("member history access before revocation: %#v err=%v", history, err)
+	}
+	if _, err = db.Pool.Exec(ctx, `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, spaceID, memberID); err != nil {
+		t.Fatal(err)
+	}
+
+	checks := []struct {
+		name string
+		call func() error
+	}{
+		{name: "comments", call: func() error { _, err := db.ListComments(ctx, memberID, sourceID); return err }},
+		{name: "backlinks", call: func() error { _, err := db.Backlinks(ctx, memberID, sourceID); return err }},
+		{name: "canvas", call: func() error { _, _, err := db.ListNotes(ctx, memberID, spaceID, ""); return err }},
+		{name: "history", call: func() error { _, err := db.NoteHistory(ctx, memberID, sourceID); return err }},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			if err := check.call(); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("revoked member received content or wrong error: %v", err)
+			}
+		})
+	}
+}
+
 func TestTodayReviewExcludesActivityFromDeletedNotesIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
