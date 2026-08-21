@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -66,6 +67,27 @@ func TestCommentCreateErrorsPreserveRetryableFailures(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			status, _ := commentCreateError(test.err)
+			if status != test.want {
+				t.Fatalf("status = %d, want %d", status, test.want)
+			}
+		})
+	}
+}
+
+func TestCommentMutationErrorsPreserveRetryableFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "missing or forbidden", err: pgx.ErrNoRows, want: http.StatusForbidden},
+		{name: "wrapped missing or forbidden", err: fmt.Errorf("resolve comment: %w", pgx.ErrNoRows), want: http.StatusForbidden},
+		{name: "database failure", err: errors.New("database unavailable"), want: http.StatusInternalServerError},
+		{name: "commit failure", err: errors.New("commit failed"), want: http.StatusInternalServerError},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			status, _ := commentMutationError(test.err, "forbidden", "failed")
 			if status != test.want {
 				t.Fatalf("status = %d, want %d", status, test.want)
 			}

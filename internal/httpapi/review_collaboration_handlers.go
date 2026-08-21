@@ -190,6 +190,13 @@ func commentCreateError(err error) (int, string) {
 	}
 }
 
+func commentMutationError(err error, forbiddenMessage, failureMessage string) (int, string) {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return http.StatusForbidden, forbiddenMessage
+	}
+	return http.StatusInternalServerError, failureMessage
+}
+
 func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:read") {
 		return
@@ -259,7 +266,11 @@ func (s *Server) resolveComment(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	comment, _, err := s.Store.ResolveComment(r.Context(), p.User.ID, commentID, body.Resolved)
 	if err != nil {
-		writeError(w, http.StatusForbidden, "댓글 상태를 변경할 권한이 없습니다.")
+		status, message := commentMutationError(err, "댓글 상태를 변경할 권한이 없습니다.", "댓글 상태를 저장하지 못했습니다.")
+		if status >= http.StatusInternalServerError {
+			slog.Warn("comment resolution failed", "comment_id", commentID, "user_id", p.User.ID, "error", err)
+		}
+		writeError(w, status, message)
 		return
 	}
 	writeJSON(w, http.StatusOK, comment)
@@ -276,7 +287,11 @@ func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	_, err := s.Store.DeleteComment(r.Context(), p.User.ID, commentID)
 	if err != nil {
-		writeError(w, http.StatusForbidden, "댓글을 삭제할 권한이 없습니다.")
+		status, message := commentMutationError(err, "댓글을 삭제할 권한이 없습니다.", "댓글을 삭제하지 못했습니다.")
+		if status >= http.StatusInternalServerError {
+			slog.Warn("comment deletion failed", "comment_id", commentID, "user_id", p.User.ID, "error", err)
+		}
+		writeError(w, status, message)
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "comment.delete", "comment", commentID.String(), map[string]any{})

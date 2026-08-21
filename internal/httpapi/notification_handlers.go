@@ -7,6 +7,16 @@ import (
 	"github.com/google/uuid"
 )
 
+const notificationSpaceExpression = `COALESCE(n.resource_space_id,CASE WHEN n.resource_type='space' THEN n.resource_id END)`
+
+const accessibleNotificationPredicate = `n.user_id=$1 AND (
+	` + notificationSpaceExpression + ` IS NULL OR EXISTS(
+		SELECT 1 FROM spaces sp
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$1
+		WHERE sp.id=` + notificationSpaceExpression + ` AND (sp.owner_id=$1 OR sm.user_id=$1)
+	)
+)`
+
 func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:read") {
 		return
@@ -18,7 +28,7 @@ func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := parsePageLimit(r, 30, 100)
-	rows, err := s.Store.Pool.Query(r.Context(), `SELECT id,kind,title,body,resource_type,resource_id,resource_space_id,metadata,read_at,created_at FROM notifications WHERE user_id=$1 ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, p.User.ID, limit+1, offset)
+	rows, err := s.Store.Pool.Query(r.Context(), `SELECT n.id,n.kind,n.title,n.body,n.resource_type,n.resource_id,n.resource_space_id,n.metadata,n.read_at,n.created_at FROM notifications n WHERE `+accessibleNotificationPredicate+` ORDER BY n.created_at DESC,n.id DESC LIMIT $2 OFFSET $3`, p.User.ID, limit+1, offset)
 	if err != nil {
 		writeError(w, 500, "알림을 불러오지 못했습니다.")
 		return
@@ -26,7 +36,7 @@ func (s *Server) listNotifications(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	items := []map[string]any{}
 	var unread int64
-	if err := s.Store.Pool.QueryRow(r.Context(), `SELECT count(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL`, p.User.ID).Scan(&unread); err != nil {
+	if err := s.Store.Pool.QueryRow(r.Context(), `SELECT count(*) FROM notifications n WHERE `+accessibleNotificationPredicate+` AND n.read_at IS NULL`, p.User.ID).Scan(&unread); err != nil {
 		writeError(w, 500, "읽지 않은 알림 수를 불러오지 못했습니다.")
 		return
 	}

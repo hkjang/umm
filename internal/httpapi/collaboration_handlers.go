@@ -182,7 +182,7 @@ func (s *Server) applySpaceShare(r *http.Request, spaceID, targetID uuid.UUID, p
 	if command.RowsAffected() != 1 {
 		return fmt.Errorf("space share permission changed before commit")
 	}
-	if _, err = tx.Exec(r.Context(), `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id) VALUES($1,'space_shared','새 공간이 공유되었습니다','공유된 공간을 열어 생각을 함께 발전시켜 보세요.','space',$2)`, targetID, spaceID); err != nil {
+	if _, err = tx.Exec(r.Context(), `INSERT INTO notifications(user_id,kind,title,body,resource_type,resource_id,resource_space_id) VALUES($1,'space_shared','새 공간이 공유되었습니다','공유된 공간을 열어 생각을 함께 발전시켜 보세요.','space',$2,$2)`, targetID, spaceID); err != nil {
 		return err
 	}
 	if err = s.Store.AppendSpaceEvent(r.Context(), tx, actorID, spaceID, "member.updated", targetID, payload); err != nil {
