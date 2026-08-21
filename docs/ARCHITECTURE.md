@@ -64,3 +64,5 @@
 
 ### 3. 분산 큐 & DB 트랜잭션 (SKIP LOCKED)
 - 외부 메시지 브로커(RabbitMQ, Redis 등) 없이 PostgreSQL의 `FOR UPDATE SKIP LOCKED`를 활용하여 Dream 백그라운드 작업을 분산 워커 간 중복 없이 안전하게 임대(Lease) 처리합니다.
+- 생성된 Dream은 `dream_notes.note_id IS NULL`인 검토 후보로 먼저 저장됩니다. 채택 요청은 행 잠금 트랜잭션 안에서 메모와 `dreamed` 연결선을 한 번만 생성하므로 네트워크 재시도에도 중복되지 않습니다.
+- 공간·메모의 `ai_excluded` 정책은 Scheduler 자격 계산과 AI 호출 직전에 모두 적용되어, 설정 변경 이후의 신규 AI 처리에서 제외됩니다.

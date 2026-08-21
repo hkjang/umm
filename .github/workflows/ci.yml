@@ -45,6 +45,10 @@ jobs:
         run: |
           go build -ldflags '-X main.version=ci' -o /tmp/umm-ci ./cmd/umm
           ./scripts/integration-smoke.sh
+      - name: Dream inbox database integration
+        env:
+          POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
+        run: go test ./internal/dream -run TestDreamInboxAcceptanceIntegration -count=1
       - run: npm ci
         working-directory: web
       - run: npm run build

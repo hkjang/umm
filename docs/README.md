@@ -43,7 +43,7 @@
 
 ```bash
 # 1. 패키지 이미지 로드
-gzip -dc umm-v0.5.1.tar.gz | docker load
+gzip -dc umm-v0.6.0.tar.gz | docker load
 
 # 2. 필수 환경변수 4개로 컨테이너 실행
 docker run -d --name umm --restart unless-stopped \
@@ -52,7 +52,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-admin-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.5.1
+  umm:v0.6.0
 ```
 
 - **접속 주소**: `http://localhost:8080` (초기 관리자 계정: `admin`)

@@ -212,22 +212,95 @@ func (s *Server) dreamHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"dreams": v})
 }
 func (s *Server) dreamFeedback(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "dreams:read") {
+		return
+	}
 	id, ok := parseID(w, r, "dreamID")
 	if !ok {
 		return
 	}
 	var body struct {
 		Action string `json:"action"`
+		Reason string `json:"reason"`
 	}
 	if decodeJSON(w, r, &body) != nil {
 		writeError(w, 400, "피드백 형식이 올바르지 않습니다.")
 		return
 	}
-	if err := s.Dreams.Feedback(r.Context(), principal(r).User.ID, id, body.Action); err != nil {
+	if err := s.Dreams.FeedbackWithReason(r.Context(), principal(r).User.ID, id, body.Action, body.Reason); err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (s *Server) acceptDream(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "dreams:read") || !requireScope(w, r, "notes:write") {
+		return
+	}
+	id, ok := parseID(w, r, "dreamID")
+	if !ok {
+		return
+	}
+	var body struct {
+		Content string `json:"content"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		writeError(w, 400, "Dream 채택 형식이 올바르지 않습니다.")
+		return
+	}
+	p := principal(r)
+	note, err := s.Dreams.Accept(r.Context(), p.User.ID, id, body.Content)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "dream.accept", "dream", id.String(), map[string]any{"noteId": note.ID, "spaceId": note.SpaceID})
+	s.publishSpaceEvent(r, note.SpaceID, "note.created", note.ID, note)
+	writeJSON(w, http.StatusCreated, note)
+}
+
+func (s *Server) regenerateDream(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "dreams:read") {
+		return
+	}
+	id, ok := parseID(w, r, "dreamID")
+	if !ok {
+		return
+	}
+	p := principal(r)
+	view, err := s.Dreams.Regenerate(r.Context(), p.User.ID, id)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "dream.regenerate", "dream", id.String(), map[string]any{"generation": view.Generation})
+	writeJSON(w, 200, view)
+}
+
+func (s *Server) developDream(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "dreams:read") {
+		return
+	}
+	id, ok := parseID(w, r, "dreamID")
+	if !ok {
+		return
+	}
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		writeError(w, 400, "Dream 발전 형식이 올바르지 않습니다.")
+		return
+	}
+	p := principal(r)
+	result, err := s.Dreams.Develop(r.Context(), p.User.ID, id, body.Mode)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	s.Store.Audit(r.Context(), &p.User.ID, "dream.develop", "dream", id.String(), map[string]any{"mode": body.Mode})
+	writeJSON(w, 200, result)
 }
 
 var _ = uuid.Nil

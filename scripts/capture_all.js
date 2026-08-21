@@ -20,6 +20,7 @@ async function capture(page, filename, options = {}) {
 
 async function main() {
   console.log('🚀 Starting umm Automated E2E CRU Testing & Screenshot Pipeline...');
+  const dreamOnly = process.env.CAPTURE_DREAM_ONLY === '1';
 
   const browser = await chromium.launch({
     headless: true,
@@ -32,13 +33,15 @@ async function main() {
   });
 
   const page = await context.newPage();
-  const BASE_URL = 'http://127.0.0.1:8080';
+  const BASE_URL = process.env.UMM_CAPTURE_BASE_URL || 'http://127.0.0.1:8080';
 
   // 1. Login Page
   console.log('--- 1. Login Page ---');
   await page.goto(`${BASE_URL}/login`);
   await page.waitForSelector('text=생각부터 붙이세요.');
-  await capture(page, '01_login.png');
+  if (!dreamOnly) {
+    await capture(page, '01_login.png');
+  }
 
   // Perform Login
   await page.locator('input[autocomplete="username"], input:not([type="password"])').first().fill('admin');
@@ -163,6 +166,52 @@ async function main() {
     }),
   });
 
+  const captureDreamReview = async () => {
+    const dreamsEndpoint = `${BASE_URL}/api/v1/dreams`;
+    const dreamId = '00000000-0000-4000-8000-000000000600';
+    await page.route(dreamsEndpoint, async (route) => {
+      if (route.request().method() !== 'GET') {
+        await route.continue();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ dreams: [{
+          dreamId,
+          type: 'connection',
+          generatedAt: '2026-08-21T02:00:00+09:00',
+          qualityScore: 0.86,
+          qualityLabel: '근거 충분',
+          status: 'created',
+          spaceId,
+          spaceName: 'AI 제품 기획 & UX 아키텍처',
+          content: '무한 캔버스의 자유로운 생각 연결에 Dream의 출처 검토 단계를 더하면, AI가 만든 제안을 사용자가 직접 지식으로 확정하는 안전한 흐름이 됩니다.',
+          rationale: '1번의 공간형 메모 경험과 2번의 야간 Dream 생성 엔진을 채택 전 검토라는 하나의 흐름으로 연결했습니다.',
+          suggestedAction: '이 연결이 실제로 유용한지 작은 제품 가설 한 개로 시험해 보세요.',
+          generation: 1,
+          sources: [
+            { noteId: note1.id, title: 'Spatial Thought Memory', excerpt: note1.content, rank: 1, similarityScore: 0.61, cited: true },
+            { noteId: note2.id, title: 'Dream Layer & Scheduler', excerpt: note2.content, rank: 2, similarityScore: 0.58, cited: true },
+          ],
+        }] }),
+      });
+    });
+    await page.route(`${dreamsEndpoint}/*/feedback`, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' }));
+    await page.goto(`${BASE_URL}/dreams`);
+    await page.waitForSelector('.dream-review-card');
+    await capture(page, '12_dreams_timeline.png');
+    await page.unroute(dreamsEndpoint);
+    await page.unroute(`${dreamsEndpoint}/*/feedback`);
+  };
+
+  if (dreamOnly) {
+    await captureDreamReview();
+    await browser.close();
+    console.log('🎉 Dream review screenshot completed successfully!');
+    return;
+  }
+
   // Reload Canvas with rich seed data
   console.log('--- 2. Canvas Overview ---');
   await page.goto(`${BASE_URL}/space/${spaceId}`);
@@ -249,10 +298,8 @@ async function main() {
   }
 
   // 10. Dreams Page (/dreams)
-  console.log('--- 10. Dreams Timeline Page ---');
-  await page.goto(`${BASE_URL}/dreams`);
-  await page.waitForSelector('text=Dreams');
-  await capture(page, '12_dreams_timeline.png');
+  console.log('--- 10. Dream Review Inbox ---');
+  await captureDreamReview();
 
   // 11. Personal Settings (/settings)
   console.log('--- 11. Personal Settings ---');

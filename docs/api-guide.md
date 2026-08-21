@@ -38,6 +38,15 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | `GET` | `/notes/{id}/related` | 의미 유사도 기반 연관 생각 목록 추천 | `notes:read` |
 | `POST` | `/spaces/{id}/edges` | 두 포스트잇 간 연결선 생성 (`source`, `target`, `relation`) | `notes:write` |
 
+### 🌙 Dream 검토함
+| 메서드 | 경로 | 설명 | 권한 스코프 |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/dreams` | 출처와 상태를 포함한 개인 Dream 검토함 조회 | `dreams:read` |
+| `POST` | `/dreams/{id}/feedback` | 노출·채택·숨김 등의 무중복 피드백 기록 | `dreams:read` |
+| `POST` | `/dreams/{id}/accept` | 후보를 Dream 메모와 출처 연결선으로 확정 | `dreams:read`, `notes:write` |
+| `POST` | `/dreams/{id}/regenerate` | 같은 출처에서 중복되지 않는 다른 관점 생성 | `dreams:read` |
+| `POST` | `/dreams/{id}/develop` | 확장·반대 관점·실행 항목으로 발전 | `dreams:read` |
+
 ### ⚡ 실시간 이벤트 스트림 (SSE)
 - **경로**: `GET /api/v1/spaces/{spaceID}/events`
 - **프로토콜**: Server-Sent Events (SSE)
@@ -54,11 +63,13 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 ### 🛠️ 제공 도구 목록 (Tools)
 1. `list_spaces`: 접근 가능한 공간 목록 조회
-2. `get_space_notes`: 지정된 공간의 모든 생각 포스트잇 및 연결선 조회
-3. `create_thought_note`: 캔버스 특정 위치에 새로운 생각 포스트잇 생성
-4. `connect_thoughts`: 두 생각 간의 연결선(Edge) 생성
-5. `search_thoughts`: 공간 전체에서 키워드 및 의미 기반 생각 검색
-6. `trigger_dream`: 지정 공간에 대한 수동 Dream 분석 큐 요청
+2. `list_notes`: 지정된 공간의 생각 포스트잇 및 연결선 조회
+3. `create_note`: 캔버스에 새로운 생각 포스트잇 생성
+4. `connect_notes`: 두 생각 간의 연결선 생성
+5. `search_notes`: 지정 공간의 생각 검색
+6. `get_related_notes`: 오프라인 유사도 기반 연관 생각 조회
+7. `list_clusters`: 생각 군집 조회
+8. `list_dreams`: 출처와 검토 상태를 포함한 최근 Dream 조회
 
 ### 💬 MCP 호출 예시 (JSON-RPC 2.0)
 
@@ -69,10 +80,9 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
   "id": "req-101",
   "method": "tools/call",
   "params": {
-    "name": "create_thought_note",
+    "name": "create_note",
     "arguments": {
-      "spaceId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-      "title": "AI 에이전트 연동 아이디어",
+      "space_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
       "content": "MCP 엔드포인트를 통해 Cursor나 Claude에서 직접 생각을 붙이고 연결할 수 있습니다.",
       "color": "lavender",
       "x": 400,

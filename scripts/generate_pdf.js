@@ -5,6 +5,7 @@ const { chromium } = require(path.join(__dirname, '..', 'web', 'node_modules', '
 
 const DOCS_DIR = path.join(__dirname, '..', 'docs');
 const PDF_DIR = path.join(DOCS_DIR, 'pdf');
+const VERSION = fs.readFileSync(path.join(__dirname, '..', 'VERSION'), 'utf8').trim();
 
 if (!fs.existsSync(PDF_DIR)) {
   fs.mkdirSync(PDF_DIR, { recursive: true });
@@ -224,7 +225,7 @@ const HTML_TEMPLATE = (title, content, date = '2026. 08') => `<!DOCTYPE html>
     </div>
     <div class="doc-meta">
       <strong>${title}</strong><br>
-      Spatial Thought Memory Platform · v0.5.1 (${date})
+      Spatial Thought Memory Platform · v${VERSION} (${date})
     </div>
   </div>
   ${content}

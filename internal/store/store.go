@@ -30,10 +30,11 @@ type User struct {
 }
 
 type Space struct {
-	ID      uuid.UUID `json:"id"`
-	OwnerID uuid.UUID `json:"ownerId"`
-	Name    string    `json:"name"`
-	Color   string    `json:"color"`
+	ID         uuid.UUID `json:"id"`
+	OwnerID    uuid.UUID `json:"ownerId"`
+	Name       string    `json:"name"`
+	Color      string    `json:"color"`
+	AIExcluded bool      `json:"aiExcluded"`
 }
 
 type Note struct {
@@ -45,6 +46,7 @@ type Note struct {
 	Color        string    `json:"color"`
 	Kind         string    `json:"kind"`
 	Source       string    `json:"source"`
+	AIExcluded   bool      `json:"aiExcluded"`
 	X            float64   `json:"x"`
 	Y            float64   `json:"y"`
 	Width        float64   `json:"width"`
@@ -276,19 +278,19 @@ func AllowedSetting(key string) bool {
 
 func (s *Store) EnsureDefaultSpace(ctx context.Context, userID uuid.UUID) (Space, error) {
 	var sp Space
-	err := s.Pool.QueryRow(ctx, `SELECT id,owner_id,name,color FROM spaces WHERE owner_id=$1 ORDER BY created_at LIMIT 1`, userID).Scan(&sp.ID, &sp.OwnerID, &sp.Name, &sp.Color)
+	err := s.Pool.QueryRow(ctx, `SELECT id,owner_id,name,color,ai_excluded FROM spaces WHERE owner_id=$1 ORDER BY created_at LIMIT 1`, userID).Scan(&sp.ID, &sp.OwnerID, &sp.Name, &sp.Color, &sp.AIExcluded)
 	if err == nil {
 		return sp, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return sp, err
 	}
-	err = s.Pool.QueryRow(ctx, `INSERT INTO spaces(owner_id,name) VALUES($1,'My Space') RETURNING id,owner_id,name,color`, userID).Scan(&sp.ID, &sp.OwnerID, &sp.Name, &sp.Color)
+	err = s.Pool.QueryRow(ctx, `INSERT INTO spaces(owner_id,name) VALUES($1,'My Space') RETURNING id,owner_id,name,color,ai_excluded`, userID).Scan(&sp.ID, &sp.OwnerID, &sp.Name, &sp.Color, &sp.AIExcluded)
 	return sp, err
 }
 
 func (s *Store) ListSpaces(ctx context.Context, userID uuid.UUID) ([]Space, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT s.id,s.owner_id,s.name,s.color FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id WHERE s.owner_id=$1 OR m.user_id=$1 ORDER BY s.name`, userID)
+	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT s.id,s.owner_id,s.name,s.color,s.ai_excluded FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id WHERE s.owner_id=$1 OR m.user_id=$1 ORDER BY s.name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +298,7 @@ func (s *Store) ListSpaces(ctx context.Context, userID uuid.UUID) ([]Space, erro
 	out := []Space{}
 	for rows.Next() {
 		var v Space
-		if err := rows.Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color); err != nil {
+		if err := rows.Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -310,15 +312,15 @@ func (s *Store) CreateSpace(ctx context.Context, userID uuid.UUID, name string) 
 		name = "새 공간"
 	}
 	var v Space
-	err := s.Pool.QueryRow(ctx, `INSERT INTO spaces(owner_id,name) VALUES($1,$2) RETURNING id,owner_id,name,color`, userID, name).Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color)
+	err := s.Pool.QueryRow(ctx, `INSERT INTO spaces(owner_id,name) VALUES($1,$2) RETURNING id,owner_id,name,color,ai_excluded`, userID, name).Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded)
 	return v, err
 }
 
-func (s *Store) UpdateSpace(ctx context.Context, userID, spaceID uuid.UUID, name string) (Space, error) {
+func (s *Store) UpdateSpace(ctx context.Context, userID, spaceID uuid.UUID, name string, aiExcluded *bool) (Space, error) {
 	name = strings.TrimSpace(name)
 	var v Space
-	err := s.Pool.QueryRow(ctx, `UPDATE spaces sp SET name=$3,updated_at=now() WHERE sp.id=$1 AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2 AND sm.permission='manage')) RETURNING id,owner_id,name,color`, spaceID, userID, name).
-		Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color)
+	err := s.Pool.QueryRow(ctx, `UPDATE spaces sp SET name=$3,ai_excluded=COALESCE($4,ai_excluded),updated_at=now() WHERE sp.id=$1 AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2 AND sm.permission='manage')) RETURNING id,owner_id,name,color,ai_excluded`, spaceID, userID, name, aiExcluded).
+		Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded)
 	return v, err
 }
 
@@ -392,7 +394,7 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 		return nil, nil, pgx.ErrNoRows
 	}
 	patterns := noteSearchPatterns(query)
-	rows, err := s.Pool.Query(ctx, `SELECT id,space_id,author_id,content,title,color,kind,source,x,y,width,height,rotation,version,created_at,updated_at FROM notes WHERE space_id=$1 AND deleted_at IS NULL AND (cardinality($2::text[])=0 OR NOT EXISTS(SELECT 1 FROM unnest($2::text[]) AS term(pattern) WHERE concat_ws(' ',content,title) NOT ILIKE term.pattern ESCAPE E'\\')) ORDER BY created_at`, spaceID, patterns)
+	rows, err := s.Pool.Query(ctx, `SELECT id,space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation,version,created_at,updated_at FROM notes WHERE space_id=$1 AND deleted_at IS NULL AND (cardinality($2::text[])=0 OR NOT EXISTS(SELECT 1 FROM unnest($2::text[]) AS term(pattern) WHERE concat_ws(' ',content,title) NOT ILIKE term.pattern ESCAPE E'\\')) ORDER BY created_at`, spaceID, patterns)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -400,7 +402,7 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 	notes := []Note{}
 	for rows.Next() {
 		var n Note
-		if err := rows.Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.AIExcluded, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt); err != nil {
 			return nil, nil, err
 		}
 		notes = append(notes, n)
@@ -459,14 +461,14 @@ func (s *Store) CreateNote(ctx context.Context, userID uuid.UUID, n Note) (Note,
 	if n.Height == 0 {
 		n.Height = 160
 	}
-	err := s.Pool.QueryRow(ctx, `INSERT INTO notes(space_id,author_id,content,title,color,kind,source,x,y,width,height,rotation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id,space_id,author_id,content,title,color,kind,source,x,y,width,height,rotation,version,created_at,updated_at`, n.SpaceID, userID, n.Content, n.Title, n.Color, n.Kind, n.Source, n.X, n.Y, n.Width, n.Height, n.Rotation).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+	err := s.Pool.QueryRow(ctx, `INSERT INTO notes(space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id,space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation,version,created_at,updated_at`, n.SpaceID, userID, n.Content, n.Title, n.Color, n.Kind, n.Source, n.AIExcluded, n.X, n.Y, n.Width, n.Height, n.Rotation).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.AIExcluded, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
 	if err == nil {
 		_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
 	}
 	return n, err
 }
 
-func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note) (Note, error) {
+func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcluded *bool) (Note, error) {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return Note{}, err
@@ -476,7 +478,7 @@ func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note) (Note,
 	if err != nil {
 		return Note{}, err
 	}
-	err = tx.QueryRow(ctx, `UPDATE notes SET content=$3,title=$4,color=$5,kind=$6,x=$7,y=$8,width=$9,height=$10,rotation=$11,version=version+1,updated_at=now() WHERE id=$1 AND version=$2 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$12 WHERE s.id=notes.space_id AND (s.owner_id=$12 OR m.permission IN ('edit','manage'))) RETURNING id,space_id,author_id,content,title,color,kind,source,x,y,width,height,rotation,version,created_at,updated_at`, n.ID, n.Version, n.Content, n.Title, n.Color, n.Kind, n.X, n.Y, n.Width, n.Height, n.Rotation, userID).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+	err = tx.QueryRow(ctx, `UPDATE notes SET content=$3,title=$4,color=$5,kind=$6,ai_excluded=COALESCE($7,ai_excluded),x=$8,y=$9,width=$10,height=$11,rotation=$12,version=version+1,updated_at=now() WHERE id=$1 AND version=$2 AND deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$13 WHERE s.id=notes.space_id AND (s.owner_id=$13 OR m.permission IN ('edit','manage'))) RETURNING id,space_id,author_id,content,title,color,kind,source,ai_excluded,x,y,width,height,rotation,version,created_at,updated_at`, n.ID, n.Version, n.Content, n.Title, n.Color, n.Kind, aiExcluded, n.X, n.Y, n.Width, n.Height, n.Rotation, userID).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.AIExcluded, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return Note{}, err
 	}
@@ -553,7 +555,7 @@ func (s *Store) RelatedNotes(ctx context.Context, userID, noteID uuid.UUID, limi
 		limit = 5
 	}
 	var base Note
-	err := s.Pool.QueryRow(ctx, `SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at FROM notes n WHERE n.id=$1 AND n.deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2 WHERE s.id=n.space_id AND (s.owner_id=$2 OR m.user_id=$2))`, noteID, userID).Scan(&base.ID, &base.SpaceID, &base.AuthorID, &base.Content, &base.Title, &base.Color, &base.Kind, &base.Source, &base.X, &base.Y, &base.Width, &base.Height, &base.Rotation, &base.Version, &base.CreatedAt, &base.UpdatedAt)
+	err := s.Pool.QueryRow(ctx, `SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at FROM notes n WHERE n.id=$1 AND n.deleted_at IS NULL AND EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2 WHERE s.id=n.space_id AND (s.owner_id=$2 OR m.user_id=$2))`, noteID, userID).Scan(&base.ID, &base.SpaceID, &base.AuthorID, &base.Content, &base.Title, &base.Color, &base.Kind, &base.Source, &base.AIExcluded, &base.X, &base.Y, &base.Width, &base.Height, &base.Rotation, &base.Version, &base.CreatedAt, &base.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -646,9 +648,9 @@ func (s *Store) NoteHistory(ctx context.Context, userID, noteID uuid.UUID) ([]No
 }
 func (s *Store) RestoreNote(ctx context.Context, userID, noteID uuid.UUID, version int) (Note, error) {
 	var n Note
-	err := s.Pool.QueryRow(ctx, `SELECT n.id,n.space_id,n.author_id,r.content,r.title,r.color,r.kind,n.source,r.x,r.y,r.width,r.height,r.rotation,n.version,n.created_at,n.updated_at FROM notes n JOIN note_revisions r ON r.note_id=n.id AND r.version=$2 WHERE n.id=$1 AND n.deleted_at IS NULL`, noteID, version).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
+	err := s.Pool.QueryRow(ctx, `SELECT n.id,n.space_id,n.author_id,r.content,r.title,r.color,r.kind,n.source,n.ai_excluded,r.x,r.y,r.width,r.height,r.rotation,n.version,n.created_at,n.updated_at FROM notes n JOIN note_revisions r ON r.note_id=n.id AND r.version=$2 WHERE n.id=$1 AND n.deleted_at IS NULL`, noteID, version).Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.AIExcluded, &n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		return Note{}, err
 	}
-	return s.UpdateNote(ctx, userID, n)
+	return s.UpdateNote(ctx, userID, n, &n.AIExcluded)
 }

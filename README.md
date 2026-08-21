@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.5.1-success?style=flat-square" alt="v0.5.1" />
+  <img src="https://img.shields.io/badge/Release-v0.6.0-success?style=flat-square" alt="v0.6.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -46,7 +46,7 @@
 | **버전 복원 모달** | ![버전 복원](docs/screenshots/04_note_history_modal.png) | 과거 시점 스냅샷 안전 복원 |
 | **공간 관리자** | ![공간 관리](docs/screenshots/08_space_manager_modal.png) | 공간 생성, 검색, 이름 변경, 삭제 |
 | **공간 협업 공유** | ![공간 공유](docs/screenshots/09_space_share_modal.png) | 팀원 초대 및 세분화된 권한 제어 |
-| **Dreams 타임라인** | ![Dreams](docs/screenshots/12_dreams_timeline.png) | 밤사이 자라난 생각 카드 목록 |
+| **Dream 검토함** | ![Dreams](docs/screenshots/12_dreams_timeline.png) | 출처를 확인하고 채택·재생성·발전시키는 AI 인사이트 |
 | **개인화 설정** | ![개인 설정](docs/screenshots/13_personal_settings.png) | Dream 주기 설정 및 연결선 스타일 |
 | **개인 API/MCP 키** | ![API 키](docs/screenshots/15_api_keys_list.png) | 최소 권한 Scoped 키 발급 및 무중단 회전 |
 | **검토 및 승인** | ![승인](docs/screenshots/16_approvals_list.png) | 공간 공유/내보내기 팀장 결재 대기열 |
@@ -123,7 +123,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.5.1
+  umm:v0.6.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

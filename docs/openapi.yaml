@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: umm API
-  version: 0.5.1
+  version: 0.6.0
   description: Spatial Thought Memory, key management, workflow and Dream Layer API.
 servers:
   - url: /api/v1
@@ -108,11 +108,11 @@ paths:
       - { $ref: '#/components/parameters/SpaceID' }
     put:
       tags: [Thoughts]
-      summary: Rename a space owned or managed by the current user
+      summary: Rename a space or change its AI exclusion policy
       x-required-scope: notes:write
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 200 } } } } }
+        content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, minLength: 1, maxLength: 200 }, aiExcluded: { type: boolean, description: Exclude every note in this space from AI processing } } } } }
       responses:
         '200': { description: Space updated, content: { application/json: { schema: { $ref: '#/components/schemas/Space' } } } }
     delete:
@@ -296,17 +296,44 @@ paths:
   /dreams:
     get:
       tags: [Dream]
-      summary: List personal Dream history
+      summary: List the personal Dream inbox with sources and review status
       x-required-scope: dreams:read
-      responses: { '200': { description: Dream history } }
+      responses: { '200': { description: Dream inbox, content: { application/json: { schema: { type: object, properties: { dreams: { type: array, items: { $ref: '#/components/schemas/DreamCandidate' } } } } } } } }
   /dreams/{dreamId}/feedback:
     parameters:
       - { in: path, name: dreamId, required: true, schema: { type: string, format: uuid } }
     post:
       tags: [Dream]
-      summary: Record implicit Dream feedback
-      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [action], properties: { action: { type: string, enum: [exposed, kept, edited, connected, expanded, moved, deleted, hidden] } } } } } }
+      summary: Record idempotent Dream feedback and an optional rejection reason
+      x-required-scope: dreams:read
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [action], properties: { action: { type: string, enum: [exposed, kept, edited, connected, expanded, moved, deleted, hidden, regenerated] }, reason: { type: string, enum: [too_obvious, irrelevant, incorrect, repetitive, too_frequent] } } } } } }
       responses: { '200': { description: Feedback recorded } }
+  /dreams/{dreamId}/accept:
+    parameters:
+      - { in: path, name: dreamId, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Dream]
+      summary: Accept a staged Dream and materialize its note and source edges
+      x-required-scope: [dreams:read, notes:write]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { content: { type: string, maxLength: 2000, description: Optional developed content to accept instead of the original candidate } } } } } }
+      responses: { '201': { description: Accepted canvas note, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } } }
+  /dreams/{dreamId}/regenerate:
+    parameters:
+      - { in: path, name: dreamId, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Dream]
+      summary: Generate a distinct alternative from the same source notes
+      x-required-scope: dreams:read
+      responses: { '200': { description: Replaced Dream candidate, content: { application/json: { schema: { $ref: '#/components/schemas/DreamCandidate' } } } } }
+  /dreams/{dreamId}/develop:
+    parameters:
+      - { in: path, name: dreamId, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Dream]
+      summary: Expand, challenge or turn a Dream into actions
+      x-required-scope: dreams:read
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [mode], properties: { mode: { type: string, enum: [expand, challenge, actions] } } } } } }
+      responses: { '200': { description: Developed Dream text, content: { application/json: { schema: { type: object, required: [mode, content, model, inputTokens, outputTokens], properties: { mode: { type: string }, content: { type: string }, model: { type: string }, inputTokens: { type: integer }, outputTokens: { type: integer } } } } } } }
   /approvals:
     get:
       tags: [Workflow]
@@ -408,8 +435,39 @@ components:
         active: { type: boolean }
     Space:
       type: object
-      required: [id, ownerId, name, color]
-      properties: { id: { type: string, format: uuid }, ownerId: { type: string, format: uuid }, name: { type: string }, color: { type: string } }
+      required: [id, ownerId, name, color, aiExcluded]
+      properties: { id: { type: string, format: uuid }, ownerId: { type: string, format: uuid }, name: { type: string }, color: { type: string }, aiExcluded: { type: boolean, description: Exclude every note in this space from AI processing } }
+    DreamSource:
+      type: object
+      required: [noteId, title, excerpt, rank, similarityScore, cited]
+      properties:
+        noteId: { type: string, format: uuid }
+        title: { type: string }
+        excerpt: { type: string }
+        rank: { type: integer, minimum: 1 }
+        similarityScore: { type: number }
+        cited: { type: boolean }
+    DreamCandidate:
+      type: object
+      required: [dreamId, type, generatedAt, qualityScore, qualityLabel, status, spaceId, spaceName, content, rationale, suggestedAction, generation, sources]
+      properties:
+        dreamId: { type: string, format: uuid }
+        type: { type: string, enum: [connection, question, expansion, contrarian, rediscovery, action, pattern] }
+        generatedAt: { type: string, format: date-time }
+        exposedAt: { type: string, format: date-time }
+        acceptedAt: { type: string, format: date-time }
+        qualityScore: { type: number, minimum: 0, maximum: 1, description: Internal score; the UI presents qualityLabel instead }
+        qualityLabel: { type: string, enum: [근거 충분, 새로운 연결, 검토 필요] }
+        status: { type: string, enum: [created, exposed, kept, deleted] }
+        noteId: { type: string, format: uuid }
+        spaceId: { type: string, format: uuid }
+        spaceName: { type: string }
+        content: { type: string }
+        rationale: { type: string }
+        suggestedAction: { type: string }
+        generation: { type: integer, minimum: 1 }
+        dismissedReason: { type: string }
+        sources: { type: array, items: { $ref: '#/components/schemas/DreamSource' } }
     NoteWrite:
       type: object
       required: [content, x, y]
@@ -418,6 +476,7 @@ components:
         title: { type: string }
         color: { type: string, enum: [yellow, blue, purple, green, red, gray, lavender] }
         kind: { type: string }
+        aiExcluded: { type: boolean, description: Exclude this note from AI processing }
         x: { type: number }
         y: { type: number }
         width: { type: number, minimum: 120 }

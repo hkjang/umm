@@ -484,7 +484,7 @@
       <a href="#" class="brand">
         <div class="brand-logo">um</div>
         <span>umm</span>
-        <span class="brand-badge">v0.5.1</span>
+        <span class="brand-badge">v0.6.0</span>
       </a>
       <nav class="nav-links">
         <a href="#features">주요 기능</a>
@@ -564,7 +564,7 @@
         <button class="tab-btn active" onclick="switchTab('tab-canvas', this)">🌌 무한 생각 캔버스</button>
         <button class="tab-btn" onclick="switchTab('tab-notes', this)">📝 포스트잇 & 7색 팔레트</button>
         <button class="tab-btn" onclick="switchTab('tab-gravity', this)">🪐 Thought Gravity (인력)</button>
-        <button class="tab-btn" onclick="switchTab('tab-dreams', this)">🌙 Dreams 타임라인</button>
+        <button class="tab-btn" onclick="switchTab('tab-dreams', this)">🌙 Dream 검토함</button>
         <button class="tab-btn" onclick="switchTab('tab-keys', this)">🔑 개인 API/MCP 키</button>
         <button class="tab-btn" onclick="switchTab('tab-admin', this)">📊 관리자 운영 현황</button>
         <button class="tab-btn" onclick="switchTab('tab-dreamlayer', this)">🛡️ 256K Dream Layer</button>
@@ -631,12 +631,13 @@
             <img src="./screenshots/12_dreams_timeline.png" alt="Dreams 타임라인">
           </div>
           <div class="showcase-info">
-            <h3>밤사이 자라난 한 장의 메모, Dreams</h3>
+            <h3>근거를 확인하고 채택하는 AI 인사이트, Dreams</h3>
             <p>사용자가 쉬는 동안 축적된 메모들을 분석하여 새로운 연결과 영감을 주는 질문을 담은 Dream 카드를 생성합니다.</p>
             <ul class="feature-points">
-              <li><span>✓</span> 품질 점수(Quality Score %)와 AI 추론 유형 표시</li>
+              <li><span>✓</span> 설명형 품질 배지, 생성 이유와 실제 원본 생각 표시</li>
               <li><span>✓</span> Quiet Mode: 확실한 통찰이 있을 때만 선별 생성</li>
-              <li><span>✓</span> 클릭 한 번으로 내 캔버스에 라벤더 포스트잇으로 즉시 안착</li>
+              <li><span>✓</span> 채택할 때만 라벤더 포스트잇과 원본 연결선을 함께 생성</li>
+              <li><span>✓</span> 다른 관점 재생성, 확장·반대 관점·실행 항목 발전 지원</li>
             </ul>
           </div>
         </div>
@@ -668,9 +669,9 @@
           </div>
           <div class="showcase-info">
             <h3>운영 관측성 & 실시간 Dream 비용 대시보드</h3>
-            <p>전체 사용자, 활성 생각 수, 공간 수, AI 호출량, 예상 월 비용($) 및 Dream 유지율/발전율 지표를 한눈에 파악합니다.</p>
+            <p>전체 사용자, 활성 생각 수, 공간 수, AI 호출량, 예상 월 비용($) 및 Dream 채택률·유의미 활용률을 한눈에 파악합니다.</p>
             <ul class="feature-points">
-              <li><span>✓</span> Dream 품질 및 비용 산정 실시간 대시보드</li>
+              <li><span>✓</span> Dream 채택·후속 활용 및 채택당 비용 실시간 대시보드</li>
               <li><span>✓</span> 즉시 큐 생성 버튼을 통한 수동 Dream 실행</li>
               <li><span>✓</span> Keycloak OIDC SSO Discovery 연동 및 그룹 역할 매핑</li>
             </ul>
@@ -744,14 +745,14 @@
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.5.1</div>
+  umm:v0.6.0</div>
     </div>
   </section>
 
   <!-- Footer -->
   <footer>
     <div class="container">
-      <p style="margin-bottom: 14px;"><strong>umm</strong> · Spatial Thought Memory Platform (v0.5.1)</p>
+      <p style="margin-bottom: 14px;"><strong>umm</strong> · Spatial Thought Memory Platform (v0.6.0)</p>
       <p style="font-size: 13.5px;">
         <a href="./umm_complete_manual.pdf" target="_blank">📕 종합 매뉴얼 (PDF)</a> · 
         <a href="./umm_features_guide.pdf" target="_blank">기능 가이드 (PDF)</a> · 

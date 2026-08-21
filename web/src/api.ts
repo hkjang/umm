@@ -24,6 +24,7 @@ export interface Space {
   ownerId: string;
   name: string;
   color: string;
+  aiExcluded: boolean;
 }
 
 export interface ThoughtNote {
@@ -35,6 +36,7 @@ export interface ThoughtNote {
   color: string;
   kind: string;
   source: 'user' | 'dream' | 'api' | 'mcp';
+  aiExcluded: boolean;
   x: number;
   y: number;
   width: number;

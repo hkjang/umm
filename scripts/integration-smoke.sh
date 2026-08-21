@@ -53,6 +53,18 @@ done
 notes="$(curl -fsS -b "$cookie" "$base/spaces/$space/notes")"
 test "$(printf '%s' "$notes" | jq '.notes | length')" -eq 3
 note="$(printf '%s' "$notes" | jq -r '.notes[0].id')"
+note_payload="$(printf '%s' "$notes" | jq '.notes[0] | .aiExcluded=true')"
+updated_note="$(printf '%s' "$note_payload" | curl -fsS -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary @- "$base/notes/$note")"
+test "$(printf '%s' "$updated_note" | jq -r '.aiExcluded')" = true
+legacy_note="$(printf '%s' "$updated_note" | jq 'del(.aiExcluded)' | curl -fsS -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary @- "$base/notes/$note")"
+test "$(printf '%s' "$legacy_note" | jq -r '.aiExcluded')" = true
+printf '%s' "$legacy_note" | jq '.aiExcluded=false' | curl -fsS -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary @- "$base/notes/$note" >/dev/null
+
+space_payload="$(curl -fsS -b "$cookie" "$base/spaces" | jq '.spaces[0] | {name,aiExcluded:true}')"
+updated_space="$(printf '%s' "$space_payload" | curl -fsS -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary @- "$base/spaces/$space")"
+test "$(printf '%s' "$updated_space" | jq -r '.aiExcluded')" = true
+printf '%s' "$updated_space" | jq '{name,aiExcluded:false}' | curl -fsS -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary @- "$base/spaces/$space" >/dev/null
+
 search="$(curl -fsS -b "$cookie" --get --data-urlencode 'q=사용자별 권한' --data-urlencode 'limit=5' "$base/search")"
 test "$(printf '%s' "$search" | jq '.notes | length')" -ge 1
 test "$(printf '%s' "$search" | jq -r '.notes[0].spaceId')" = "$space"

@@ -29,6 +29,7 @@ type noteWriteRequest struct {
 	Color        string          `json:"color"`
 	Kind         string          `json:"kind"`
 	Source       string          `json:"source"`
+	AIExcluded   *bool           `json:"aiExcluded"`
 	X            float64         `json:"x"`
 	Y            float64         `json:"y"`
 	Width        float64         `json:"width"`
@@ -41,9 +42,11 @@ type noteWriteRequest struct {
 }
 
 func (v noteWriteRequest) note() store.Note {
+	aiExcluded := v.AIExcluded != nil && *v.AIExcluded
 	return store.Note{
 		Content: v.Content, Title: v.Title, Color: v.Color, Kind: v.Kind,
-		X: v.X, Y: v.Y, Width: v.Width, Height: v.Height, Rotation: v.Rotation,
+		AIExcluded: aiExcluded,
+		X:          v.X, Y: v.Y, Width: v.Width, Height: v.Height, Rotation: v.Rotation,
 		Version: v.Version,
 	}
 }
@@ -156,7 +159,8 @@ func (s *Server) updateSpace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name string `json:"name"`
+		Name       string `json:"name"`
+		AIExcluded *bool  `json:"aiExcluded"`
 	}
 	name := ""
 	if decodeJSON(w, r, &body) == nil {
@@ -167,7 +171,7 @@ func (s *Server) updateSpace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	updated, err := s.Store.UpdateSpace(r.Context(), p.User.ID, spaceID, name)
+	updated, err := s.Store.UpdateSpace(r.Context(), p.User.ID, spaceID, name, body.AIExcluded)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, 404, "이름을 변경할 수 있는 공간을 찾지 못했습니다.")
@@ -176,7 +180,7 @@ func (s *Server) updateSpace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "공간 이름을 변경하지 못했습니다.")
 		return
 	}
-	s.Store.Audit(r.Context(), &p.User.ID, "space.update", "space", spaceID.String(), map[string]any{"name": name})
+	s.Store.Audit(r.Context(), &p.User.ID, "space.update", "space", spaceID.String(), map[string]any{"name": name, "aiExcluded": body.AIExcluded})
 	s.publishSpaceEvent(r, spaceID, "space.updated", spaceID, updated)
 	writeJSON(w, 200, updated)
 }
@@ -301,7 +305,7 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 	n := body.note()
 	n.ID = noteID
 	p := principal(r)
-	updated, err := s.Store.UpdateNote(r.Context(), p.User.ID, n)
+	updated, err := s.Store.UpdateNote(r.Context(), p.User.ID, n, body.AIExcluded)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, 409, "다른 위치에서 메모가 변경되었습니다. 새로고침 후 다시 시도해 주세요.")
