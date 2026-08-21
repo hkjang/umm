@@ -57,11 +57,11 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if field := secretField(section); field != "" {
-		var existing map[string]any
-		_ = s.Store.GetSetting(r.Context(), section, &existing)
 		raw, _ := incoming[field].(string)
 		if raw == "" || raw == secretMask {
-			incoming[field] = existing[field]
+			// Omit a masked secret so Store.PutSetting can merge the latest
+			// ciphertext while holding the same lock as master-key rotation.
+			delete(incoming, field)
 		} else {
 			encrypted, err := s.Cipher.Encrypt(raw)
 			if err != nil {

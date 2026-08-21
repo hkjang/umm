@@ -18,7 +18,7 @@ User API/MCP key (one-time plaintext display)
        └─ rotation overlap window
 ```
 
-`ENCRYPTION_KEY`와 PostgreSQL backup을 같은 저장소에 보관하지 마세요. 키를 잃으면 암호화된 비밀은 복구할 수 없지만 Canvas 데이터는 영향을 받지 않습니다. 무중단 회전 시 새 값을 `ENCRYPTION_KEY`, 현재 값을 `ENCRYPTION_KEY_PREVIOUS`에 함께 배치하고 관리자 보안 화면에서 트랜잭션 재암호화를 실행합니다. 대기·읽기 실패가 모두 0인 것을 확인하기 전에는 이전 키를 제거하지 마세요.
+`ENCRYPTION_KEY`와 PostgreSQL backup을 같은 저장소에 보관하지 마세요. 키를 잃으면 암호화된 비밀은 복구할 수 없지만 Canvas 데이터는 영향을 받지 않습니다. 무중단 회전 시 새 값을 `ENCRYPTION_KEY`, 현재 값을 `ENCRYPTION_KEY_PREVIOUS`에 함께 배치하고 관리자 보안 화면에서 트랜잭션 재암호화를 실행합니다. OIDC·AI Gateway의 마스킹된 설정 저장은 회전과 같은 설정별 advisory transaction lock을 사용하고 잠금을 얻은 뒤 최신 암호문을 병합하므로, 회전 전에 열어 둔 화면을 동시에 저장해도 이전 키 암호문을 되살리지 않습니다. 대기·읽기 실패가 모두 0인 것을 확인하기 전에는 이전 키를 제거하지 마세요.
 
 개인 키 secret은 생성·회전 응답에서 한 번만 보이며 DB에는 digest만 남습니다. 키 회전 시 기존 키는 `overlap` 상태가 되고 관리자 설정 시간이 지나면 인증에서 자동 거부됩니다. 즉시 차단이 필요하면 사용자가 폐기할 수 있습니다.
 

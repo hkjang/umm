@@ -66,7 +66,7 @@ Today의 대기 Dream과 `GET /dreams`의 후보·출처는 매 조회마다 Dre
 
 `GET /notifications`의 각 항목에는 `resourceType`, `resourceId`, `resourceSpaceId`, `metadata`가 포함됩니다. Dream 알림은 `/dreams?focus={resourceId}`, 공간 공유 알림은 `/space/{resourceId}`, 댓글·멘션은 `/space/{resourceSpaceId}?note={resourceId}`로 연결할 수 있습니다. note 알림은 현재 생각의 soft-delete 상태와 실제 공간 접근권한을 목록·unread count 양쪽에서 확인하며, 이전 행에 `resourceSpaceId`가 없어도 생각이 속한 공간으로 권한을 계산합니다. Dream 알림도 현재 공간 ID를 저장하고 이전 행은 Dream에서 실제 공간을 찾아 공유 회수 뒤 본문을 숨깁니다. unread count와 page 조회는 DB 연결을 겹쳐 잡지 않고 순차 실행합니다. `pool_max_conns` 1~2에서는 realtime listener도 안전 폴링으로 전환하므로 endpoint가 자신이 필요한 request 연결을 기다리지 않습니다.
 
-개인 설정과 API key 생성·회전·폐기, 세션 관리, 모든 `/admin/*` 작업은 API key가 아니라 로그인한 브라우저 세션에서만 허용됩니다. 제한된 자동화 key가 새 자격 증명을 만들거나 관리자 role을 상속해 권한을 넓힐 수 없습니다.
+개인 설정과 API key 생성·회전·폐기, 세션 관리, 모든 `/admin/*` 작업은 API key가 아니라 로그인한 브라우저 세션에서만 허용됩니다. 제한된 자동화 key가 새 자격 증명을 만들거나 관리자 role을 상속해 권한을 넓힐 수 없습니다. OIDC·AI Gateway 설정에서 마스킹된 secret을 그대로 보내면 서버가 저장 직전의 최신 암호문을 설정별 transaction lock 안에서 병합하며, master-key 회전도 같은 lock을 사용하므로 회전 전에 연 관리 화면의 저장이 새 암호문을 되돌리지 않습니다.
 
 `PUT /preferences`는 **원자적 부분 수정**입니다. 바꾸려는 필드만 보내면 되고, 보내지 않은 필드는 요청이 처리되는 시점의 최신 저장값이 유지됩니다. 언어와 테마처럼 서로 다른 설정을 동시에 바꿔도 한 요청이 다른 요청을 되돌리지 않으며, `dream_pause_until: null`은 일시정지를 명시적으로 해제합니다.
 

@@ -332,7 +332,8 @@ func (s *Store) PutSetting(ctx context.Context, key string, value any, actor uui
 	if !AllowedSetting(key) {
 		return errors.New("unknown setting section")
 	}
-	if key == "security" {
+	switch key {
+	case "security":
 		return s.putSettingPreserving(ctx, key, value, actor, []string{
 			"login_max_failures",
 			"login_lockout_minutes",
@@ -340,12 +341,26 @@ func (s *Store) PutSetting(ctx context.Context, key string, value any, actor uui
 			"ai_rate_per_minute",
 			"ai_daily_limit",
 		})
+	case "oidc":
+		return s.putSettingPreserving(ctx, key, value, actor, []string{"client_secret"})
+	case "ai_gateway":
+		return s.putSettingPreserving(ctx, key, value, actor, []string{"api_key"})
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
 	_, err = s.Pool.Exec(ctx, `INSERT INTO app_settings(key,value,updated_by,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`, key, raw, actor)
+	return err
+}
+
+// LockSettingTx serializes read/merge/write setting transitions, including
+// master-key rotation when the row may not exist yet.
+func (s *Store) LockSettingTx(ctx context.Context, tx pgx.Tx, key string) error {
+	if !AllowedSetting(key) {
+		return errors.New("unknown setting section")
+	}
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "umm:app-setting:"+key)
 	return err
 }
 
@@ -371,7 +386,7 @@ func (s *Store) putSettingPreserving(ctx context.Context, key string, value any,
 		return fmt.Errorf("begin setting update %q: %w", key, err)
 	}
 	defer tx.Rollback(context.Background())
-	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "umm:app-setting:"+key); err != nil {
+	if err = s.LockSettingTx(ctx, tx, key); err != nil {
 		return fmt.Errorf("lock setting %q: %w", key, err)
 	}
 

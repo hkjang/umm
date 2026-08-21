@@ -117,6 +117,10 @@ func (s *Server) rotateEncryptionKey(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	rotated := 0
 	for _, section := range []string{"oidc", "ai_gateway"} {
+		if err = s.Store.LockSettingTx(r.Context(), tx, section); err != nil {
+			writeError(w, 500, "암호화된 "+section+" 설정을 잠그지 못했습니다.")
+			return
+		}
 		var raw []byte
 		if err = tx.QueryRow(r.Context(), `SELECT value FROM app_settings WHERE key=$1 FOR UPDATE`, section).Scan(&raw); err != nil {
 			writeError(w, 500, "암호화된 "+section+" 설정을 읽지 못했습니다.")

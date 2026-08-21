@@ -686,7 +686,7 @@ paths:
       operationId: put_admin_settings_section
       tags: [Admin]
       summary: Replace one settings section
-      description: OIDC client_secret and AI api_key are AES-256-GCM encrypted before PostgreSQL storage.
+      description: OIDC client_secret and AI api_key are AES-256-GCM encrypted before PostgreSQL storage. Masked secret saves merge the latest ciphertext under the same per-setting transaction lock used by master-key rotation.
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
       responses: { '200': { description: Saved }, '400': { $ref: '#/components/responses/Error' } }
   /admin/oidc/test:
@@ -728,7 +728,7 @@ paths:
       operationId: post_admin_security_encryption_rotate
       tags: [Admin]
       summary: Transactionally re-encrypt secrets with the primary key
-      description: Requires the previous key in ENCRYPTION_KEY_PREVIOUS until every stored value has been rotated and verified.
+      description: Requires the previous key in ENCRYPTION_KEY_PREVIOUS until every stored value has been rotated and verified. OIDC and AI Gateway setting writes are serialized with rotation so masked saves cannot restore stale ciphertext.
       responses: { '200': { description: Rotation result }, '409': { $ref: '#/components/responses/Error' } }
   /admin/ai-evals:
     get:

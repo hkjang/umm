@@ -196,7 +196,7 @@
 ### 24. 관리자 AI 평가·키 회전·관측성
 
 - **AI 평가 세트**: 입력 생각, 기대 단어, 금지 단어로 Dream grounding·품질 회귀를 실행하고 점수·모델·prompt version을 기록합니다.
-- **Master-key 회전**: primary/fallback keyring 상태와 회전 대기·읽기 실패를 확인하고 저장된 암호문을 트랜잭션으로 다시 암호화합니다. `enc:` wrapper 이전에 저장된 raw v1 AI prompt도 현재 primary key의 wrapper·v2 형식으로 회전한 뒤에만 pending이 0이 됩니다.
+- **Master-key 회전**: primary/fallback keyring 상태와 회전 대기·읽기 실패를 확인하고 저장된 암호문을 트랜잭션으로 다시 암호화합니다. `enc:` wrapper 이전에 저장된 raw v1 AI prompt도 현재 primary key의 wrapper·v2 형식으로 회전한 뒤에만 pending이 0이 됩니다. OIDC·AI Gateway의 마스킹 설정 저장은 회전과 같은 설정 lock 뒤 최신 secret을 병합해 이전 화면의 동시 저장에도 새 암호문을 보존합니다.
 - **운영 지표**: 댓글·온보딩·웹훅 실패·AI eval 결과와 HTTP request/latency를 관리 화면 및 Prometheus에서 확인합니다.
 
 ### 25. 언어 · 테마 · 가져오기 (v0.8.0)
