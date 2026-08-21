@@ -51,6 +51,10 @@ jobs:
         env:
           POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
         run: go test ./internal/store -run 'Test.*Integration' -count=1
+      - name: Idempotency lease regression
+        env:
+          POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
+        run: go test ./internal/httpapi -run 'TestIdempotencyPendingLeaseRecoversAfterCrashIntegration' -count=1
       - name: Webhook persistence regression
         env:
           POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
@@ -72,5 +76,7 @@ jobs:
         run: npm audit --audit-level=high
         working-directory: web
       - run: npm run build
+        working-directory: web
+      - run: npm run verify:pwa
         working-directory: web
       - run: docker build --build-arg VERSION=$(tr -d '[:space:]' < VERSION) -t umm:ci .

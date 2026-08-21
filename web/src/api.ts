@@ -169,6 +169,15 @@ export function discardOfflineMutation(id?: string) {
 }
 
 const retryableOfflineStatus = (status: number) => status === 408 || status === 425 || status === 429 || status >= 500;
+let offlineRetryTimer: number | undefined;
+
+function scheduleOfflineRetry(delaySeconds: number) {
+  if (offlineRetryTimer !== undefined) return;
+  offlineRetryTimer = window.setTimeout(() => {
+    offlineRetryTimer = undefined;
+    if (navigator.onLine) void flushOfflineQueue();
+  }, Math.max(1, Math.min(delaySeconds, 300)) * 1000);
+}
 
 async function fetchAPI(path: string, requestOptions: RequestInit, retry: boolean): Promise<Response> {
   try {
@@ -228,6 +237,7 @@ export async function flushOfflineQueue() {
   if (queued.length === 0 || !navigator.onLine) return { synced: 0, remaining: queued.length };
   const remaining: OfflineMutation[] = [];
   let synced = 0;
+  let retryAfterSeconds = 0;
   for (let index = 0; index < queued.length; index += 1) {
     const item = queued[index];
     try {
@@ -237,6 +247,12 @@ export async function flushOfflineQueue() {
         continue;
       }
       const payload = await response.json().catch(() => ({}));
+      if (response.status === 425) {
+        remaining.push(item);
+        const requestedDelay = Number.parseInt(response.headers.get('Retry-After') || '5', 10);
+        retryAfterSeconds = Math.max(retryAfterSeconds, Number.isFinite(requestedDelay) ? requestedDelay : 5);
+        continue;
+      }
       if (response.status === 409) {
         remaining.push(item);
         window.dispatchEvent(new CustomEvent('umm:offline-conflict', { detail: { item, payload } }));
@@ -259,6 +275,7 @@ export async function flushOfflineQueue() {
     }
   }
   saveOfflineQueue(remaining);
+  if (retryAfterSeconds > 0 && remaining.length > 0 && navigator.onLine) scheduleOfflineRetry(retryAfterSeconds);
   window.dispatchEvent(new CustomEvent('umm:offline-sync', { detail: { synced, remaining: remaining.length } }));
   return { synced, remaining: remaining.length };
 }

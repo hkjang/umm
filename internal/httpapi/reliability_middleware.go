@@ -12,7 +12,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hkjang/umm/internal/auth"
 	"github.com/jackc/pgx/v5"
@@ -20,6 +22,8 @@ import (
 
 var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{8,128}$`)
 var sensitiveCredentialPathPattern = regexp.MustCompile(`^/api/v1/(?:api-keys(?:/[^/]+/rotate)?|webhooks(?:/[^/]+/rotate-secret)?)$`)
+
+const idempotencyPendingLease = 2 * time.Minute
 
 func idempotencyRequestIdentity(r *http.Request, body []byte) string {
 	digest := sha256.New()
@@ -84,9 +88,9 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 }
 
 // idempotency serializes reservations with a per-user advisory lock, then
-// records the exact successful JSON response for 24 hours. A committed pending
-// reservation also prevents a retry from duplicating a mutation whose outcome
-// became unknown because the process or connection disappeared mid-request.
+// records the exact successful JSON response for 24 hours. Pending reservations
+// use a short lease: this blocks concurrent duplicates while allowing a retry
+// to recover automatically when the process stops before the handler runs.
 func (s *Server) idempotency(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
@@ -136,7 +140,8 @@ func (s *Server) idempotency(next http.Handler) http.Handler {
 		var method, path, state string
 		var status *int
 		var stored []byte
-		err = tx.QueryRow(r.Context(), `SELECT method,path,state,response_status,response_body FROM idempotency_records WHERE user_id=$1 AND idempotency_key=$2 AND expires_at>now()`, p.User.ID, key).Scan(&method, &path, &state, &status, &stored)
+		var expiresAt time.Time
+		err = tx.QueryRow(r.Context(), `SELECT method,path,state,response_status,response_body,expires_at FROM idempotency_records WHERE user_id=$1 AND idempotency_key=$2 AND expires_at>now()`, p.User.ID, key).Scan(&method, &path, &state, &status, &stored, &expiresAt)
 		if err == nil {
 			if err = tx.Commit(r.Context()); err != nil {
 				writeError(w, http.StatusServiceUnavailable, "재시도 상태를 확정하지 못했습니다.")
@@ -147,8 +152,12 @@ func (s *Server) idempotency(next http.Handler) http.Handler {
 				return
 			}
 			if state == "pending" {
-				w.Header().Set("Retry-After", "1")
-				writeProblem(w, r, http.StatusConflict, "idempotency-in-progress", "재시도 처리 중", "같은 요청이 아직 처리 중이거나 결과 확인이 필요합니다. 잠시 후 다시 시도해 주세요.", nil)
+				retryAfter := int((time.Until(expiresAt) + time.Second - 1) / time.Second)
+				if retryAfter < 1 {
+					retryAfter = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+				writeProblem(w, r, http.StatusTooEarly, "idempotency-in-progress", "재시도 처리 중", "같은 요청이 아직 처리 중입니다. Retry-After 이후 자동으로 다시 시도합니다.", nil)
 				return
 			}
 			if state != "completed" || status == nil {
@@ -167,7 +176,8 @@ func (s *Server) idempotency(next http.Handler) http.Handler {
 			writeError(w, http.StatusServiceUnavailable, "재시도 상태를 확인하지 못했습니다.")
 			return
 		}
-		if _, err = tx.Exec(r.Context(), `INSERT INTO idempotency_records(user_id,idempotency_key,method,path,state,response_status,expires_at) VALUES($1,$2,$3,$4,'pending',NULL,now()+interval '24 hours')`, p.User.ID, key, r.Method, requestIdentity); err != nil {
+		var reservationCreatedAt time.Time
+		if err = tx.QueryRow(r.Context(), `INSERT INTO idempotency_records(user_id,idempotency_key,method,path,state,response_status,expires_at) VALUES($1,$2,$3,$4,'pending',NULL,now()+$5*interval '1 second') RETURNING created_at`, p.User.ID, key, r.Method, requestIdentity, idempotencyPendingLease.Seconds()).Scan(&reservationCreatedAt); err != nil {
 			writeError(w, http.StatusServiceUnavailable, "재시도 요청을 예약하지 못했습니다.")
 			return
 		}
@@ -190,11 +200,11 @@ func (s *Server) idempotency(next http.Handler) http.Handler {
 			}
 		}
 		if recordable {
-			command, recordErr := s.Store.Pool.Exec(r.Context(), `UPDATE idempotency_records SET state='completed',response_status=$5,response_body=$6,expires_at=now()+interval '24 hours' WHERE user_id=$1 AND idempotency_key=$2 AND method=$3 AND path=$4 AND state='pending'`, p.User.ID, key, r.Method, requestIdentity, result.StatusCode, raw)
+			command, recordErr := s.Store.Pool.Exec(r.Context(), `UPDATE idempotency_records SET state='completed',response_status=$5,response_body=$6,expires_at=now()+interval '24 hours' WHERE user_id=$1 AND idempotency_key=$2 AND method=$3 AND path=$4 AND state='pending' AND created_at=$7`, p.User.ID, key, r.Method, requestIdentity, result.StatusCode, raw, reservationCreatedAt)
 			if recordErr != nil || command.RowsAffected() != 1 {
 				slog.Warn("idempotency result remained pending", "user_id", p.User.ID, "path", r.URL.EscapedPath(), "error", recordErr)
 			}
-		} else if _, cleanupErr := s.Store.Pool.Exec(r.Context(), `DELETE FROM idempotency_records WHERE user_id=$1 AND idempotency_key=$2 AND method=$3 AND path=$4 AND state='pending'`, p.User.ID, key, r.Method, requestIdentity); cleanupErr != nil {
+		} else if _, cleanupErr := s.Store.Pool.Exec(r.Context(), `DELETE FROM idempotency_records WHERE user_id=$1 AND idempotency_key=$2 AND method=$3 AND path=$4 AND state='pending' AND created_at=$5`, p.User.ID, key, r.Method, requestIdentity, reservationCreatedAt); cleanupErr != nil {
 			slog.Warn("idempotency pending reservation cleanup failed", "user_id", p.User.ID, "path", r.URL.EscapedPath(), "error", cleanupErr)
 		}
 		for header, values := range result.Header {

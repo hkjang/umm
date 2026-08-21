@@ -725,7 +725,7 @@ components:
     WebhookID: { in: path, name: webhookId, required: true, schema: { type: string, format: uuid } }
     CaseID: { in: path, name: caseId, required: true, schema: { type: string, format: uuid } }
     Cursor: { in: query, name: cursor, description: Opaque cursor returned as nextCursor, schema: { type: string } }
-    IdempotencyKey: { in: header, name: Idempotency-Key, description: Replay-safe mutation key retained for 24 hours, schema: { type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' } }
+    IdempotencyKey: { in: header, name: Idempotency-Key, description: Replay-safe mutation key; pending requests use a 2-minute recoverable lease and successful responses are retained for 24 hours, schema: { type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' } }
   responses:
     Error: { description: RFC 9457 Problem Details, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   schemas:

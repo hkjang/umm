@@ -1,8 +1,26 @@
 const CACHE = 'umm-shell-v0.7.0';
+const BUILD_MANIFEST = '/asset-manifest.json';
 const SHELL = ['/', '/manifest.webmanifest'];
 
+const assetURL = (path) => path.startsWith('/') ? path : `/${path}`;
+
+async function precacheShell() {
+  const cache = await caches.open(CACHE);
+  const manifestResponse = await fetch(BUILD_MANIFEST, { cache: 'no-store' });
+  if (!manifestResponse.ok) throw new Error('build asset manifest unavailable');
+  const manifest = await manifestResponse.clone().json();
+  const buildAssets = new Set();
+  for (const entry of Object.values(manifest)) {
+    if (entry.file) buildAssets.add(assetURL(entry.file));
+    for (const path of entry.css || []) buildAssets.add(assetURL(path));
+    for (const path of entry.assets || []) buildAssets.add(assetURL(path));
+  }
+  await cache.put(BUILD_MANIFEST, manifestResponse);
+  await cache.addAll([...SHELL, ...buildAssets]);
+}
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(precacheShell().then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (event) => {
@@ -17,10 +35,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(request).then((response) => {
       if (response.ok) caches.open(CACHE).then((cache) => cache.put('/', response.clone()));
       return response;
-    }).catch(() => caches.match('/')));
+    }).catch(() => caches.match('/', { ignoreVary: true })));
     return;
   }
-  event.respondWith(caches.match(request).then((cached) => cached || fetch(request).then((response) => {
+  event.respondWith(caches.match(request, { ignoreVary: true }).then((cached) => cached || fetch(request).then((response) => {
     if (response.ok && /\.(?:js|css|woff2?|png|svg)$/.test(url.pathname)) caches.open(CACHE).then((cache) => cache.put(request, response.clone()));
     return response;
   })));
