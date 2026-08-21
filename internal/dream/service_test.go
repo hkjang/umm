@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestNormalizeTokenLimit(t *testing.T) {
@@ -244,6 +245,30 @@ func TestCallTextReportsTokenLimitBeforeFinalAnswer(t *testing.T) {
 	}
 	if inputTokens != 10 || outputTokens != 524288 {
 		t.Fatalf("truncated usage was not accumulated: input=%d output=%d", inputTokens, outputTokens)
+	}
+}
+
+func TestCallTextTimeoutBoundsAllRetries(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		time.Sleep(2 * time.Second)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": "너무 늦은 응답"}}},
+		})
+	}))
+	defer server.Close()
+
+	started := time.Now()
+	service := &Service{}
+	_, _, _, _, err := service.callText(context.Background(), GatewayConfig{
+		BaseURL: server.URL, TimeoutSeconds: 1, MaxRetries: MaxGatewayRetries,
+	}, "test-model", .2, 200, koreanOnlyInstruction, "사용자 메모")
+	if err == nil {
+		t.Fatal("timed-out gateway call unexpectedly succeeded")
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("gateway timeout was applied once per retry: elapsed=%s calls=%d", elapsed, calls.Load())
 	}
 }
 

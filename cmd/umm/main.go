@@ -22,6 +22,17 @@ import (
 
 var version = "dev"
 
+const httpWriteTimeoutBuffer = time.Minute
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr: addr, Handler: handler,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second,
+		WriteTimeout: time.Duration(dream.MaxGatewayTimeoutSeconds)*time.Second + httpWriteTimeoutBuffer,
+		IdleTimeout:  90 * time.Second, MaxHeaderBytes: 1 << 20,
+	}
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	cfg, err := config.Load()
@@ -68,7 +79,7 @@ func main() {
 	}
 	metrics := observability.NewRegistry()
 	api := &httpapi.Server{Store: db, Auth: authService, OIDC: oidcService, Cipher: cipher, Dreams: dreamService, Webhooks: webhookService, Metrics: metrics, Version: version, WebDir: webDir}
-	httpServer := &http.Server{Addr: cfg.HTTPAddr, Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
+	httpServer := newHTTPServer(cfg.HTTPAddr, api.Handler())
 	go func() {
 		slog.Info("umm started", "version", version, "address", httpServer.Addr)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

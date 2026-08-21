@@ -69,6 +69,16 @@ legacy_note="$(printf '%s' "$updated_note" | jq 'del(.aiExcluded)' | curl -fsS -
 test "$(printf '%s' "$legacy_note" | jq -r '.aiExcluded')" = true
 printf '%s' "$legacy_note" | jq '.aiExcluded=false' | curl -fsS -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary @- "$base/notes/$note" >/dev/null
 
+deleted_note="$(curl -fsS -b "$cookie" -H 'Content-Type: application/json' \
+  -d '{"content":"삭제 뒤 오프라인 재시도 분류","x":0,"y":0}' "$base/spaces/$space/notes")"
+deleted_note_id="$(printf '%s' "$deleted_note" | jq -r '.id')"
+curl -fsS -b "$cookie" -X DELETE "$base/notes/$deleted_note_id" >/dev/null
+deleted_update_status="$(printf '%s' "$deleted_note" | curl -sS -o "$smoke_dir/deleted-note-update.json" -w '%{http_code}' -b "$cookie" \
+  -H 'Content-Type: application/json' -H 'Idempotency-Key: deleted-note-update-12345678' \
+  -X PUT --data-binary @- "$base/notes/$deleted_note_id")"
+test "$deleted_update_status" = "404"
+test "$(jq -r '.type | endswith("/note-not-found")' "$smoke_dir/deleted-note-update.json")" = true
+
 space_payload="$(curl -fsS -b "$cookie" "$base/spaces" | jq '.spaces[0] | {name,aiExcluded:true}')"
 updated_space="$(printf '%s' "$space_payload" | curl -fsS -b "$cookie" -H 'Content-Type: application/json' -X PUT --data-binary @- "$base/spaces/$space")"
 test "$(printf '%s' "$updated_space" | jq -r '.aiExcluded')" = true

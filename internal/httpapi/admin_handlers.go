@@ -181,8 +181,12 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 			return errors.New("AI 로그 보존 기간은 1~3650일이어야 합니다")
 		}
 		timeout, ok := v["timeout_seconds"].(float64)
-		if !ok || math.Trunc(timeout) != timeout || timeout < 5 || timeout > 1800 {
-			return errors.New("AI Gateway Timeout은 5~1800초 사이의 정수여야 합니다")
+		if !ok || math.Trunc(timeout) != timeout || timeout < dream.MinGatewayTimeoutSeconds || timeout > dream.MaxGatewayTimeoutSeconds {
+			return fmt.Errorf("AI Gateway Timeout은 %d~%d초 사이의 정수여야 합니다", dream.MinGatewayTimeoutSeconds, dream.MaxGatewayTimeoutSeconds)
+		}
+		retries, ok := v["max_retries"].(float64)
+		if !ok || math.Trunc(retries) != retries || retries < 0 || retries > dream.MaxGatewayRetries {
+			return fmt.Errorf("AI Gateway 재시도는 0~%d 사이의 정수여야 합니다", dream.MaxGatewayRetries)
 		}
 	}
 	return nil

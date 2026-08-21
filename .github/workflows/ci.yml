@@ -72,6 +72,8 @@ jobs:
         run: go test ./internal/dream -run TestDreamInboxAcceptanceIntegration -count=1
       - run: npm ci
         working-directory: web
+      - run: npm run test:offline-queue
+        working-directory: web
       - name: Frontend dependency audit
         run: npm audit --audit-level=high
         working-directory: web

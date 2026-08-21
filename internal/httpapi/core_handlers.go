@@ -334,11 +334,15 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			latest, latestErr := s.Store.NoteByID(r.Context(), p.User.ID, noteID)
-			extra := map[string]any{"clientVersion": n.Version}
 			if latestErr == nil {
-				extra["latest"] = latest
+				writeProblem(w, r, http.StatusConflict, "note-version-conflict", "메모 버전 충돌", "다른 위치에서 메모가 변경되었습니다. 두 버전을 비교해 선택해 주세요.", map[string]any{"clientVersion": n.Version, "latest": latest})
+				return
 			}
-			writeProblem(w, r, 409, "note-version-conflict", "메모 버전 충돌", "다른 위치에서 메모가 변경되었습니다. 두 버전을 비교해 선택해 주세요.", extra)
+			if updateNoteLookupFailureStatus(latestErr) == http.StatusNotFound {
+				writeProblem(w, r, http.StatusNotFound, "note-not-found", "메모를 찾을 수 없음", "메모가 삭제되었거나 더 이상 접근할 수 없어 오프라인 변경을 적용할 수 없습니다.", nil)
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "최신 메모를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")
 			return
 		}
 		writeError(w, 500, "생각을 저장하지 못했습니다.")
@@ -417,6 +421,13 @@ func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
 }
 
 func deleteNoteErrorStatus(err error) int {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
+func updateNoteLookupFailureStatus(err error) int {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return http.StatusNotFound
 	}

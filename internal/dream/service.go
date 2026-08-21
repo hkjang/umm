@@ -71,10 +71,14 @@ type AssistResult struct {
 }
 
 const (
-	MinTokenLimit     = 64
-	MaxTokenLimit     = 256 * 1024
-	DefaultTokenLimit = 4096
-	maxAIResponseBody = 16 << 20
+	MinTokenLimit            = 64
+	MaxTokenLimit            = 256 * 1024
+	DefaultTokenLimit        = 4096
+	MinGatewayTimeoutSeconds = 5
+	MaxGatewayTimeoutSeconds = 1800
+	DefaultGatewayTimeout    = 45
+	MaxGatewayRetries        = 5
+	maxAIResponseBody        = 16 << 20
 )
 
 var ErrAIResponseTokenLimit = errors.New("AI response reached the configured token limit before a final answer")
@@ -85,6 +89,13 @@ func NormalizeTokenLimit(limit int) int {
 		return DefaultTokenLimit
 	}
 	return min(limit, MaxTokenLimit)
+}
+
+func gatewayTimeout(timeoutSeconds int) time.Duration {
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = DefaultGatewayTimeout
+	}
+	return time.Duration(min(timeoutSeconds, MaxGatewayTimeoutSeconds)) * time.Second
 }
 
 type sourceNote struct {
@@ -554,15 +565,11 @@ func (s *Service) callGatewayWithGuidance(ctx context.Context, cfg Config, g Gat
 	}
 	tokenLimit := NormalizeTokenLimit(cfg.TokenLimit)
 	reqBody := chatRequest{Model: cfg.Model, Messages: []chatMessage{{Role: "system", Content: system}, {Role: "user", Content: userPrompt}}, Temperature: cfg.Temperature, MaxTokens: tokenLimit}
-	timeout := g.TimeoutSeconds
-	if timeout <= 0 {
-		timeout = 45
-	}
-	client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
-	retries := g.MaxRetries
-	if retries < 0 {
-		retries = 0
-	}
+	timeout := gatewayTimeout(g.TimeoutSeconds)
+	gatewayCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	client := &http.Client{Timeout: timeout}
+	retries := min(max(g.MaxRetries, 0), MaxGatewayRetries)
 	start := time.Now()
 	var lastErr error
 	var inputTokens, outputTokens int
@@ -572,7 +579,7 @@ func (s *Service) callGatewayWithGuidance(ctx context.Context, cfg Config, g Gat
 		if retryWithoutReasoning {
 			requestBody = withoutModelReasoning(requestBody)
 		}
-		result, requestErr := requestChat(ctx, client, endpoint, key, requestBody)
+		result, requestErr := requestChat(gatewayCtx, client, endpoint, key, requestBody)
 		if requestErr != nil {
 			lastErr = requestErr
 			continue
@@ -595,7 +602,7 @@ func (s *Service) callGatewayWithGuidance(ctx context.Context, cfg Config, g Gat
 			}
 			continue
 		}
-		text, repairInput, repairOutput := preferKoreanResponse(ctx, client, endpoint, key, cfg.Model, tokenLimit, text)
+		text, repairInput, repairOutput := preferKoreanResponse(gatewayCtx, client, endpoint, key, cfg.Model, tokenLimit, text)
 		return truncate(text, 2000), inputTokens + repairInput, outputTokens + repairOutput, cfg.Model, time.Since(start), nil
 	}
 	return "", inputTokens, outputTokens, cfg.Model, time.Since(start), lastErr
@@ -816,15 +823,11 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 	}
 	maxTokens = NormalizeTokenLimit(maxTokens)
 	reqBody := chatRequest{Model: model, Messages: []chatMessage{{Role: "system", Content: system}, {Role: "user", Content: user}}, Temperature: temperature, MaxTokens: maxTokens}
-	timeout := g.TimeoutSeconds
-	if timeout <= 0 {
-		timeout = 45
-	}
-	client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
-	retries := g.MaxRetries
-	if retries < 0 {
-		retries = 0
-	}
+	timeout := gatewayTimeout(g.TimeoutSeconds)
+	gatewayCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	client := &http.Client{Timeout: timeout}
+	retries := min(max(g.MaxRetries, 0), MaxGatewayRetries)
 	start := time.Now()
 	var lastErr error
 	var inputTokens, outputTokens int
@@ -834,7 +837,7 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 		if retryWithoutReasoning {
 			requestBody = withoutModelReasoning(requestBody)
 		}
-		result, requestErr := requestChat(ctx, client, endpoint, key, requestBody)
+		result, requestErr := requestChat(gatewayCtx, client, endpoint, key, requestBody)
 		if requestErr != nil {
 			lastErr = requestErr
 			continue
@@ -857,7 +860,7 @@ func (s *Service) callText(ctx context.Context, g GatewayConfig, model string, t
 			}
 			continue
 		}
-		text, repairInput, repairOutput := preferKoreanResponse(ctx, client, endpoint, key, model, maxTokens, text)
+		text, repairInput, repairOutput := preferKoreanResponse(gatewayCtx, client, endpoint, key, model, maxTokens, text)
 		return truncate(text, 2000), inputTokens + repairInput, outputTokens + repairOutput, time.Since(start), nil
 	}
 	return "", inputTokens, outputTokens, time.Since(start), lastErr

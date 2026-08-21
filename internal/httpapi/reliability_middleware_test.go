@@ -66,6 +66,12 @@ func TestCommentCreateErrorsPreserveRetryableFailures(t *testing.T) {
 }
 
 func TestOfflineCanvasMutationErrorsPreserveRetryableFailures(t *testing.T) {
+	if got := updateNoteLookupFailureStatus(pgx.ErrNoRows); got != http.StatusNotFound {
+		t.Fatalf("inaccessible update status = %d", got)
+	}
+	if got := updateNoteLookupFailureStatus(errors.New("lookup unavailable")); got != http.StatusInternalServerError {
+		t.Fatalf("transient update lookup status = %d", got)
+	}
 	if got := deleteNoteErrorStatus(pgx.ErrNoRows); got != http.StatusNotFound {
 		t.Fatalf("missing delete status = %d", got)
 	}

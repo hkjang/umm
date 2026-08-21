@@ -1,6 +1,10 @@
 package httpapi
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hkjang/umm/internal/dream"
+)
 
 func TestValidateGeneralSettings(t *testing.T) {
 	s := &Server{}
@@ -35,12 +39,17 @@ func TestValidateDreamTokenLimit(t *testing.T) {
 
 func TestValidateAIGatewayTimeout(t *testing.T) {
 	s := &Server{}
-	valid := map[string]any{"base_url": "https://ai.internal", "log_retention_days": float64(90), "timeout_seconds": float64(1800)}
+	valid := map[string]any{"base_url": "https://ai.internal", "log_retention_days": float64(90), "timeout_seconds": float64(dream.MaxGatewayTimeoutSeconds), "max_retries": float64(dream.MaxGatewayRetries)}
 	if err := s.validateSetting("ai_gateway", valid); err != nil {
 		t.Fatalf("30 minute timeout rejected: %v", err)
 	}
-	valid["timeout_seconds"] = float64(1801)
+	valid["timeout_seconds"] = float64(dream.MaxGatewayTimeoutSeconds + 1)
 	if err := s.validateSetting("ai_gateway", valid); err == nil {
 		t.Fatal("timeout over 30 minutes accepted")
+	}
+	valid["timeout_seconds"] = float64(dream.MaxGatewayTimeoutSeconds)
+	valid["max_retries"] = float64(dream.MaxGatewayRetries + 1)
+	if err := s.validateSetting("ai_gateway", valid); err == nil {
+		t.Fatal("excessive gateway retries accepted")
 	}
 }

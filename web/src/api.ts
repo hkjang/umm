@@ -1,4 +1,5 @@
 import { showError } from './ui-notifications';
+import { reconcileOfflineQueue, type OfflineMutation } from './offline-queue';
 
 export interface Meta {
   serviceName: string;
@@ -108,15 +109,6 @@ export interface APIOptions extends RequestInit {
   retry?: boolean;
 }
 
-interface OfflineMutation {
-  id: string;
-  path: string;
-  method: string;
-  body?: string;
-  headers: Record<string, string>;
-  createdAt: string;
-}
-
 const offlineKey = 'umm:offline-mutations:v1';
 const offlineOwnerKey = 'umm:offline-owner:v1';
 const mutationMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -136,36 +128,48 @@ export function setOfflineQueueOwner(userId?: string) {
   window.dispatchEvent(new CustomEvent('umm:offline-queue', { detail: { count: offlineQueueCount() } }));
 }
 
-function loadOfflineQueue(): OfflineMutation[] {
+function loadOfflineQueue(storageKey = queueStorageKey()): OfflineMutation[] {
   try {
-    const value = JSON.parse(localStorage.getItem(queueStorageKey()) || '[]');
+    const value = JSON.parse(localStorage.getItem(storageKey) || '[]');
     return Array.isArray(value) ? value : [];
   } catch {
     return [];
   }
 }
 
-function saveOfflineQueue(items: OfflineMutation[]) {
-  localStorage.setItem(queueStorageKey(), JSON.stringify(items));
-  window.dispatchEvent(new CustomEvent('umm:offline-queue', { detail: { count: items.length } }));
+function saveOfflineQueue(items: OfflineMutation[], storageKey = queueStorageKey()) {
+  localStorage.setItem(storageKey, JSON.stringify(items));
+  const count = storageKey === queueStorageKey() ? items.length : offlineQueueCount();
+  window.dispatchEvent(new CustomEvent('umm:offline-queue', { detail: { count } }));
 }
 
-function enqueueOffline(item: OfflineMutation) {
-  let items = loadOfflineQueue();
-  if (item.method === 'PUT' || item.method === 'PATCH') {
-    items = items.filter((queued) => !(queued.path === item.path && queued.method === item.method));
-  }
-  if (items.length >= 100) return false;
-  items.push(item);
-  saveOfflineQueue(items);
-  return true;
+async function withOfflineQueueLock<T>(storageKey: string, operation: () => T | Promise<T>): Promise<T> {
+  if (!navigator.locks?.request) return operation();
+  return navigator.locks.request(`${storageKey}:lock`, operation);
+}
+
+async function enqueueOffline(item: OfflineMutation) {
+  const storageKey = queueStorageKey();
+  return withOfflineQueueLock(storageKey, () => {
+    let items = loadOfflineQueue(storageKey);
+    if (item.method === 'PUT' || item.method === 'PATCH') {
+      items = items.filter((queued) => !(queued.path === item.path && queued.method === item.method));
+    }
+    if (items.length >= 100) return false;
+    items.push(item);
+    saveOfflineQueue(items, storageKey);
+    return true;
+  });
 }
 
 export const offlineQueueCount = () => loadOfflineQueue().length;
 
-export function discardOfflineMutation(id?: string) {
+export async function discardOfflineMutation(id?: string) {
   if (!id) return;
-  saveOfflineQueue(loadOfflineQueue().filter((item) => item.id !== id));
+  const storageKey = queueStorageKey();
+  await withOfflineQueueLock(storageKey, () => {
+    saveOfflineQueue(loadOfflineQueue(storageKey).filter((item) => item.id !== id), storageKey);
+  });
 }
 
 const retryableOfflineStatus = (status: number) => status === 408 || status === 425 || status === 429 || status >= 500;
@@ -208,7 +212,7 @@ export async function api<T>(path: string, options: APIOptions = {}): Promise<T>
         const value = headers.get(name);
         if (value) safeHeaders[name] = value;
       }
-      const queued = enqueueOffline({ id: requestID(), path, method, body: requestOptions.body as string | undefined, headers: safeHeaders, createdAt: new Date().toISOString() });
+      const queued = await enqueueOffline({ id: requestID(), path, method, body: requestOptions.body as string | undefined, headers: safeHeaders, createdAt: new Date().toISOString() });
       if (!queued) {
         const error = new APIError(0, '오프라인 보관함이 100개로 가득 찼습니다. 연결 후 동기화를 완료하고 다시 시도해 주세요.');
         if (!silent) showError(error.message, '오프라인 보관함 가득 참', `api:${path}:queue-full`);
@@ -233,7 +237,8 @@ export async function api<T>(path: string, options: APIOptions = {}): Promise<T>
 }
 
 export async function flushOfflineQueue() {
-  const queued = loadOfflineQueue();
+  const storageKey = queueStorageKey();
+  const queued = await withOfflineQueueLock(storageKey, () => loadOfflineQueue(storageKey));
   if (queued.length === 0 || !navigator.onLine) return { synced: 0, remaining: queued.length };
   const remaining: OfflineMutation[] = [];
   let synced = 0;
@@ -274,10 +279,19 @@ export async function flushOfflineQueue() {
       break;
     }
   }
-  saveOfflineQueue(remaining);
-  if (retryAfterSeconds > 0 && remaining.length > 0 && navigator.onLine) scheduleOfflineRetry(retryAfterSeconds);
-  window.dispatchEvent(new CustomEvent('umm:offline-sync', { detail: { synced, remaining: remaining.length } }));
-  return { synced, remaining: remaining.length };
+  const reconciled = await withOfflineQueueLock(storageKey, () => {
+    const next = reconcileOfflineQueue(queued, remaining, loadOfflineQueue(storageKey));
+    saveOfflineQueue(next, storageKey);
+    return next;
+  });
+  const snapshotIDs = new Set(queued.map((item) => item.id));
+  const addedDuringFlush = reconciled.some((item) => !snapshotIDs.has(item.id));
+  if (navigator.onLine && reconciled.length > 0) {
+    if (retryAfterSeconds > 0) scheduleOfflineRetry(retryAfterSeconds);
+    else if (addedDuringFlush) scheduleOfflineRetry(1);
+  }
+  window.dispatchEvent(new CustomEvent('umm:offline-sync', { detail: { synced, remaining: reconciled.length } }));
+  return { synced, remaining: reconciled.length };
 }
 
 export const json = (method: string, body?: unknown): APIOptions => ({
