@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/store"
@@ -85,15 +86,24 @@ type SessionOrigin struct {
 // OriginOf reads the origin of the request that is creating a session. The
 // user agent is truncated because it is only ever shown to a human.
 func OriginOf(r *http.Request) SessionOrigin {
-	agent := strings.TrimSpace(r.UserAgent())
-	if len(agent) > 300 {
-		agent = agent[:300]
-	}
+	agent := boundedUserAgent(r.UserAgent())
 	host := r.RemoteAddr
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
 	return SessionOrigin{UserAgent: agent, ClientIP: host}
+}
+
+func boundedUserAgent(agent string) string {
+	agent = strings.ToValidUTF8(strings.TrimSpace(agent), "")
+	if len(agent) <= 300 {
+		return agent
+	}
+	end := 300
+	for end > 0 && !utf8.RuneStart(agent[end]) {
+		end--
+	}
+	return agent[:end]
 }
 
 func (s *Service) PasswordLogin(ctx context.Context, username, password string, origin SessionOrigin) (store.User, string, error) {
@@ -120,6 +130,7 @@ func (s *Service) CreateSession(ctx context.Context, userID uuid.UUID, origin Se
 	if general.SessionHours < 1 || general.SessionHours > 720 {
 		general.SessionHours = 24
 	}
+	origin.UserAgent = boundedUserAgent(origin.UserAgent)
 	_, err = s.Store.Pool.Exec(ctx, `INSERT INTO sessions(user_id,token_hash,expires_at,user_agent,client_ip) VALUES($1,$2,now()+make_interval(hours=>$3),$4,$5)`, userID, digest(token), general.SessionHours, origin.UserAgent, origin.ClientIP)
 	return token, err
 }

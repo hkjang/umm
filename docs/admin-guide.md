@@ -22,7 +22,9 @@
 
 TLS 종료 proxy 뒤에서 실행할 때만 직접 연결되는 proxy의 IP 또는 CIDR을 쉼표로 구분해 지정하세요(예: `10.42.0.0/16,fd00:42::/64`). 설정하지 않으면 `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`를 모두 무시하며, `0.0.0.0/0` 또는 `::/0`처럼 인터넷 전체를 신뢰 대상으로 지정해서는 안 됩니다. Proxy는 외부에서 들어온 forwarding header를 제거하고 자신이 확인한 값을 기록하도록 구성하세요.
 
-브라우저 변경 요청의 `Origin`은 공개 URL 또는 신뢰 proxy로 확인한 현재 요청과 scheme·host·port가 모두 같아야 합니다. HTTPS 서비스와 같은 hostname이더라도 `http://` Origin은 거부됩니다. PostgreSQL pool 자동 상한은 host CPU 수와 무관하게 인스턴스당 16이며 compose도 이를 명시합니다. `POSTGRES_DSN`의 `pool_max_conns`는 replica 수와 DB의 전역 연결 한도를 기준으로 조정하세요. 1처럼 더 작은 상한도 설정 오류로 기동이 막히지는 않지만 처리량과 실시간 안정성이 낮아집니다. 알림 목록은 listener가 한 연결을 점유한 상한 2에서도 request 연결 하나만 순차 사용하지만 운영에서는 동시 요청과 worker를 위해 4 이상을 권장합니다.
+브라우저 변경 요청의 `Origin`은 공개 URL 또는 신뢰 proxy로 확인한 현재 요청과 scheme·host·port가 모두 같아야 합니다. HTTPS 서비스와 같은 hostname이더라도 `http://` Origin은 거부됩니다. PostgreSQL pool 자동 상한은 host CPU 수와 무관하게 인스턴스당 16이며 compose도 이를 명시합니다. `POSTGRES_DSN`의 `pool_max_conns`는 replica 수와 DB의 전역 연결 한도를 기준으로 조정하세요. 상한 1에서는 전용 LISTEN을 끄고 1초 안전 폴링으로 request 연결을 보존하므로 기동이 막히지는 않지만 처리량과 DB 효율이 낮아집니다. 알림 목록은 listener가 한 연결을 점유한 상한 2에서도 request 연결 하나만 순차 사용하지만 운영에서는 동시 요청과 worker를 위해 4 이상을 권장합니다.
+
+로그인 세션 목록에 표시하는 User-Agent는 공백과 잘못된 UTF-8을 정리한 뒤 최대 300 byte의 완전한 rune 경계에서 저장합니다. 긴 한국어·다국어 브라우저 식별자가 중간 byte에서 잘려 올바른 자격 증명의 세션 생성이 실패하거나 주소별 로그인 실패 횟수로 잘못 누적되지 않습니다.
 
 ---
 

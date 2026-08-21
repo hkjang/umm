@@ -1,11 +1,15 @@
 package realtime
 
 import (
+	"context"
+	"net/url"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestPublishWakesOnlyMatchingSubscribers(t *testing.T) {
@@ -101,5 +105,60 @@ func TestParsePayload(t *testing.T) {
 		if _, ok := parsePayload(payload); ok {
 			t.Fatalf("expected %q to be rejected", payload)
 		}
+	}
+}
+
+func TestRunLeavesSingleConnectionPoolForRequestsIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := parsed.Query()
+	query.Set("pool_max_conns", "1")
+	parsed.RawQuery = query.Encode()
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, parsed.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if pool.Config().MaxConns != 1 {
+		t.Fatalf("test requires a one-connection pool, got %d", pool.Config().MaxConns)
+	}
+
+	hub := New(pool)
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		hub.Run(runCtx)
+		close(done)
+	}()
+	returned := false
+	select {
+	case <-done:
+		returned = true
+	case <-time.After(500 * time.Millisecond):
+	}
+	if !returned {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("LISTEN hub did not release the single pool connection after cancellation")
+		}
+		t.Fatal("LISTEN hub must disable itself instead of occupying the only request connection")
+	}
+	cancel()
+	if hub.Listening() {
+		t.Fatal("single-connection fallback must report the listener as unavailable")
+	}
+	pingCtx, pingCancel := context.WithTimeout(ctx, time.Second)
+	defer pingCancel()
+	if err = pool.Ping(pingCtx); err != nil {
+		t.Fatalf("single request connection was unavailable: %v", err)
 	}
 }

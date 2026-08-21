@@ -75,6 +75,7 @@ HSTS는 TLS로 도착한 요청 또는 명시적으로 신뢰한 proxy가 전달
 - 댓글 알림 대상과 Today 활동은 현재 공간 접근 권한 및 생각 삭제 상태를 다시 확인해 탈퇴 사용자나 삭제된 리소스로 정보가 새지 않도록 합니다. 댓글 작성 transaction은 호출자의 멤버십 행을 `FOR KEY SHARE`로 잠가 권한 회수와 생성이 겹칠 때 댓글·알림·공간 이벤트·webhook outbox가 이전 확인 결과로 커밋되지 않게 합니다. 생각이 삭제된 뒤에는 보관한 댓글 ID를 이용한 해결·재개·삭제도 mutation statement에서 거부해 숨겨진 리소스의 이벤트를 만들지 않습니다.
 - CI는 Go 취약점 검사, npm high 이상 audit, PostgreSQL 17 통합·복구 시험, 다중 인스턴스 스모크, 마이그레이션 dry-run, 실제 바이너리를 대상으로 한 브라우저 end-to-end 시험을 수행합니다.
 - 태그 릴리스는 SPDX JSON SBOM, SHA-256 checksum, GitHub provenance 및 SBOM attestation을 이미지 archive와 함께 게시합니다.
+- 로그인 세션의 User-Agent는 잘못된 UTF-8을 제거하고 300 byte 안의 완전한 rune 경계로 제한해 다국어 header 절단이 세션 INSERT 실패와 잘못된 로그인 잠금 누적으로 이어지지 않게 합니다.
 
 애플리케이션 권한은 모든 쿼리의 공간 소유자/멤버 조건과 handler scope 검사에서 강제합니다. PostgreSQL RLS는 단일 애플리케이션 DB role이 owner 권한을 갖는 현재 배포 모델에서 잘못된 안전감을 줄 수 있어 이번 버전에는 활성화하지 않았습니다. 별도 제한 DB role과 connection identity를 도입하는 배포에서만 RLS를 추가 방어선으로 검토합니다.
 
