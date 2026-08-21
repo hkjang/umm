@@ -151,13 +151,29 @@ func rankSources(sources []sourceNote, connected, recentPairs map[string]bool, n
 		}
 		centrality[left] /= float64(max(1, len(sources)-1))
 	}
+	// The bridge band is placed against this pool's own similarities. A fixed
+	// peak at cosine 0.35 suited the offline algorithm and returned exactly zero
+	// for every pair above 0.70, which is most genuinely related pairs once an
+	// embedding model is configured — the 55% term would silently drop out and
+	// Dream would pick on position and age alone.
+	pairScores := make([]float64, 0, len(sources)*len(sources)/2)
+	highest := 0.0
+	for left := 0; left < len(sources); left++ {
+		for right := left + 1; right < len(sources); right++ {
+			score := intelligence.Cosine(vectors[left], vectors[right])
+			pairScores = append(pairScores, score)
+			highest = math.Max(highest, score)
+		}
+	}
+	typical := intelligence.Typical(pairScores)
+
 	bestLeft, bestRight, bestScore := 0, 1, -1.0
 	for left := 0; left < len(sources); left++ {
 		for right := left + 1; right < len(sources); right++ {
 			similarity := intelligence.Cosine(vectors[left], vectors[right])
-			// Peak around 0.35: enough shared context to be meaningful, but far
-			// enough apart to create a genuinely new bridge.
-			bridge := math.Max(0, 1-math.Abs(similarity-.35)/.35)
+			// Enough shared context to be meaningful, but far enough apart that
+			// connecting them says something new.
+			bridge := intelligence.BridgeScore(similarity, typical, highest)
 			distance := math.Hypot(sources[left].X-sources[right].X, sources[left].Y-sources[right].Y)
 			spatial := math.Min(1, distance/900)
 			days := math.Abs(sources[left].UpdatedAt.Sub(sources[right].UpdatedAt).Hours()) / 24

@@ -25,6 +25,23 @@ const maxSearchTerms = 8
 // vector similarity, so a large workspace cannot turn one search into a full scan.
 const semanticCandidateLimit = 2000
 
+// The semantic cutoffs umm used before thresholds became relative to the active
+// embedding backend. They remain the fallback when a result set is too small to
+// describe a distribution.
+const (
+	legacySemanticDropCutoff   = .18
+	legacySemanticReasonCutoff = .28
+)
+
+// scoredResult holds a candidate between scoring and the distribution-aware
+// filtering pass that decides whether it survives and how it is explained.
+type scoredResult struct {
+	result   NoteSearchResult
+	lexical  float64
+	semantic float64
+	reasons  []string
+}
+
 // queryBuilder renders positional placeholders for predicates whose shape
 // depends on the number of search terms.
 type queryBuilder struct{ args []any }
@@ -159,6 +176,8 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 	// those rows are scored lexically until the background refresh catches up.
 	local := algorithm == intelligence.LocalAlgorithm
 	results := []NoteSearchResult{}
+	scored := []scoredResult{}
+	semanticScores := []float64{}
 	for rows.Next() {
 		var result NoteSearchResult
 		var vector []float32
@@ -178,21 +197,35 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 		if len(vector) > 0 && len(queryVector) > 0 {
 			semantic = math.Max(0, intelligence.Cosine(queryVector, vector))
 		}
-		if lexical == 0 && semantic < .18 {
+		result.Score = math.Round((lexical*.68+semantic*.32)*10000) / 10000
+		// Whether this row is semantically close enough to keep, or to label as
+		// such, can only be judged once every candidate has been scored: the raw
+		// cosine that means "related" differs by embedding backend.
+		scored = append(scored, scoredResult{result: result, lexical: lexical, semantic: semantic, reasons: reasons})
+		semanticScores = append(semanticScores, semantic)
+	}
+	if err := rows.Err(); err != nil {
+		return HybridSearchPage{}, err
+	}
+	semanticScale := intelligence.NewSimilarityScale(semanticScores)
+	dropCutoff := semanticScale.ThresholdOr(intelligence.BandRelated, legacySemanticDropCutoff)
+	labelCutoff := semanticScale.ThresholdOr(intelligence.BandStrong, legacySemanticReasonCutoff)
+	for _, candidate := range scored {
+		// A row with no keyword match earns its place only by being unusually
+		// close to the query for this result set.
+		if candidate.lexical == 0 && candidate.semantic < dropCutoff {
 			continue
 		}
-		result.Score = math.Round((lexical*.68+semantic*.32)*10000) / 10000
-		if semantic >= .28 {
+		reasons := candidate.reasons
+		if candidate.semantic >= labelCutoff {
 			reasons = append(reasons, "의미상 유사")
 		}
 		if len(reasons) == 0 {
 			reasons = append(reasons, "연관 표현")
 		}
-		result.Reason = strings.Join(reasons, " · ")
-		results = append(results, result)
-	}
-	if err := rows.Err(); err != nil {
-		return HybridSearchPage{}, err
+		item := candidate.result
+		item.Reason = strings.Join(reasons, " · ")
+		results = append(results, item)
 	}
 	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].Score == results[j].Score {
