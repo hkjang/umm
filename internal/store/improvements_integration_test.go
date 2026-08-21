@@ -830,6 +830,66 @@ func TestViewCommentAuthorCannotResolveThreadIntegration(t *testing.T) {
 	}
 }
 
+func TestDeletedNoteCommentCannotBeResolvedIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	ownerID, spaceID, noteID, subscriptionID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	username := "deleted_resolve_owner_" + ownerID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, ownerID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, ownerID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'deleted comment resolution')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'deleted resolution target')`, noteID, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO webhook_subscriptions(id,owner_id,name,url,secret_ciphertext,events) VALUES($1,$2,'deleted comment boundary','https://example.com/webhook','test-ciphertext',ARRAY['comment.resolved','comment.deleted'])`, subscriptionID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	comment, _, err := db.CreateComment(ctx, ownerID, noteID, nil, "cannot resolve after note deletion", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.DeleteNote(ctx, ownerID, noteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = db.ResolveComment(ctx, ownerID, comment.ID, true); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("deleted note comment was resolved: %v", err)
+	}
+	if _, err = db.DeleteComment(ctx, ownerID, comment.ID); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("deleted note comment was deleted: %v", err)
+	}
+
+	var resolved, deleted bool
+	var resolvedEvents, deletedEvents, resolvedDeliveries, deletedDeliveries int
+	if err = db.Pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT resolved_at IS NOT NULL FROM note_comments WHERE id=$1),
+		  (SELECT deleted_at IS NOT NULL FROM note_comments WHERE id=$1),
+		  (SELECT count(*) FROM space_events WHERE event_type='comment.resolved' AND resource_id=$1),
+		  (SELECT count(*) FROM space_events WHERE event_type='comment.deleted' AND resource_id=$1),
+		  (SELECT count(*) FROM webhook_deliveries WHERE subscription_id=$2 AND event_type='comment.resolved'),
+		  (SELECT count(*) FROM webhook_deliveries WHERE subscription_id=$2 AND event_type='comment.deleted')`,
+		comment.ID, subscriptionID).Scan(&resolved, &deleted, &resolvedEvents, &deletedEvents, &resolvedDeliveries, &deletedDeliveries); err != nil {
+		t.Fatal(err)
+	}
+	if resolved || deleted || resolvedEvents != 0 || deletedEvents != 0 || resolvedDeliveries != 0 || deletedDeliveries != 0 {
+		t.Fatalf("deleted note comment mutation changed state: resolved=%v deleted=%v events=%d/%d deliveries=%d/%d",
+			resolved, deleted, resolvedEvents, deletedEvents, resolvedDeliveries, deletedDeliveries)
+	}
+}
+
 func TestRemovedCommentAuthorCannotDeleteIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {

@@ -587,7 +587,8 @@ func (s *Store) ResolveComment(ctx context.Context, userID, commentID uuid.UUID,
 	err = tx.QueryRow(ctx, `
 		UPDATE note_comments c SET resolved_at=CASE WHEN $3 THEN now() ELSE NULL END,resolved_by=CASE WHEN $3 THEN $2 ELSE NULL END,updated_at=now()
 		FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
-		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.permission IN ('edit','manage'))
+		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL AND n.deleted_at IS NULL
+		  AND (sp.owner_id=$2 OR sm.permission IN ('edit','manage'))
 		RETURNING c.note_id,n.space_id`, commentID, userID, resolved).Scan(&noteID, &spaceID)
 	if err != nil {
 		return Comment{}, uuid.Nil, err
@@ -615,7 +616,7 @@ func (s *Store) DeleteComment(ctx context.Context, userID, commentID uuid.UUID) 
 	err = tx.QueryRow(ctx, `
 		UPDATE note_comments c SET deleted_at=now(),updated_at=now()
 		FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
-		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL
+		WHERE c.id=$1 AND c.note_id=n.id AND c.deleted_at IS NULL AND n.deleted_at IS NULL
 		  AND (sp.owner_id=$2 OR sm.user_id=$2)
 		  AND (c.author_id=$2 OR sp.owner_id=$2 OR sm.permission='manage')
 		RETURNING n.space_id`, commentID, userID).Scan(&spaceID)
