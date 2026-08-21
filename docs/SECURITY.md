@@ -73,7 +73,7 @@ HSTS는 TLS로 도착한 요청 또는 명시적으로 신뢰한 proxy가 전달
 - 웹훅 URL은 HTTPS 기본 포트만 허용하고 credential·fragment를 거부합니다.
 - 등록 시와 실제 연결 시 DNS를 각각 확인해 DNS rebinding을 완화하고, 사설·loopback·link-local·multicast·문서·benchmark·reserved 대역을 차단합니다.
 - payload는 일회 공개되는 subscription secret으로 HMAC-SHA256 서명되며 delivery ID와 Unix timestamp를 포함합니다.
-- 도메인 변경, SSE log, 구독별 delivery payload는 하나의 PostgreSQL 트랜잭션에 영속화되고 lease 기반 워커가 재시작 후 이어서 처리합니다. 구독 소유자의 활성 상태와 현재 공간 접근 권한을 실제 전송 직전에 다시 확인합니다. 중단 경계에서 같은 delivery가 다시 전송될 수 있으므로 수신 측은 delivery ID를 멱등 키로 사용합니다.
+- 도메인 변경, SSE log, 구독별 delivery payload는 하나의 PostgreSQL 트랜잭션에 영속화되고 lease 기반 워커가 재시작 후 이어서 처리합니다. 워커는 정확한 delivery claim과 구독·소유 사용자·공간·현재 membership을 실제 HTTP 응답까지 잠급니다. 권한 회수·사용자 비활성화·구독 중지가 먼저 확정되면 payload를 보내지 않으며, 전달 lease가 먼저 시작되면 정책 변경은 terminal 상태·payload 삭제·구독 counter가 같은 transaction으로 확정된 뒤 진행됩니다. 이 장기 lease는 request pool 밖에서 인스턴스당 최대 3개로 제한됩니다. 중단 경계에서 같은 delivery가 다시 전송될 수 있으므로 수신 측은 delivery ID를 멱등 키로 사용합니다.
 - terminal delivery의 복사 payload는 즉시 `{}`로 비우고 상태·응답·오류 metadata는 30일 뒤 삭제해 원본 리소스보다 오래 민감 본문을 보존하지 않습니다.
 - 외부 오류 metadata는 잘못된 UTF-8을 제거하고 byte 상한 안의 완전한 rune 경계에서만 잘라 PostgreSQL 기록 실패가 delivery lease 회수 반복이나 subscription 자동 중지 누락으로 이어지지 않게 합니다. 같은 경계 처리를 AI 임베딩·Dream Gateway의 오류 응답 일부에도 적용하고 Dream 작업·AI 호출 로그로 이어지는 문자열도 유효한 UTF-8로 정규화합니다.
 - 댓글 알림 대상, 알림 목록·unread count와 Today 활동은 현재 공간 접근 권한 및 생각 삭제 상태를 다시 확인해 탈퇴 사용자나 삭제된 리소스로 정보가 새지 않도록 합니다. note 알림은 이전 행에 `resource_space_id`가 없어도 현재 생각의 실제 공간에서 권한을 계산합니다. 댓글 작성 transaction은 호출자의 멤버십 행을 `FOR KEY SHARE`로 잠가 권한 회수와 생성이 겹칠 때 댓글·알림·공간 이벤트·webhook outbox가 이전 확인 결과로 커밋되지 않게 합니다. 생각 삭제 또는 권한 회수 뒤에는 보관한 댓글 ID를 이용한 해결·재개·삭제도 mutation statement에서 거부하고 `comment-mutation-forbidden` terminal 403으로 구분해 숨겨진 리소스의 이벤트와 오프라인 큐 고착을 함께 막습니다.

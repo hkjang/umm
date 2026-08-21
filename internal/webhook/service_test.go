@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -17,6 +18,12 @@ import (
 	"github.com/hkjang/umm/internal/cryptoutil"
 	"github.com/hkjang/umm/internal/store"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
 
 func TestNewUsesGuardedDirectTransport(t *testing.T) {
 	service := New(nil, nil)
@@ -215,6 +222,178 @@ func TestDurableQueueSurvivesServiceRestartIntegration(t *testing.T) {
 	}
 	if retained != 0 {
 		t.Fatalf("terminal delivery retention kept %d rows older than %d days", retained, deliveryRetentionDays)
+	}
+}
+
+func TestWebhookDeliveryHoldsAuthorizationThroughDispatchIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := cryptoutil.New(bytes.Repeat([]byte{0x51}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := cipher.Encrypt("authorization-lease-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		mutation string
+		target   string
+	}{
+		{name: "membership removed", mutation: `DELETE FROM space_members WHERE space_id=$1 AND user_id=$2`, target: "membership"},
+		{name: "owner deactivated", mutation: `UPDATE users SET active=false WHERE id=$1`, target: "user"},
+		{name: "subscription disabled", mutation: `UPDATE webhook_subscriptions SET active=false WHERE id=$1`, target: "subscription"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spaceOwnerID, subscriberID, spaceID := uuid.New(), uuid.New(), uuid.New()
+			subscriptionID, firstDeliveryID := uuid.New(), uuid.New()
+			ownerName := "webhook_lease_owner_" + spaceOwnerID.String()
+			subscriberName := "webhook_lease_subscriber_" + subscriberID.String()
+			if _, err = db.Pool.Exec(ctx, `
+				INSERT INTO users(id,username,display_name) VALUES
+				($1,$2::citext,$2::text),($3,$4::citext,$4::text)`, spaceOwnerID, ownerName, subscriberID, subscriberName); err != nil {
+				t.Fatal(err)
+			}
+			defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1 OR id=$2`, spaceOwnerID, subscriberID)
+			if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'webhook delivery lease')`, spaceID, spaceOwnerID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Pool.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'view')`, spaceID, subscriberID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Pool.Exec(ctx, `INSERT INTO webhook_subscriptions(id,owner_id,name,url,secret_ciphertext,events) VALUES($1,$2,'authorization lease','https://example.com/webhook',$3,ARRAY['note.created'])`, subscriptionID, subscriberID, ciphertext); err != nil {
+				t.Fatal(err)
+			}
+			firstEvent, firstPayload, err := prepareEvent(Event{ID: uuid.New(), Type: "note.created", SpaceID: spaceID, ActorID: spaceOwnerID, Data: map[string]any{"body": "authorized payload"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var firstClaimedAt time.Time
+			if err = db.Pool.QueryRow(ctx, `INSERT INTO webhook_deliveries(id,subscription_id,event_id,event_type,payload,status,claimed_at) VALUES($1,$2,$3,$4,$5,'processing',now()) RETURNING claimed_at`, firstDeliveryID, subscriptionID, firstEvent.ID, firstEvent.Type, json.RawMessage(firstPayload)).Scan(&firstClaimedAt); err != nil {
+				t.Fatal(err)
+			}
+
+			gatewayStarted := make(chan struct{}, 1)
+			releaseGateway := make(chan struct{})
+			release := func() {
+				select {
+				case <-releaseGateway:
+				default:
+					close(releaseGateway)
+				}
+			}
+			defer release()
+			var calls atomic.Int32
+			service := New(db, cipher)
+			service.validateEndpoint = func(context.Context, string) error { return nil }
+			service.client = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				gatewayStarted <- struct{}{}
+				select {
+				case <-releaseGateway:
+				case <-request.Context().Done():
+					return nil, request.Context().Err()
+				}
+				return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Header: make(http.Header), Request: request}, nil
+			})}
+			staleClaimedAt := firstClaimedAt
+			if err = db.Pool.QueryRow(ctx, `UPDATE webhook_deliveries SET claimed_at=claimed_at+interval '1 second' WHERE id=$1 RETURNING claimed_at`, firstDeliveryID).Scan(&firstClaimedAt); err != nil {
+				t.Fatal(err)
+			}
+			if err = service.deliverClaimed(ctx, delivery{ID: firstDeliveryID, SubscriptionID: subscriptionID, Payload: firstPayload, ClaimedAt: staleClaimedAt}); err != nil {
+				t.Fatalf("stale delivery claim returned an error: %v", err)
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("stale delivery claim reached the external endpoint: calls=%d", calls.Load())
+			}
+
+			deliveryDone := make(chan error, 1)
+			go func() {
+				deliveryDone <- service.deliverClaimed(ctx, delivery{ID: firstDeliveryID, SubscriptionID: subscriptionID, Payload: firstPayload, ClaimedAt: firstClaimedAt})
+			}()
+			select {
+			case <-gatewayStarted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("webhook delivery did not reach the external endpoint")
+			}
+
+			mutationDone := make(chan error, 1)
+			mutationArgs := []any{spaceID, subscriberID}
+			if test.target == "user" {
+				mutationArgs = []any{subscriberID}
+			} else if test.target == "subscription" {
+				mutationArgs = []any{subscriptionID}
+			}
+			go func() {
+				_, mutationErr := db.Pool.Exec(context.Background(), test.mutation, mutationArgs...)
+				mutationDone <- mutationErr
+			}()
+			select {
+			case mutationErr := <-mutationDone:
+				t.Fatalf("authorization mutation bypassed the active webhook delivery lease: %v", mutationErr)
+			case <-time.After(150 * time.Millisecond):
+			}
+			release()
+
+			select {
+			case deliveryErr := <-deliveryDone:
+				if deliveryErr != nil {
+					t.Fatalf("authorized webhook delivery failed: %v", deliveryErr)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("webhook delivery did not finish after endpoint release")
+			}
+			select {
+			case mutationErr := <-mutationDone:
+				if mutationErr != nil {
+					t.Fatal(mutationErr)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("authorization mutation did not resume after webhook lease release")
+			}
+
+			secondEvent, secondPayload, err := prepareEvent(Event{ID: uuid.New(), Type: "note.created", SpaceID: spaceID, ActorID: spaceOwnerID, Data: map[string]any{"body": "revoked payload"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			secondDeliveryID := uuid.New()
+			var secondClaimedAt time.Time
+			if err = db.Pool.QueryRow(ctx, `INSERT INTO webhook_deliveries(id,subscription_id,event_id,event_type,payload,status,claimed_at) VALUES($1,$2,$3,$4,$5,'processing',now()) RETURNING claimed_at`, secondDeliveryID, subscriptionID, secondEvent.ID, secondEvent.Type, json.RawMessage(secondPayload)).Scan(&secondClaimedAt); err != nil {
+				t.Fatal(err)
+			}
+			if err = service.deliverClaimed(ctx, delivery{ID: secondDeliveryID, SubscriptionID: subscriptionID, Payload: secondPayload, ClaimedAt: secondClaimedAt}); err == nil {
+				t.Fatal("webhook delivery after completed authorization revocation was allowed")
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("revoked webhook reached the external endpoint: calls=%d", calls.Load())
+			}
+			var firstStatus, secondStatus string
+			var secondStoredPayload []byte
+			if err = db.Pool.QueryRow(ctx, `SELECT status FROM webhook_deliveries WHERE id=$1`, firstDeliveryID).Scan(&firstStatus); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.Pool.QueryRow(ctx, `SELECT status,payload FROM webhook_deliveries WHERE id=$1`, secondDeliveryID).Scan(&secondStatus, &secondStoredPayload); err != nil {
+				t.Fatal(err)
+			}
+			if firstStatus != "delivered" || secondStatus != "failed" || string(secondStoredPayload) != "{}" {
+				t.Fatalf("delivery states after revocation = first:%q second:%q payload:%s", firstStatus, secondStatus, secondStoredPayload)
+			}
+		})
 	}
 }
 

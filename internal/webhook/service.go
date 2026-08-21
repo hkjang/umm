@@ -50,6 +50,7 @@ type Event struct {
 
 type subscription struct {
 	ID         uuid.UUID
+	OwnerID    uuid.UUID
 	URL        string
 	Ciphertext string
 	Active     bool
@@ -60,17 +61,23 @@ type delivery struct {
 	ID             uuid.UUID
 	SubscriptionID uuid.UUID
 	Payload        []byte
+	ClaimedAt      time.Time
 }
 
 type Service struct {
-	Store  *store.Store
-	Cipher *cryptoutil.Cipher
-	wake   chan struct{}
-	client *http.Client
+	Store            *store.Store
+	Cipher           *cryptoutil.Cipher
+	wake             chan struct{}
+	client           *http.Client
+	validateEndpoint func(context.Context, string) error
+	dispatchSlots    chan struct{}
 }
 
-func New(store *store.Store, cipher *cryptoutil.Cipher) *Service {
-	service := &Service{Store: store, Cipher: cipher, wake: make(chan struct{}, 1)}
+func New(database *store.Store, cipher *cryptoutil.Cipher) *Service {
+	service := &Service{
+		Store: database, Cipher: cipher, wake: make(chan struct{}, 1), validateEndpoint: ValidateEndpoint,
+		dispatchSlots: make(chan struct{}, store.MaxWebhookLeaseConnections),
+	}
 	transport := &http.Transport{
 		// A proxy could resolve the target after our public-IP check and reopen
 		// the SSRF path. Webhooks always use the guarded direct dialer instead.
@@ -89,7 +96,7 @@ func New(store *store.Store, cipher *cryptoutil.Cipher) *Service {
 }
 
 func (s *Service) Start(ctx context.Context) {
-	for range 3 {
+	for range store.MaxWebhookLeaseConnections {
 		go s.worker(ctx)
 	}
 	go s.cleanupLoop(ctx)
@@ -141,6 +148,11 @@ func (s *Service) Enqueue(ctx context.Context, event Event) (int64, error) {
 }
 
 func (s *Service) Test(ctx context.Context, subscriptionID, actorID uuid.UUID) error {
+	releaseSlot, err := s.acquireDispatchSlot(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseSlot()
 	event := Event{ID: uuid.New(), Type: "webhook.test", ActorID: actorID, Data: map[string]any{"message": "umm webhook connection test"}, CreatedAt: time.Now().UTC()}
 	event, payload, err := prepareEvent(event)
 	if err != nil {
@@ -150,35 +162,50 @@ func (s *Service) Test(ctx context.Context, subscriptionID, actorID uuid.UUID) e
 	err = s.Store.Pool.QueryRow(ctx, `
 		INSERT INTO webhook_deliveries(subscription_id,event_id,event_type,payload,status,claimed_at,attempted_at)
 		SELECT id,$3,$4,$5,'processing',now(),now() FROM webhook_subscriptions
-		WHERE id=$1 AND owner_id=$2 AND active RETURNING id,subscription_id,payload`,
+		WHERE id=$1 AND owner_id=$2 AND active RETURNING id,subscription_id,payload,claimed_at`,
 		subscriptionID, actorID, event.ID, event.Type, json.RawMessage(payload)).
-		Scan(&item.ID, &item.SubscriptionID, &item.Payload)
+		Scan(&item.ID, &item.SubscriptionID, &item.Payload, &item.ClaimedAt)
 	if err != nil {
 		return err
 	}
-	return s.deliverClaimed(ctx, item)
+	return s.deliverClaimedWithSlot(ctx, item)
 }
 
 func (s *Service) worker(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
+		releaseSlot, slotErr := s.acquireDispatchSlot(ctx)
+		if slotErr != nil {
+			return
+		}
 		item, claimed, err := s.claimNext(ctx)
 		if err != nil && ctx.Err() == nil {
 			slog.Warn("webhook delivery claim failed", "error", err)
 		}
 		if claimed {
-			if err := s.deliverClaimed(ctx, item); err != nil && ctx.Err() == nil {
+			if err := s.deliverClaimedWithSlot(ctx, item); err != nil && ctx.Err() == nil {
 				slog.Warn("webhook delivery failed", "delivery_id", item.ID, "error", err)
 			}
+			releaseSlot()
 			continue
 		}
+		releaseSlot()
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.wake:
 		case <-ticker.C:
 		}
+	}
+}
+
+func (s *Service) acquireDispatchSlot(ctx context.Context) (func(), error) {
+	select {
+	case s.dispatchSlots <- struct{}{}:
+		return func() { <-s.dispatchSlots }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
@@ -195,8 +222,8 @@ func (s *Service) claimNext(ctx context.Context) (delivery, bool, error) {
 		UPDATE webhook_deliveries delivery
 		SET status='processing',claimed_at=now(),attempted_at=now()
 		FROM candidate WHERE delivery.id=candidate.id
-		RETURNING delivery.id,delivery.subscription_id,delivery.payload`).
-		Scan(&item.ID, &item.SubscriptionID, &item.Payload)
+		RETURNING delivery.id,delivery.subscription_id,delivery.payload,delivery.claimed_at`).
+		Scan(&item.ID, &item.SubscriptionID, &item.Payload, &item.ClaimedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return delivery{}, false, nil
 	}
@@ -204,44 +231,111 @@ func (s *Service) claimNext(ctx context.Context) (delivery, bool, error) {
 }
 
 func (s *Service) deliverClaimed(ctx context.Context, item delivery) error {
+	releaseSlot, err := s.acquireDispatchSlot(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseSlot()
+	return s.deliverClaimedWithSlot(ctx, item)
+}
+
+func (s *Service) deliverClaimedWithSlot(ctx context.Context, item delivery) error {
 	var event Event
 	if err := json.Unmarshal(item.Payload, &event); err != nil {
 		recordErr := s.finishFailure(ctx, item, 0, err, 0, false)
 		return errors.Join(err, recordErr)
 	}
+	tx, releaseConnection, err := s.Store.BeginWebhookLease(ctx)
+	if err != nil {
+		return err
+	}
+	leaseOpen := true
+	releaseLease := func() {
+		if !leaseOpen {
+			return
+		}
+		leaseOpen = false
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = tx.Rollback(rollbackCtx)
+		cancel()
+		releaseConnection()
+	}
+	commitLease := func() error {
+		if !leaseOpen {
+			return pgx.ErrTxClosed
+		}
+		leaseOpen = false
+		commitErr := tx.Commit(ctx)
+		releaseConnection()
+		return commitErr
+	}
+	defer releaseLease()
+
 	var sub subscription
-	err := s.Store.Pool.QueryRow(ctx, `
-		SELECT ws.id,ws.url,ws.secret_ciphertext,ws.active,
-		       u.active AND ($2::uuid IS NULL OR EXISTS(
-		         SELECT 1 FROM spaces sp LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=ws.owner_id
-		         WHERE sp.id=$2 AND (sp.owner_id=ws.owner_id OR sm.user_id=ws.owner_id)))
+	var ownerActive bool
+	err = tx.QueryRow(ctx, `
+		SELECT ws.id,ws.owner_id,ws.url,ws.secret_ciphertext,ws.active,u.active
 		FROM webhook_subscriptions ws JOIN users u ON u.id=ws.owner_id
-		WHERE ws.id=$1`, item.SubscriptionID, nullableUUID(event.SpaceID)).
-		Scan(&sub.ID, &sub.URL, &sub.Ciphertext, &sub.Active, &sub.Authorized)
+		WHERE ws.id=$1
+		FOR NO KEY UPDATE OF ws
+		FOR SHARE OF u`, item.SubscriptionID).
+		Scan(&sub.ID, &sub.OwnerID, &sub.URL, &sub.Ciphertext, &sub.Active, &ownerActive)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	var deliveryStatus string
+	err = tx.QueryRow(ctx, `
+		SELECT status FROM webhook_deliveries
+		WHERE id=$1 AND subscription_id=$2 AND status='processing' AND claimed_at=$3
+		FOR UPDATE`, item.ID, item.SubscriptionID, item.ClaimedAt).Scan(&deliveryStatus)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	sub.Authorized = ownerActive
+	if sub.Authorized && event.SpaceID != uuid.Nil {
+		var spaceOwnerID uuid.UUID
+		err = tx.QueryRow(ctx, `SELECT owner_id FROM spaces WHERE id=$1 FOR SHARE`, event.SpaceID).Scan(&spaceOwnerID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			sub.Authorized = false
+		} else if err != nil {
+			return err
+		} else if spaceOwnerID != sub.OwnerID {
+			var memberID uuid.UUID
+			err = tx.QueryRow(ctx, `SELECT user_id FROM space_members WHERE space_id=$1 AND user_id=$2 FOR SHARE`, event.SpaceID, sub.OwnerID).Scan(&memberID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				sub.Authorized = false
+			} else if err != nil {
+				return err
+			}
+		}
+	}
+	finishLeaseFailure := func(deliveryErr error, status, attempts int, countSubscription bool) error {
+		recordErr := s.finishFailureTx(ctx, tx, item, status, deliveryErr, attempts, countSubscription)
+		if recordErr == nil {
+			recordErr = commitLease()
+		}
+		return errors.Join(deliveryErr, recordErr)
+	}
 	if !sub.Active {
 		err = errors.New("webhook subscription is inactive")
-		recordErr := s.finishFailure(ctx, item, 0, err, 0, false)
-		return errors.Join(err, recordErr)
+		return finishLeaseFailure(err, 0, 0, false)
 	}
 	if !sub.Authorized {
 		err = errors.New("webhook subscription owner is no longer authorized for the event")
-		recordErr := s.finishFailure(ctx, item, 0, err, 0, false)
-		return errors.Join(err, recordErr)
+		return finishLeaseFailure(err, 0, 0, false)
 	}
-	if err = ValidateEndpoint(ctx, sub.URL); err != nil {
-		recordErr := s.finishFailure(ctx, item, 0, err, 0, true)
-		return errors.Join(err, recordErr)
+	if err = s.validateEndpoint(ctx, sub.URL); err != nil {
+		return finishLeaseFailure(err, 0, 0, true)
 	}
 	secret, err := s.Cipher.Decrypt(sub.Ciphertext)
 	if err != nil {
-		recordErr := s.finishFailure(ctx, item, 0, err, 0, true)
-		return errors.Join(err, recordErr)
+		return finishLeaseFailure(err, 0, 0, true)
 	}
 	payload := item.Payload
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
@@ -272,7 +366,10 @@ func (s *Service) deliverClaimed(ctx context.Context, item delivery) error {
 			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
 			response.Body.Close()
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
-				return s.finishSuccess(ctx, item, response.StatusCode, attempts)
+				if err = s.finishSuccessTx(ctx, tx, item, response.StatusCode, attempts); err != nil {
+					return err
+				}
+				return commitLease()
 			}
 			lastErr = fmt.Errorf("webhook returned HTTP %d", response.StatusCode)
 			if response.StatusCode < 500 && response.StatusCode != http.StatusTooManyRequests {
@@ -292,8 +389,7 @@ func (s *Service) deliverClaimed(ctx context.Context, item delivery) error {
 	if lastErr == nil {
 		lastErr = errors.New("webhook delivery failed")
 	}
-	recordErr := s.finishFailure(ctx, item, lastStatus, lastErr, attempts, true)
-	return errors.Join(lastErr, recordErr)
+	return finishLeaseFailure(lastErr, lastStatus, attempts, true)
 }
 
 func (s *Service) finishSuccess(ctx context.Context, item delivery, status, attempts int) error {
@@ -302,16 +398,33 @@ func (s *Service) finishSuccess(ctx context.Context, item delivery, status, atte
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `UPDATE webhook_deliveries SET status='delivered',payload='{}'::jsonb,attempt_count=attempt_count+$2,response_status=$3,error='',claimed_at=NULL,attempted_at=now(),delivered_at=now() WHERE id=$1 AND status='processing'`, item.ID, attempts, status); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE webhook_subscriptions SET failure_count=0,last_error='',last_delivered_at=now(),updated_at=now() WHERE id=$1`, item.SubscriptionID); err != nil {
+	if err = s.finishSuccessTx(ctx, tx, item, status, attempts); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
 }
 
+func (s *Service) finishSuccessTx(ctx context.Context, tx pgx.Tx, item delivery, status, attempts int) error {
+	if _, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET status='delivered',payload='{}'::jsonb,attempt_count=attempt_count+$2,response_status=$3,error='',claimed_at=NULL,attempted_at=now(),delivered_at=now() WHERE id=$1 AND status='processing'`, item.ID, attempts, status); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE webhook_subscriptions SET failure_count=0,last_error='',last_delivered_at=now(),updated_at=now() WHERE id=$1`, item.SubscriptionID)
+	return err
+}
+
 func (s *Service) finishFailure(ctx context.Context, item delivery, status int, deliveryErr error, attempts int, countSubscription bool) error {
+	tx, err := s.Store.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err = s.finishFailureTx(ctx, tx, item, status, deliveryErr, attempts, countSubscription); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Service) finishFailureTx(ctx context.Context, tx pgx.Tx, item delivery, status int, deliveryErr error, attempts int, countSubscription bool) error {
 	message := "delivery failed"
 	if deliveryErr != nil {
 		message = deliveryErr.Error()
@@ -321,20 +434,15 @@ func (s *Service) finishFailure(ctx context.Context, item delivery, status int, 
 	if status > 0 {
 		responseStatus = status
 	}
-	tx, err := s.Store.Pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `UPDATE webhook_deliveries SET status='failed',payload='{}'::jsonb,attempt_count=attempt_count+$2,response_status=$3,error=$4,claimed_at=NULL,attempted_at=now() WHERE id=$1 AND status='processing'`, item.ID, attempts, responseStatus, message); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE webhook_deliveries SET status='failed',payload='{}'::jsonb,attempt_count=attempt_count+$2,response_status=$3,error=$4,claimed_at=NULL,attempted_at=now() WHERE id=$1 AND status='processing'`, item.ID, attempts, responseStatus, message); err != nil {
 		return err
 	}
 	if countSubscription {
-		if _, err = tx.Exec(ctx, `UPDATE webhook_subscriptions SET failure_count=failure_count+1,last_error=$2,active=CASE WHEN failure_count+1>=10 THEN false ELSE active END,updated_at=now() WHERE id=$1`, item.SubscriptionID, message); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE webhook_subscriptions SET failure_count=failure_count+1,last_error=$2,active=CASE WHEN failure_count+1>=10 THEN false ELSE active END,updated_at=now() WHERE id=$1`, item.SubscriptionID, message); err != nil {
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (s *Service) cleanupLoop(ctx context.Context) {

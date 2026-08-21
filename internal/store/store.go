@@ -24,12 +24,18 @@ type Store struct {
 	Pool   *pgxpool.Pool
 	Cipher Decrypter
 
-	embeddings    embeddingCache
-	aiLeaseConfig *pgx.ConnConfig
-	aiLeaseSlots  chan struct{}
+	embeddings        embeddingCache
+	leaseConfig       *pgx.ConnConfig
+	aiLeaseSlots      chan struct{}
+	webhookLeaseSlots chan struct{}
 }
 
-const maxAILeaseConnections = 2
+const (
+	// MaxAILeaseConnections bounds long Gateway authorization transactions.
+	MaxAILeaseConnections = 2
+	// MaxWebhookLeaseConnections matches the bounded delivery worker count.
+	MaxWebhookLeaseConnections = 3
+)
 
 type User struct {
 	ID          uuid.UUID  `json:"id"`
@@ -130,35 +136,44 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
 	return &Store{
-		Pool:          pool,
-		aiLeaseConfig: pool.Config().ConnConfig.Copy(),
-		aiLeaseSlots:  make(chan struct{}, maxAILeaseConnections),
+		Pool:              pool,
+		leaseConfig:       pool.Config().ConnConfig.Copy(),
+		aiLeaseSlots:      make(chan struct{}, MaxAILeaseConnections),
+		webhookLeaseSlots: make(chan struct{}, MaxWebhookLeaseConnections),
 	}, nil
 }
 
-// BeginAILease starts a long-lived authorization transaction on separately
-// bounded PostgreSQL capacity. External AI calls may retain row locks for the
-// configured Gateway timeout, so they must never consume the request pool that
-// serves readiness, authentication, and ordinary API traffic.
+// BeginAILease starts a long-lived Gateway authorization transaction outside
+// the request pool and within the per-instance AI connection bound.
 func (s *Store) BeginAILease(ctx context.Context) (pgx.Tx, func(), error) {
+	return s.beginExternalLease(ctx, s.aiLeaseSlots, "AI")
+}
+
+// BeginWebhookLease starts a long-lived delivery authorization transaction
+// outside the request pool and within the per-instance webhook worker bound.
+func (s *Store) BeginWebhookLease(ctx context.Context) (pgx.Tx, func(), error) {
+	return s.beginExternalLease(ctx, s.webhookLeaseSlots, "webhook")
+}
+
+func (s *Store) beginExternalLease(ctx context.Context, slots chan struct{}, kind string) (pgx.Tx, func(), error) {
 	// Tests and specialized callers may construct Store directly. Keep that
 	// legacy shape functional, while Store.Open always provisions the isolated
 	// production path below.
-	if s.aiLeaseConfig == nil || s.aiLeaseSlots == nil {
+	if s.leaseConfig == nil || slots == nil {
 		tx, err := s.Pool.Begin(ctx)
 		return tx, func() {}, err
 	}
 
 	select {
-	case s.aiLeaseSlots <- struct{}{}:
+	case slots <- struct{}{}:
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
 	}
-	releaseSlot := func() { <-s.aiLeaseSlots }
-	conn, err := pgx.ConnectConfig(ctx, s.aiLeaseConfig.Copy())
+	releaseSlot := func() { <-slots }
+	conn, err := pgx.ConnectConfig(ctx, s.leaseConfig.Copy())
 	if err != nil {
 		releaseSlot()
-		return nil, nil, fmt.Errorf("connect AI lease database capacity: %w", err)
+		return nil, nil, fmt.Errorf("connect %s lease database capacity: %w", kind, err)
 	}
 	tx, err := conn.Begin(ctx)
 	if err != nil {
@@ -166,7 +181,7 @@ func (s *Store) BeginAILease(ctx context.Context) (pgx.Tx, func(), error) {
 		_ = conn.Close(closeCtx)
 		cancel()
 		releaseSlot()
-		return nil, nil, fmt.Errorf("begin AI lease transaction: %w", err)
+		return nil, nil, fmt.Errorf("begin %s lease transaction: %w", kind, err)
 	}
 
 	var once sync.Once
