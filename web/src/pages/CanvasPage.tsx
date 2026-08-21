@@ -83,7 +83,9 @@ import PostItNode, { type PostItData } from '../components/PostItNode';
 import { useAuth } from '../auth-context';
 import { msg, useTranslation } from '../i18n';
 import ImportThoughtsModal from '../components/ImportThoughtsModal';
+import { readLocalStorage, readSessionStorage, writeLocalStorage, writeSessionStorage } from '../lib/browser-storage';
 import { importLayout, type ImportedThought, type ImportThoughtsResult } from '../lib/markdown-import';
+import { restoreAfterFailedWrite } from '../lib/optimistic-write';
 import { showError, showInfo, showSuccess } from '../ui-notifications';
 
 const nodeTypes = { postit: PostItNode };
@@ -177,7 +179,7 @@ function CanvasInner() {
   const [capture, setCapture] = useState('');
   const [loading, setLoading] = useState(true);
   const [edgeStyle, setEdgeStyle] = useState<EdgeStyle>(() => {
-    const stored = localStorage.getItem('umm:edge-style');
+    const stored = readLocalStorage('umm:edge-style').value;
     return stored === 'smoothstep' || stored === 'straight' ? stored : 'bezier';
   });
   const [exportBusy, setExportBusy] = useState('');
@@ -210,15 +212,17 @@ function CanvasInner() {
   const [sharePermission, setSharePermission] = useState('edit');
   const [shareMessage, setShareMessage] = useState('');
   const notesRef = useRef<Record<string, ThoughtNote>>({});
+  const durableNotesRef = useRef<Record<string, ThoughtNote>>({});
   const queues = useRef<Record<string, Promise<void>>>({});
   const dragStart = useRef<Record<string, { x: number; y: number }>>({});
   const undo = useRef<HistoryAction[]>([]);
   const redo = useRef<HistoryAction[]>([]);
   const focusedShortcut = useRef('');
 
-  const syncNotes = (next: ThoughtNote[]) => {
+  const syncNotes = (next: ThoughtNote[], replaceDurable = false) => {
     setNotes(next);
     notesRef.current = Object.fromEntries(next.map((n) => [n.id, n]));
+    if (replaceDurable) durableNotesRef.current = Object.fromEntries(next.map((n) => [n.id, n]));
   };
   useEffect(() => {
     api<{ spaces: Space[] }>('/spaces')
@@ -238,7 +242,7 @@ function CanvasInner() {
       .then((value) => {
         const style = value.edge_style || 'bezier';
         setEdgeStyle(style);
-        localStorage.setItem('umm:edge-style', style);
+        writeLocalStorage('umm:edge-style', style);
       })
       .catch(() => undefined);
   }, []);
@@ -251,7 +255,7 @@ function CanvasInner() {
       if (!silent) setLoading(true);
       try {
         const v = await api<{ notes: ThoughtNote[]; edges: ThoughtEdge[] }>(`/spaces/${activeSpace}/notes`);
-        syncNotes(v.notes);
+        syncNotes(v.notes, true);
         setRawEdges(v.edges);
       } finally {
         if (!silent) setLoading(false);
@@ -265,7 +269,7 @@ function CanvasInner() {
     api<{ dreams: DreamHistory[] }>('/dreams', { silent: true })
       .then(({ dreams }) => {
         const fresh = dreams.find((d) => d.spaceId === activeSpace && d.status === 'created');
-        if (fresh && !sessionStorage.getItem(`dream:${fresh.dreamId}`)) setMorningDream(fresh);
+        if (fresh && !readSessionStorage(`dream:${fresh.dreamId}`).value) setMorningDream(fresh);
       })
       .catch(() => undefined);
   }, [activeSpace, loadCanvas]);
@@ -299,16 +303,38 @@ function CanvasInner() {
             ...json('PUT', noteWritePayload(base)),
             queueIfOffline: true,
           });
-          notesRef.current[id] = { ...notesRef.current[id], version: updated.version, updatedAt: updated.updatedAt };
-          setNotes((all) =>
-            all.map((n) => (n.id === id ? { ...n, version: updated.version, updatedAt: updated.updatedAt } : n)),
-          );
+          const confirmed = { ...base, version: updated.version, updatedAt: updated.updatedAt };
+          durableNotesRef.current[id] = confirmed;
+          const currentAfterWrite = notesRef.current[id];
+          if (!currentAfterWrite) return;
+          const visible =
+            currentAfterWrite === base
+              ? confirmed
+              : { ...currentAfterWrite, version: updated.version, updatedAt: updated.updatedAt };
+          notesRef.current[id] = visible;
+          setNotes((all) => all.map((n) => (n.id === id ? visible : n)));
         } catch (error) {
-          if (error instanceof APIError && error.queued) return;
+          if (error instanceof APIError && error.queued) {
+            durableNotesRef.current[id] = base;
+            return;
+          }
           if (error instanceof APIError && error.status === 409 && error.payload.latest) {
             const latest = error.payload.latest as ThoughtNote;
+            durableNotesRef.current[id] = latest;
             setConflict({ local: base, latest });
             setMergeDraft(base.content);
+            return;
+          }
+          const currentAfterFailure = notesRef.current[id];
+          const restored = restoreAfterFailedWrite(currentAfterFailure, base, durableNotesRef.current[id]);
+          if (restored !== currentAfterFailure) {
+            if (restored) {
+              notesRef.current[id] = restored;
+              setNotes((all) => all.map((n) => (n.id === id ? restored : n)));
+            } else {
+              delete notesRef.current[id];
+              setNotes((all) => all.filter((n) => n.id !== id));
+            }
           }
           throw error;
         }
@@ -323,6 +349,7 @@ function CanvasInner() {
       if (!(error instanceof APIError && error.queued)) throw error;
     }
     delete notesRef.current[id];
+    delete durableNotesRef.current[id];
     setNotes((all) => all.filter((n) => n.id !== id));
     setRawEdges((all) => all.filter((e) => e.source !== id && e.target !== id));
   }, []);
@@ -340,6 +367,7 @@ function CanvasInner() {
     )
       return;
     const restored = await api<ThoughtNote>(`/notes/${id}/restore/${latest.version}`, { method: 'POST' });
+    durableNotesRef.current[id] = restored;
     notesRef.current[id] = restored;
     setNotes((all) => all.map((n) => (n.id === id ? restored : n)));
   }, []);
@@ -441,6 +469,7 @@ function CanvasInner() {
     if (!conflict) return;
     if (mode === 'server') {
       await discardOfflineMutation(conflict.offlineMutationId);
+      durableNotesRef.current[conflict.latest.id] = conflict.latest;
       notesRef.current[conflict.latest.id] = conflict.latest;
       setNotes((all) => all.map((note) => (note.id === conflict.latest.id ? conflict.latest : note)));
       setConflict(undefined);
@@ -453,6 +482,7 @@ function CanvasInner() {
     };
     const updated = await api<ThoughtNote>(`/notes/${desired.id}`, json('PUT', noteWritePayload(desired)));
     await discardOfflineMutation(conflict.offlineMutationId);
+    durableNotesRef.current[updated.id] = updated;
     notesRef.current[updated.id] = updated;
     setNotes((all) => all.map((note) => (note.id === updated.id ? updated : note)));
     setConflict(undefined);
@@ -576,6 +606,7 @@ function CanvasInner() {
           }),
           queueIfOffline: true,
         });
+        durableNotesRef.current[created.id] = created;
         syncNotes([...Object.values(notesRef.current), created]);
         setCapture('');
       } catch (error) {
@@ -625,6 +656,7 @@ function CanvasInner() {
         onProgress(index + 1);
       }
       if (created.length > 0) {
+        for (const note of created) durableNotesRef.current[note.id] = note;
         syncNotes([...Object.values(notesRef.current), ...created]);
         showSuccess(t('{count}개의 생각을 캔버스에 붙였습니다.', { count: created.length }), t('가져오기 완료'));
       }
@@ -1017,7 +1049,7 @@ function CanvasInner() {
   };
   const dismissDream = async () => {
     if (!morningDream) return;
-    sessionStorage.setItem(`dream:${morningDream.dreamId}`, 'seen');
+    writeSessionStorage(`dream:${morningDream.dreamId}`, 'seen');
     await api(`/dreams/${morningDream.dreamId}/feedback`, json('POST', { action: 'exposed' })).catch(() => undefined);
     setMorningDream(undefined);
   };

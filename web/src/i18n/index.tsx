@@ -9,6 +9,7 @@ import {
   type Locale,
   type TranslateParams,
 } from './translate';
+import { readLocalStorage, writeLocalStorage } from '../lib/browser-storage';
 
 export { locales, localeLabels, isLocale, msg, translate, intlLocale, type Locale } from './translate';
 
@@ -19,12 +20,8 @@ const storageKey = 'umm:locale';
  * languages, and falls back to Korean — the language umm is authored in.
  */
 export function resolveInitialLocale(): Locale {
-  try {
-    const stored = localStorage.getItem(storageKey);
-    if (isLocale(stored)) return stored;
-  } catch {
-    // Private browsing can make localStorage throw on read; the default is fine.
-  }
+  const stored = readLocalStorage(storageKey);
+  if (stored.available && isLocale(stored.value)) return stored.value;
   const preferred = typeof navigator === 'undefined' ? [] : (navigator.languages ?? [navigator.language]);
   for (const tag of preferred) {
     const base = tag?.split('-')[0];
@@ -59,11 +56,8 @@ export function TranslationProvider({ children }: { children: ReactNode }) {
 
   const changeLocale = useCallback((next: Locale) => {
     setLocale(next);
-    try {
-      localStorage.setItem(storageKey, next);
-    } catch {
-      // A browser that refuses storage still gets the language for this session.
-    }
+    // A browser that refuses storage still gets the language for this session.
+    writeLocalStorage(storageKey, next);
   }, []);
 
   const value = useMemo<TranslationContextValue>(

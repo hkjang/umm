@@ -38,7 +38,7 @@ User API/MCP key (one-time plaintext display)
 - Admin secret: API 응답에서 항상 마스킹, 감사 로그에 원문 미기록
 - Browser write: `Origin`의 scheme·hostname·effective port와 `Sec-Fetch-Site`를 확인해 로그인과 인증된 변경 요청의 cross-site·cross-scheme 전송 차단. 신뢰 proxy가 정규화한 scheme 또는 관리자 공개 URL origin과 정확히 일치해야 함
 - AI exclusion: 메모 또는 공간의 AI 제외 flag를 원격 임베딩 batch 구성 전에 확인하며, 제외 콘텐츠는 외부 Gateway 대신 서버 내부 로컬 vector만 사용. AI Assist와 자동·대화형 Dream도 외부 호출 직전 source lease에서 제외 상태를 다시 확인하고 호출 종료까지 note·space 변경을 잠금. 장애 폴백 뒤 비교 집합 전체를 로컬로 맞추는 후속 pass도 원래 Gateway 설정 세대에 묶어 두 pass 사이의 관리자 설정 변경을 넘어 새 벡터를 덮지 못하게 함
-- Offline retry: atomic Canvas mutation에 한정한 `Idempotency-Key`, 사용자·키별 advisory lock, 실행 중 갱신되는 2분 pending lease, 도메인/SSE/outbox/응답 원자 커밋과 24시간 성공 replay로 동시 중복·post-commit 기록 유실·crash 고착 방지. 브라우저 queue의 quota·권한·손상 오류는 저장 성공으로 취급하지 않고 명시적으로 실패하며, 안전하게 읽지 못한 queue를 빈 값으로 덮어쓰지 않음. 저장소 접근이 거부되어도 메모리 owner fallback으로 인증 bootstrap과 상태 표시를 유지
+- Offline retry: atomic Canvas mutation에 한정한 `Idempotency-Key`, 사용자·키별 advisory lock, 실행 중 갱신되는 2분 pending lease, 도메인/SSE/outbox/응답 원자 커밋과 24시간 성공 replay로 동시 중복·post-commit 기록 유실·crash 고착 방지. 브라우저 queue의 quota·권한·손상 오류는 저장 성공으로 취급하지 않고 명시적으로 실패하며, 안전하게 읽지 못한 queue를 빈 값으로 덮어쓰지 않음. 비내구성 autosave 실패는 새 편집 여부를 확인한 뒤 마지막 서버·queue 보존 상태로 복원. 저장소 접근이 거부되어도 메모리 owner fallback과 공용 local/session storage guard로 인증 bootstrap, Canvas, 설정과 상태 표시를 유지
 - Aggregate scope: `notes:read`만 가진 API key의 Today 응답에서는 `dreams:read` 데이터와 개수를 제거해 집계 endpoint를 통한 scope 우회를 차단
 - One-time secrets: API key와 webhook signing key 생성·회전 응답은 멱등 캐시 대상에서 제외해 평문 자격 증명을 PostgreSQL에 남기지 않음
 - Dream materialization: 채택·발전 transaction이 공간과 현재 편집 membership을 같은 연결에서 잠가, 권한 강등·회수와 메모·연결선·이벤트 생성이 엇갈리거나 작은 pool에서 중첩 연결을 기다리지 않도록 함

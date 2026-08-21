@@ -37,6 +37,7 @@ import { api, json, type EdgeStyle, type Preferences } from '../api';
 import { useAuth } from '../auth-context';
 import SessionsCard from '../components/SessionsCard';
 import { useTranslation } from '../i18n';
+import { writeLocalStorage } from '../lib/browser-storage';
 
 interface APIKey {
   id: string;
@@ -102,7 +103,7 @@ export default function PersonalSettingsPage() {
     Promise.all([
       api<Preferences>('/preferences').then((value) => {
         setPrefs(value);
-        localStorage.setItem('umm:edge-style', value.edge_style || 'bezier');
+        writeLocalStorage('umm:edge-style', value.edge_style || 'bezier');
       }),
       api<{ keys: APIKey[]; availableScopes: string[]; rotationOverlapHours: number }>('/api-keys').then((v) => {
         setKeys(v.keys);
@@ -123,7 +124,7 @@ export default function PersonalSettingsPage() {
     try {
       const saved = await api<Preferences>('/preferences', json('PUT', next));
       setPrefs(saved);
-      localStorage.setItem('umm:edge-style', saved.edge_style);
+      writeLocalStorage('umm:edge-style', saved.edge_style);
       setMessage(t('개인 설정을 저장했습니다.'));
     } catch {
       setPrefs(previous);

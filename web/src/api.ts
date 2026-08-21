@@ -1,5 +1,6 @@
 import { msg, translate } from './i18n/translate';
 import { showError } from './ui-notifications';
+import { readLocalStorage, removeLocalStorage, writeLocalStorage, type StorageRead } from './lib/browser-storage';
 import {
   isTerminalOfflineRejection,
   mergeOfflineQueues,
@@ -126,35 +127,8 @@ const offlineKey = 'umm:offline-mutations:v1';
 const offlineOwnerKey = 'umm:offline-owner:v1';
 const mutationMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const requestID = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-type StorageRead = { available: true; value: string | null } | { available: false; value: null };
 type QueueRead = { available: boolean; items: OfflineMutation[] };
 type OfflineEnqueueResult = 'queued' | 'full' | 'unavailable';
-
-function readStorage(key: string): StorageRead {
-  try {
-    return { available: true, value: window.localStorage.getItem(key) };
-  } catch {
-    return { available: false, value: null };
-  }
-}
-
-function writeStorage(key: string, value: string): boolean {
-  try {
-    window.localStorage.setItem(key, value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function removeStorage(key: string): boolean {
-  try {
-    window.localStorage.removeItem(key);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // The in-memory owner keeps this tab stable when a sandboxed/private browser
 // refuses storage access. Before authentication resolves, a persisted owner is
@@ -163,7 +137,7 @@ let activeOfflineOwner: string | undefined;
 let offlineOwnerResolved = false;
 function resolveOfflineOwner(): string | undefined {
   if (!offlineOwnerResolved) {
-    const stored = readStorage(offlineOwnerKey);
+    const stored: StorageRead = readLocalStorage(offlineOwnerKey);
     if (stored.available) {
       activeOfflineOwner = stored.value || undefined;
       offlineOwnerResolved = true;
@@ -174,7 +148,7 @@ function resolveOfflineOwner(): string | undefined {
 const queueStorageKey = () => `${offlineKey}:${resolveOfflineOwner() || 'anonymous'}`;
 
 function readOfflineQueue(storageKey = queueStorageKey()): QueueRead {
-  const stored = readStorage(storageKey);
+  const stored = readLocalStorage(storageKey);
   if (!stored.available) return { available: false, items: [] };
   try {
     const value = JSON.parse(stored.value || '[]');
@@ -190,7 +164,7 @@ function loadOfflineQueue(storageKey = queueStorageKey()): OfflineMutation[] {
 }
 
 function saveOfflineQueue(items: OfflineMutation[], storageKey = queueStorageKey()): boolean {
-  if (!writeStorage(storageKey, JSON.stringify(items))) return false;
+  if (!writeLocalStorage(storageKey, JSON.stringify(items))) return false;
   const count = storageKey === queueStorageKey() ? items.length : offlineQueueCount();
   window.dispatchEvent(new CustomEvent('umm:offline-queue', { detail: { count } }));
   return true;
@@ -216,14 +190,14 @@ export async function setOfflineQueueOwner(userId?: string) {
         if (legacy.available && account.available) {
           const migrated =
             legacy.items.length === 0 ||
-            writeStorage(target, JSON.stringify(mergeOfflineQueues(account.items, legacy.items)));
-          if (migrated) removeStorage(offlineKey);
+            writeLocalStorage(target, JSON.stringify(mergeOfflineQueues(account.items, legacy.items)));
+          if (migrated) removeLocalStorage(offlineKey);
         }
-        writeStorage(offlineOwnerKey, userId);
+        writeLocalStorage(offlineOwnerKey, userId);
       }),
     );
   } else {
-    await withOfflineQueueLock(offlineKey, () => removeStorage(offlineOwnerKey));
+    await withOfflineQueueLock(offlineKey, () => removeLocalStorage(offlineOwnerKey));
   }
   window.dispatchEvent(new CustomEvent('umm:offline-queue', { detail: { count: offlineQueueCount() } }));
 }

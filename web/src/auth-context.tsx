@@ -2,6 +2,7 @@ import { useMantineContext, type MantineColorScheme } from '@mantine/core';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, setOfflineQueueOwner, type Meta, type Preferences, type User } from './api';
 import { isLocale, setLocale } from './i18n/translate';
+import { writeLocalStorage } from './lib/browser-storage';
 
 interface AuthContextValue {
   meta?: Meta;
@@ -28,11 +29,8 @@ function applyStoredPreferences(
   if (preferences.theme === 'light' || preferences.theme === 'dark' || preferences.theme === 'system') {
     setColorScheme(preferences.theme === 'system' ? 'auto' : preferences.theme);
   }
-  try {
-    if (isLocale(preferences.locale)) localStorage.setItem('umm:locale', preferences.locale);
-  } catch {
-    // Storage can be unavailable; the session default is still correct.
-  }
+  // Storage can be unavailable; the session default is still correct.
+  if (isLocale(preferences.locale)) writeLocalStorage('umm:locale', preferences.locale);
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
