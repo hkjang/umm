@@ -333,8 +333,12 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 	updated, err := s.Store.UpdateNote(r.Context(), p.User.ID, n, body.AIExcluded)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			latest, latestErr := s.Store.NoteByID(r.Context(), p.User.ID, noteID)
+			latest, canEdit, latestErr := s.Store.NoteByIDWithEditAccess(r.Context(), p.User.ID, noteID)
 			if latestErr == nil {
+				if !canEdit {
+					writeProblem(w, r, http.StatusForbidden, "note-read-only", "읽기 전용 메모", "이 공간의 편집 권한이 없어 오프라인 변경을 적용할 수 없습니다.", nil)
+					return
+				}
 				writeProblem(w, r, http.StatusConflict, "note-version-conflict", "메모 버전 충돌", "다른 위치에서 메모가 변경되었습니다. 두 버전을 비교해 선택해 주세요.", map[string]any{"clientVersion": n.Version, "latest": latest})
 				return
 			}

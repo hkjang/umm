@@ -287,16 +287,24 @@ func (s *Store) Backlinks(ctx context.Context, userID, noteID uuid.UUID) ([]Back
 }
 
 func (s *Store) NoteByID(ctx context.Context, userID, noteID uuid.UUID) (Note, error) {
+	n, _, err := s.NoteByIDWithEditAccess(ctx, userID, noteID)
+	return n, err
+}
+
+func (s *Store) NoteByIDWithEditAccess(ctx context.Context, userID, noteID uuid.UUID) (Note, bool, error) {
 	var n Note
+	var canEdit bool
 	err := s.Pool.QueryRow(ctx, `
 		SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
-		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at
-		FROM notes n WHERE n.id=$1 AND n.deleted_at IS NULL
-		AND EXISTS(SELECT 1 FROM spaces sp LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
-		           WHERE sp.id=n.space_id AND (sp.owner_id=$2 OR sm.user_id=$2))`, noteID, userID).
+		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at,
+		       (sp.owner_id=$2 OR sm.permission IN ('edit','manage'))
+		FROM notes n
+		JOIN spaces sp ON sp.id=n.space_id
+		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2
+		WHERE n.id=$1 AND n.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.user_id=$2)`, noteID, userID).
 		Scan(&n.ID, &n.SpaceID, &n.AuthorID, &n.Content, &n.Title, &n.Color, &n.Kind, &n.Source, &n.AIExcluded,
-			&n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt)
-	return n, err
+			&n.X, &n.Y, &n.Width, &n.Height, &n.Rotation, &n.Version, &n.CreatedAt, &n.UpdatedAt, &canEdit)
+	return n, canEdit, err
 }
 
 func (s *Store) TodayReview(ctx context.Context, userID uuid.UUID) (TodayReview, error) {

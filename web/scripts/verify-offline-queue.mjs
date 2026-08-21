@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { reconcileOfflineQueue } from '../src/offline-queue.ts';
+import { isTerminalOfflineRejection, noteReadOnlyProblem, reconcileOfflineQueue } from '../src/offline-queue.ts';
 
 const mutation = (id, path = `/notes/${id}`) => ({
   id,
@@ -36,5 +36,11 @@ assert.deepEqual(
   ['new-comment'],
   'another tab that already removed an item must not have it resurrected',
 );
+
+assert.equal(isTerminalOfflineRejection(403, noteReadOnlyProblem), true, 'a typed read-only response must remove an impossible mutation');
+assert.equal(isTerminalOfflineRejection(403), false, 'generic authorization failures must remain queued');
+assert.equal(isTerminalOfflineRejection(404), true, 'missing resources are terminal');
+assert.equal(isTerminalOfflineRejection(409), false, 'version conflicts require user reconciliation');
+assert.equal(isTerminalOfflineRejection(500), false, 'server failures must remain retryable');
 
 console.log('Offline queue reconciliation verified');

@@ -189,15 +189,17 @@ paths:
       operationId: put_notes_noteId
       tags: [Thoughts]
       summary: Autosave note content, appearance and position
-      description: Uses optimistic concurrency. Send the last server version; a stale version returns 409.
+      description: Uses optimistic concurrency. Send the last server version; a stale version returns 409. A caller who can still view the note but no longer edit its space receives a terminal note-read-only 403 Problem Details response.
       x-required-scope: notes:write
       parameters:
         - { $ref: '#/components/parameters/IdempotencyKey' }
       requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/NoteUpdate' } } } }
       responses:
         '200': { description: Updated note, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }
+        '403': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
     delete:
       operationId: delete_notes_noteId
       tags: [Thoughts]

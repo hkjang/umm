@@ -1,5 +1,5 @@
 import { showError } from './ui-notifications';
-import { reconcileOfflineQueue, type OfflineMutation } from './offline-queue';
+import { isTerminalOfflineRejection, reconcileOfflineQueue, type OfflineMutation } from './offline-queue';
 
 export interface Meta {
   serviceName: string;
@@ -252,25 +252,26 @@ export async function flushOfflineQueue() {
         continue;
       }
       const payload = await response.json().catch(() => ({}));
-      if (response.status === 425) {
-        remaining.push(item);
-        const requestedDelay = Number.parseInt(response.headers.get('Retry-After') || '5', 10);
-        retryAfterSeconds = Math.max(retryAfterSeconds, Number.isFinite(requestedDelay) ? requestedDelay : 5);
-        continue;
-      }
       if (response.status === 409) {
         remaining.push(item);
         window.dispatchEvent(new CustomEvent('umm:offline-conflict', { detail: { item, payload } }));
+        continue;
+      }
+      if (isTerminalOfflineRejection(response.status, payload.type)) {
+        const reason = payload.detail || payload.error || `서버가 변경을 거부했습니다 (${response.status}).`;
+        showError(reason, '오프라인 변경을 적용하지 못했습니다', `offline:${item.id}:rejected`);
+        window.dispatchEvent(new CustomEvent('umm:offline-rejected', { detail: { item, payload, status: response.status } }));
         continue;
       }
       if (response.status === 401 || response.status === 403) {
         remaining.push(item, ...queued.slice(index + 1));
         break;
       }
-      if (response.status >= 400 && response.status < 500 && !retryableOfflineStatus(response.status)) {
-        const reason = payload.detail || payload.error || `서버가 변경을 거부했습니다 (${response.status}).`;
-        showError(reason, '오프라인 변경을 적용하지 못했습니다', `offline:${item.id}:rejected`);
-        window.dispatchEvent(new CustomEvent('umm:offline-rejected', { detail: { item, payload, status: response.status } }));
+      if (retryableOfflineStatus(response.status)) {
+        remaining.push(item);
+        const requestedDelay = Number.parseInt(response.headers.get('Retry-After') || '5', 10);
+        const retryDelay = Number.isFinite(requestedDelay) && requestedDelay > 0 ? requestedDelay : 5;
+        retryAfterSeconds = Math.max(retryAfterSeconds, retryDelay);
         continue;
       }
       remaining.push(item);

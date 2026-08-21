@@ -7,6 +7,14 @@ export interface OfflineMutation {
   createdAt: string;
 }
 
+export const noteReadOnlyProblem = 'https://umm.local/problems/note-read-only';
+
+export function isTerminalOfflineRejection(status: number, problemType = ''): boolean {
+  if (status === 403 && problemType === noteReadOnlyProblem) return true;
+  if (status < 400 || status >= 500) return false;
+  return ![401, 403, 408, 409, 425, 429].includes(status);
+}
+
 // Apply the outcome of one flush snapshot to the latest queue. Items queued or
 // coalesced while requests were in flight have different IDs and must survive.
 export function reconcileOfflineQueue(
