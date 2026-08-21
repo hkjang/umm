@@ -307,12 +307,84 @@ func (s *Store) PutSetting(ctx context.Context, key string, value any, actor uui
 	if !AllowedSetting(key) {
 		return errors.New("unknown setting section")
 	}
+	if key == "security" {
+		return s.putSettingPreserving(ctx, key, value, actor, []string{
+			"login_max_failures",
+			"login_lockout_minutes",
+			"api_rate_per_minute",
+			"ai_rate_per_minute",
+			"ai_daily_limit",
+		})
+	}
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
 	_, err = s.Pool.Exec(ctx, `INSERT INTO app_settings(key,value,updated_by,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`, key, raw, actor)
 	return err
+}
+
+// putSettingPreserving applies backward-compatible object updates under a
+// transaction-scoped lock. Older clients do not know newly added fields, so a
+// whole-object PUT must retain those fields from the latest committed row while
+// still honoring every field that the caller explicitly supplied.
+func (s *Store) putSettingPreserving(ctx context.Context, key string, value any, actor uuid.UUID, preserve []string) error {
+	incomingRaw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	incoming := map[string]json.RawMessage{}
+	if err = json.Unmarshal(incomingRaw, &incoming); err != nil {
+		return fmt.Errorf("decode incoming setting %q: %w", key, err)
+	}
+	if incoming == nil {
+		return fmt.Errorf("setting %q must be a JSON object", key)
+	}
+
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin setting update %q: %w", key, err)
+	}
+	defer tx.Rollback(context.Background())
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, "umm:app-setting:"+key); err != nil {
+		return fmt.Errorf("lock setting %q: %w", key, err)
+	}
+
+	var existingRaw []byte
+	err = tx.QueryRow(ctx, `SELECT value FROM app_settings WHERE key=$1`, key).Scan(&existingRaw)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("read setting %q: %w", key, err)
+	}
+	if err == nil {
+		existing := map[string]json.RawMessage{}
+		if err = json.Unmarshal(existingRaw, &existing); err != nil {
+			return fmt.Errorf("decode stored setting %q: %w", key, err)
+		}
+		for _, field := range preserve {
+			if _, supplied := incoming[field]; supplied {
+				continue
+			}
+			if raw, exists := existing[field]; exists {
+				incoming[field] = raw
+			}
+		}
+	}
+
+	mergedRaw, err := json.Marshal(incoming)
+	if err != nil {
+		return fmt.Errorf("encode setting %q: %w", key, err)
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO app_settings(key,value,updated_by,updated_at)
+		VALUES($1,$2,$3,now())
+		ON CONFLICT(key) DO UPDATE
+		SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by,updated_at=now()`, key, mergedRaw, actor); err != nil {
+		return fmt.Errorf("write setting %q: %w", key, err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit setting update %q: %w", key, err)
+	}
+	return nil
 }
 
 func AllowedSetting(key string) bool {

@@ -53,3 +53,28 @@ func TestValidateAIGatewayTimeout(t *testing.T) {
 		t.Fatal("excessive gateway retries accepted")
 	}
 }
+
+func TestValidateSecuritySettingsDistinguishesOmittedAndExplicitValues(t *testing.T) {
+	s := &Server{}
+	legacy := map[string]any{"api_key_scopes": []any{"notes:read"}}
+	if err := s.validateSetting("security", legacy); err != nil {
+		t.Fatalf("legacy payload with omitted abuse guards was rejected: %v", err)
+	}
+
+	withUnlimitedAI := map[string]any{
+		"api_key_scopes":        []any{"notes:read"},
+		"login_max_failures":    float64(8),
+		"ai_daily_limit":        float64(0),
+		"api_rate_per_minute":   float64(600),
+		"ai_rate_per_minute":    float64(6),
+		"login_lockout_minutes": float64(15),
+	}
+	if err := s.validateSetting("security", withUnlimitedAI); err != nil {
+		t.Fatalf("explicit zero daily limit was rejected: %v", err)
+	}
+
+	withNull := map[string]any{"api_key_scopes": []any{"notes:read"}, "login_max_failures": nil}
+	if err := s.validateSetting("security", withNull); err == nil {
+		t.Fatal("an explicit null abuse guard was accepted as an omission")
+	}
+}

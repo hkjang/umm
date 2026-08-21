@@ -41,7 +41,7 @@ func legacyV1Ciphertext(t *testing.T, key []byte, plain string) string {
 	return base64.RawURLEncoding.EncodeToString(sealed)
 }
 
-func isolatedKeyRotationStore(t *testing.T, dsn string) *store.Store {
+func isolatedHTTPStore(t *testing.T, dsn string) *store.Store {
 	t.Helper()
 	ctx := context.Background()
 	adminConfig, err := pgxpool.ParseConfig(dsn)
@@ -54,7 +54,7 @@ func isolatedKeyRotationStore(t *testing.T, dsn string) *store.Store {
 	}
 	t.Cleanup(adminPool.Close)
 
-	schema := "key_rotation_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	schema := "httpapi_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	identifier := pgx.Identifier{schema}.Sanitize()
 	if _, err = adminPool.Exec(ctx, "CREATE SCHEMA "+identifier); err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestRotateEncryptionKeyRewrapsUnprefixedLegacyPromptIntegration(t *testing.
 		t.Skip("POSTGRES_DSN is not configured")
 	}
 	ctx := context.Background()
-	db := isolatedKeyRotationStore(t, dsn)
+	db := isolatedHTTPStore(t, dsn)
 
 	oldKey := []byte("0123456789abcdef0123456789abcdef")
 	newKey := []byte("abcdef0123456789abcdef0123456789")

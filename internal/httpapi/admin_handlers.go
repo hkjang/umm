@@ -135,11 +135,10 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 		// still save this section, but a value that is present must be sane:
 		// silently clamping one would hide a misconfiguration from the operator.
 		for _, guard := range []struct {
-			key      string
-			low      float64
-			high     float64
-			message  string
-			optional bool
+			key     string
+			low     float64
+			high    float64
+			message string
 		}{
 			{key: "login_max_failures", low: 3, high: 100, message: "로그인 실패 허용 횟수는 3~100회여야 합니다"},
 			{key: "login_lockout_minutes", low: 1, high: 1440, message: "로그인 잠금 시간은 1~1440분이어야 합니다"},
@@ -148,7 +147,7 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 			{key: "ai_daily_limit", low: 0, high: 100000, message: "하루 AI 생성 한도는 0~100000이어야 합니다"},
 		} {
 			raw, present := v[guard.key]
-			if !present || raw == nil {
+			if !present {
 				continue
 			}
 			value, ok := raw.(float64)
