@@ -16,6 +16,7 @@ func TestApplyPoolDefaultsRespectsExplicitMaximum(t *testing.T) {
 	}{
 		{name: "one connection", dsn: "postgres://user:pass@localhost/db?pool_max_conns=1", wantMax: 1, wantMin: 1},
 		{name: "three connections", dsn: "postgres://user:pass@localhost/db?pool_max_conns=3", wantMax: 3, wantMin: 2},
+		{name: "explicit maximum above default", dsn: "postgres://user:pass@localhost/db?pool_max_conns=64", wantMax: 64, wantMin: 2},
 		{name: "minimum capped to maximum", dsn: "postgres://user:pass@localhost/db?pool_max_conns=1&pool_min_conns=5", wantMax: 1, wantMin: 1},
 	}
 	for _, test := range tests {
@@ -27,6 +28,29 @@ func TestApplyPoolDefaultsRespectsExplicitMaximum(t *testing.T) {
 			applyPoolDefaults(config)
 			if config.MaxConns != test.wantMax || config.MinConns != test.wantMin {
 				t.Fatalf("pool bounds = min:%d max:%d, want min:%d max:%d", config.MinConns, config.MaxConns, test.wantMin, test.wantMax)
+			}
+		})
+	}
+}
+
+func TestApplyPoolDefaultsUsesBoundedAutomaticMaximum(t *testing.T) {
+	tests := []struct {
+		name    string
+		dsn     string
+		wantMin int32
+	}{
+		{name: "plain DSN", dsn: "postgres://user:pass@localhost/db", wantMin: 2},
+		{name: "oversized explicit minimum", dsn: "postgres://user:pass@localhost/db?pool_min_conns=40", wantMin: 16},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config, err := pgxpool.ParseConfig(test.dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			applyPoolDefaults(config)
+			if config.MaxConns != 16 || config.MinConns != test.wantMin {
+				t.Fatalf("automatic pool bounds = min:%d max:%d, want min:%d max:16", config.MinConns, config.MaxConns, test.wantMin)
 			}
 		})
 	}

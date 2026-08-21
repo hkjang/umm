@@ -167,12 +167,18 @@ func (p Provider) embedRemote(ctx context.Context, texts []string) ([][]float32,
 		return nil, fmt.Errorf("embedding gateway returned %d vectors for %d inputs", len(parsed.Data), len(texts))
 	}
 	out := make([][]float32, len(texts))
+	dimensions := 0
 	for _, item := range parsed.Data {
 		if item.Index < 0 || item.Index >= len(out) {
 			return nil, errors.New("embedding gateway returned an out of range index")
 		}
 		if len(item.Embedding) == 0 {
 			return nil, errors.New("embedding gateway returned an empty vector")
+		}
+		if dimensions == 0 {
+			dimensions = len(item.Embedding)
+		} else if len(item.Embedding) != dimensions {
+			return nil, fmt.Errorf("embedding gateway returned inconsistent dimensions: %d and %d", dimensions, len(item.Embedding))
 		}
 		out[item.Index] = Normalize(item.Embedding)
 	}

@@ -109,6 +109,28 @@ func TestProviderRejectsAMismatchedBatch(t *testing.T) {
 	}
 }
 
+func TestProviderRejectsInconsistentDimensionsAndFallsBack(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{
+			{"index": 0, "embedding": []float32{1, 0}},
+			{"index": 1, "embedding": []float32{1, 0, 0}},
+		}})
+	}))
+	defer server.Close()
+
+	provider := Provider{Remote: &RemoteConfig{BaseURL: server.URL, Model: "m", Timeout: time.Second}}
+	if _, err := provider.EmbedStrict(context.Background(), []string{"a", "b"}); err == nil || !strings.Contains(err.Error(), "inconsistent dimensions") {
+		t.Fatalf("mixed embedding dimensions must be rejected, got %v", err)
+	}
+	vectors, algorithm := provider.Embed(context.Background(), []string{"a", "b"})
+	if algorithm != LocalAlgorithm || len(vectors) != 2 {
+		t.Fatalf("malformed remote space must fall back for both inputs: algorithm=%q vectors=%d", algorithm, len(vectors))
+	}
+	if len(vectors[0]) != Dimensions || len(vectors[1]) != Dimensions {
+		t.Fatalf("malformed remote space must fall back as one local space: algorithm=%q dimensions=%d/%d", algorithm, len(vectors[0]), len(vectors[1]))
+	}
+}
+
 func TestEmbeddingsEndpoint(t *testing.T) {
 	cases := map[string]string{
 		"https://gw.internal":               "https://gw.internal/v1/embeddings",

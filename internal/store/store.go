@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -128,17 +127,17 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	return &Store{Pool: pool}, nil
 }
 
-// applyPoolDefaults keeps headroom for the connections umm holds open for a
-// long time — the realtime LISTEN connection and the migration advisory lock —
-// so a busy request burst can never starve them. An explicit pool_max_conns in
-// the DSN always wins.
+// applyPoolDefaults keeps headroom for the connections umm holds open while
+// bounding each instance independently of the host's CPU count. This keeps a
+// high-core host or a small replica set from exhausting PostgreSQL's global
+// connection limit. An explicit pool_max_conns in the DSN always wins.
 func applyPoolDefaults(config *pgxpool.Config) {
-	const reservedLongLivedConns = 2
+	const (
+		defaultMaxConns        = 16
+		reservedLongLivedConns = 2
+	)
 	if !strings.Contains(config.ConnString(), "pool_max_conns") {
-		minimum := int32(runtime.NumCPU()*2) + reservedLongLivedConns
-		if config.MaxConns < minimum {
-			config.MaxConns = minimum
-		}
+		config.MaxConns = defaultMaxConns
 	}
 	minimum := int32(reservedLongLivedConns)
 	if minimum > config.MaxConns {

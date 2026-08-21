@@ -22,7 +22,7 @@
 
 TLS 종료 proxy 뒤에서 실행할 때만 직접 연결되는 proxy의 IP 또는 CIDR을 쉼표로 구분해 지정하세요(예: `10.42.0.0/16,fd00:42::/64`). 설정하지 않으면 `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`를 모두 무시하며, `0.0.0.0/0` 또는 `::/0`처럼 인터넷 전체를 신뢰 대상으로 지정해서는 안 됩니다. Proxy는 외부에서 들어온 forwarding header를 제거하고 자신이 확인한 값을 기록하도록 구성하세요.
 
-브라우저 변경 요청의 `Origin`은 공개 URL 또는 신뢰 proxy로 확인한 현재 요청과 scheme·host·port가 모두 같아야 합니다. HTTPS 서비스와 같은 hostname이더라도 `http://` Origin은 거부됩니다. `POSTGRES_DSN`에 `pool_max_conns`를 직접 넣을 때는 실시간 listener와 요청 여유를 위해 인스턴스당 4 이상을 권장합니다. 1처럼 더 작은 상한도 설정 오류로 기동이 막히지는 않지만 처리량과 실시간 안정성이 낮아집니다.
+브라우저 변경 요청의 `Origin`은 공개 URL 또는 신뢰 proxy로 확인한 현재 요청과 scheme·host·port가 모두 같아야 합니다. HTTPS 서비스와 같은 hostname이더라도 `http://` Origin은 거부됩니다. PostgreSQL pool 자동 상한은 host CPU 수와 무관하게 인스턴스당 16이며 compose도 이를 명시합니다. `POSTGRES_DSN`의 `pool_max_conns`는 replica 수와 DB의 전역 연결 한도를 기준으로 조정하세요. 1처럼 더 작은 상한도 설정 오류로 기동이 막히지는 않지만 처리량과 실시간 안정성이 낮아집니다.
 
 ---
 
