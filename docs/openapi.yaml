@@ -88,7 +88,7 @@ paths:
       operationId: get_today
       tags: [Review]
       summary: Get the daily review dashboard
-      description: Returns due thoughts, unconnected thoughts, pending Dreams, recent collaboration activity and onboarding progress.
+      description: Returns due thoughts, unconnected thoughts, recent collaboration activity and onboarding progress. Pending Dreams are included only when the caller also has dreams:read; otherwise dreams is an empty array and its count is zero.
       x-required-scope: notes:read
       responses:
         '200': { description: Daily review, content: { application/json: { schema: { $ref: '#/components/schemas/TodayReview' } } } }

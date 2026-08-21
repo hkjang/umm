@@ -55,8 +55,19 @@ func (s *Server) todayReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "오늘의 리뷰를 준비하지 못했습니다.")
 		return
 	}
+	redactTodayDreams(&result, hasScope(r, "dreams:read"))
 	s.Store.Track(r.Context(), &p.User.ID, "today.opened", "user", &p.User.ID, map[string]any{"reviewCount": result.Counts["review"]})
 	writeJSON(w, http.StatusOK, result)
+}
+
+func redactTodayDreams(result *store.TodayReview, allowed bool) {
+	if allowed {
+		return
+	}
+	result.Dreams = []store.ReviewDream{}
+	if result.Counts != nil {
+		result.Counts["dreams"] = 0
+	}
 }
 
 func (s *Server) reviewNote(w http.ResponseWriter, r *http.Request) {

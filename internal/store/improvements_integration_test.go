@@ -78,6 +78,55 @@ func TestTodayReviewStateIsIsolatedPerUserIntegration(t *testing.T) {
 	}
 }
 
+func TestHybridSearchKeepsOlderLexicalMatchesIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	userID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New()
+	username := "search_user_" + userID.String()
+	needle := "archived-exact-" + noteID.String()
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'large search corpus')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,title,content,created_at,updated_at) VALUES($1,$2,$3,$4,$4,now()-interval '10 years',now()-interval '10 years')`, noteID, spaceID, userID, needle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(space_id,author_id,content,created_at,updated_at) SELECT $1,$2,'recent semantic decoy '||value,now(),now() FROM generate_series(1,2001) AS value`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID)
+
+	page, err := db.SearchNotesHybrid(ctx, userID, SearchOptions{Query: needle, Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range page.Notes {
+		if item.ID == noteID {
+			return
+		}
+	}
+	t.Fatalf("older exact match %s was omitted from %#v", noteID, page.Notes)
+}
+
 func reviewContains(items []ReviewItem, noteID uuid.UUID, requirePinned bool) bool {
 	for _, item := range items {
 		if item.ID == noteID && (!requirePinned || item.Pinned) {

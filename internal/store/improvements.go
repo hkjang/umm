@@ -145,7 +145,8 @@ func lexicalScore(query, title, content, space string) (float64, []string) {
 // SearchNotesHybrid combines deterministic local embeddings with lexical
 // matching. It remains fully offline and needs no vector database extension.
 func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options SearchOptions) (HybridSearchPage, error) {
-	if strings.TrimSpace(options.Query) == "" {
+	patterns := noteSearchPatterns(options.Query)
+	if len(patterns) == 0 {
 		return HybridSearchPage{Notes: []NoteSearchResult{}}, nil
 	}
 	if options.Limit < 1 {
@@ -158,18 +159,30 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 		options.Offset = 0
 	}
 	rows, err := s.Pool.Query(ctx, `
-		SELECT n.id,n.space_id,sp.name,n.title,left(n.content,2000),n.kind,n.updated_at,e.vector
-		FROM notes n
-		JOIN spaces sp ON sp.id=n.space_id
-		LEFT JOIN note_embeddings e ON e.note_id=n.id AND e.content_version=n.version
-		WHERE n.deleted_at IS NULL
-		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
-		  AND ($2::uuid IS NULL OR n.space_id=$2)
-		  AND ($3='' OR n.kind=$3)
-		  AND ($4::timestamptz IS NULL OR n.updated_at >= $4)
-		  AND ($5::timestamptz IS NULL OR n.updated_at <= $5)
-		ORDER BY n.updated_at DESC
-		LIMIT 2000`, userID, options.SpaceID, strings.TrimSpace(options.Kind), options.UpdatedFrom, options.UpdatedTo)
+		WITH eligible AS MATERIALIZED (
+		  SELECT n.id,n.space_id,sp.name AS space_name,n.title,left(n.content,2000) AS content,n.kind,n.updated_at,e.vector,
+		    NOT EXISTS(
+		      SELECT 1 FROM unnest($6::text[]) AS term(pattern)
+		      WHERE concat_ws(' ',n.title,n.content,sp.name) NOT ILIKE term.pattern ESCAPE E'\\'
+		    ) AS lexical_match
+		  FROM notes n
+		  JOIN spaces sp ON sp.id=n.space_id
+		  LEFT JOIN note_embeddings e ON e.note_id=n.id AND e.content_version=n.version
+		  WHERE n.deleted_at IS NULL
+		    AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
+		    AND ($2::uuid IS NULL OR n.space_id=$2)
+		    AND ($3='' OR n.kind=$3)
+		    AND ($4::timestamptz IS NULL OR n.updated_at >= $4)
+		    AND ($5::timestamptz IS NULL OR n.updated_at <= $5)
+		), candidates AS (
+		  SELECT * FROM eligible WHERE lexical_match
+		  UNION ALL
+		  SELECT * FROM (
+		    SELECT * FROM eligible WHERE NOT lexical_match ORDER BY updated_at DESC,id DESC LIMIT 2000
+		  ) recent_semantic
+		)
+		SELECT id,space_id,space_name,title,content,kind,updated_at,vector FROM candidates`,
+		userID, options.SpaceID, strings.TrimSpace(options.Kind), options.UpdatedFrom, options.UpdatedTo, patterns)
 	if err != nil {
 		return HybridSearchPage{}, err
 	}

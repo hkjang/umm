@@ -47,7 +47,7 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 | 메서드 | 경로 | 설명 | 권한 스코프 |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/today` | 검토 대상·고립 생각·Dream·댓글·온보딩 집계 | `notes:read` |
+| `GET` | `/today` | 검토 대상·고립 생각·댓글·온보딩 집계. Dream 항목은 별도 권한이 있을 때만 포함 | `notes:read` (`dreams:read` for Dream) |
 | `POST` | `/notes/{id}/review` | 검토 완료, 다시 보기, 고정 | `notes:write` |
 | `GET` | `/onboarding` | 실제 사용 기반 온보딩 진행률 | 로그인 |
 | `POST` | `/onboarding/complete` | 온보딩 완료 표시 | 로그인 |
@@ -68,6 +68,8 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 `/search`, `/notifications`, `/dreams`, `/admin/audit`는 응답의 `nextCursor`를 다음 요청의 `cursor`에 그대로 전달합니다. cursor 내부 형식에 의존하지 마세요.
 
+하이브리드 검색은 접근 가능한 전체 메모에서 키워드 일치를 먼저 보존한 뒤 최근 비키워드 후보에 로컬 의미 점수를 결합합니다. 따라서 메모가 2,000개를 넘더라도 오래된 정확한 키워드 결과를 누락하지 않습니다.
+
 ### 🪝 서명 웹훅
 
 `/webhooks`에서 이벤트 subscription을 만들면 secret이 한 번만 반환됩니다. 대상은 공개 HTTPS 443이어야 하며 HMAC 입력은 아래와 같습니다.
@@ -84,6 +86,8 @@ X-Umm-Signature-256 = "sha256=" + hex(HMAC-SHA256(secret, signed))
 생성·변경 요청에 8~128자의 `Idempotency-Key`를 보내면 같은 사용자와 키의 성공 응답을 24시간 재생합니다. 서버는 method·경로·query·본문 fingerprint가 같은 요청만 재생하며, 다른 요청에 키를 재사용하면 409입니다. 처리 전에 24시간 pending 예약을 먼저 확정하므로 연결이나 프로세스가 중간에 끊겨 결과가 불명확한 요청도 보존 기간 동안 중복 실행하지 않습니다. 오프라인 클라이언트는 한 논리 작업에 같은 키를 유지해야 합니다. API key와 웹훅 서명 key의 생성·회전처럼 비밀을 한 번만 공개하는 요청은 평문 응답을 멱등 캐시에 남기지 않도록 `Idempotency-Key`를 거부합니다.
 
 오류 본문은 `application/problem+json`이며 `type`, `title`, `status`, `detail`을 제공합니다. 기존 클라이언트를 위해 `error`도 같은 설명을 유지합니다. 메모 version 충돌의 409 응답에는 `clientVersion`과 최신 서버 `latest` 메모가 포함됩니다.
+
+브라우저 오프라인 queue는 409 충돌과 408·425·429·5xx처럼 다시 시도할 수 있는 응답만 보존합니다. 400·404 등 영구적인 client 오류는 사용자에게 사유를 알린 뒤 queue에서 제거해 무한 재시도를 막습니다.
 
 ### ⚡ 실시간 이벤트 스트림 (SSE)
 - **경로**: `GET /api/v1/spaces/{spaceID}/events`

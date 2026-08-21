@@ -35,6 +35,7 @@ User API/MCP key (one-time plaintext display)
 - Admin secret: API 응답에서 항상 마스킹, 감사 로그에 원문 미기록
 - Browser write: `Origin`과 `Sec-Fetch-Site`를 확인해 로그인과 인증된 변경 요청의 cross-site 전송 차단
 - Offline retry: 사용자·키별 PostgreSQL advisory lock, 요청 fingerprint 기반 24시간 pending 예약과 성공 응답 기록으로 `Idempotency-Key` 중복 생성 방지
+- Aggregate scope: `notes:read`만 가진 API key의 Today 응답에서는 `dreams:read` 데이터와 개수를 제거해 집계 endpoint를 통한 scope 우회를 차단
 - One-time secrets: API key와 webhook signing key 생성·회전 응답은 멱등 캐시 대상에서 제외해 평문 자격 증명을 PostgreSQL에 남기지 않음
 
 TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장하며 `X-Forwarded-Proto: https`를 전달해야 합니다. Keycloak redirect URI는 wildcard가 아니라 callback 전체 경로로 제한하세요.

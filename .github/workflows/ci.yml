@@ -47,10 +47,10 @@ jobs:
         run: |
           go build -ldflags '-X main.version=ci' -o /tmp/umm-ci ./cmd/umm
           ./scripts/integration-smoke.sh
-      - name: Per-user review state integration
+      - name: Store integration regressions
         env:
           POSTGRES_DSN: postgres://postgres:umm-ci@127.0.0.1:5432/umm?sslmode=disable
-        run: go test ./internal/store -run TestTodayReviewStateIsIsolatedPerUserIntegration -count=1
+        run: go test ./internal/store -run 'Test.*Integration' -count=1
       - name: Backup and restore drill
         env:
           POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}

@@ -168,6 +168,8 @@ export function discardOfflineMutation(id?: string) {
   saveOfflineQueue(loadOfflineQueue().filter((item) => item.id !== id));
 }
 
+const retryableOfflineStatus = (status: number) => status === 408 || status === 425 || status === 429 || status >= 500;
+
 async function fetchAPI(path: string, requestOptions: RequestInit, retry: boolean): Promise<Response> {
   try {
     return await fetch(`/api/v1${path}`, { credentials: 'same-origin', ...requestOptions });
@@ -235,10 +237,22 @@ export async function flushOfflineQueue() {
         continue;
       }
       const payload = await response.json().catch(() => ({}));
+      if (response.status === 409) {
+        remaining.push(item);
+        window.dispatchEvent(new CustomEvent('umm:offline-conflict', { detail: { item, payload } }));
+        continue;
+      }
+      if (response.status === 401 || response.status === 403) {
+        remaining.push(item, ...queued.slice(index + 1));
+        break;
+      }
+      if (response.status >= 400 && response.status < 500 && !retryableOfflineStatus(response.status)) {
+        const reason = payload.detail || payload.error || `서버가 변경을 거부했습니다 (${response.status}).`;
+        showError(reason, '오프라인 변경을 적용하지 못했습니다', `offline:${item.id}:rejected`);
+        window.dispatchEvent(new CustomEvent('umm:offline-rejected', { detail: { item, payload, status: response.status } }));
+        continue;
+      }
       remaining.push(item);
-      if (response.status === 409) window.dispatchEvent(new CustomEvent('umm:offline-conflict', { detail: { item, payload } }));
-      if (response.status === 401 || response.status === 403) remaining.push(...queued.slice(index + 1));
-      if (response.status === 401 || response.status === 403) break;
     } catch {
       remaining.push(...queued.slice(index));
       break;

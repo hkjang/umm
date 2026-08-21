@@ -5,6 +5,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/store"
 )
 
 func TestOpaqueOffsetCursorRoundTripAndValidation(t *testing.T) {
@@ -86,5 +89,27 @@ func TestDecodeJSONRejectsTrailingValues(t *testing.T) {
 	}
 	if err := decodeJSON(response, request, &payload); err == nil {
 		t.Fatal("decodeJSON accepted a second JSON value")
+	}
+}
+
+func TestTodayDreamsAreRedactedWithoutDreamScope(t *testing.T) {
+	result := store.TodayReview{
+		Dreams: []store.ReviewDream{{ID: uuid.New(), Content: "scoped dream"}},
+		Counts: map[string]int{"dreams": 1, "review": 2},
+	}
+	redactTodayDreams(&result, false)
+	if len(result.Dreams) != 0 || result.Dreams == nil {
+		t.Fatalf("dreams were not redacted as an empty JSON array: %#v", result.Dreams)
+	}
+	if result.Counts["dreams"] != 0 || result.Counts["review"] != 2 {
+		t.Fatalf("unexpected redacted counts: %#v", result.Counts)
+	}
+}
+
+func TestTodayDreamsRemainWithDreamScope(t *testing.T) {
+	result := store.TodayReview{Dreams: []store.ReviewDream{{ID: uuid.New()}}, Counts: map[string]int{"dreams": 1}}
+	redactTodayDreams(&result, true)
+	if len(result.Dreams) != 1 || result.Counts["dreams"] != 1 {
+		t.Fatalf("authorized dreams were changed: %#v", result)
 	}
 }
