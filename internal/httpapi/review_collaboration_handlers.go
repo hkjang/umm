@@ -154,7 +154,7 @@ func (s *Server) noteBacklinks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"backlinks": links})
 }
 
-func mentionedUsernames(body string) []string {
+func mentionedUsernameTokens(body string) []string {
 	runes := []rune(body)
 	seen := map[string]bool{}
 	out := []string{}
@@ -163,10 +163,10 @@ func mentionedUsernames(body string) []string {
 			continue
 		}
 		end := index + 1
-		for end < len(runes) && !unicode.IsSpace(runes[end]) && !strings.ContainsRune("()[]{}<>", runes[end]) {
+		for end < len(runes) && !unicode.IsSpace(runes[end]) {
 			end++
 		}
-		name := strings.ToLower(strings.TrimRight(string(runes[index+1:end]), ".,;:!?…，。！？；："))
+		name := strings.ToLower(string(runes[index+1 : end]))
 		if name == "" {
 			continue
 		}
@@ -228,7 +228,7 @@ func (s *Server) createComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	comment, _, err := s.Store.CreateComment(r.Context(), p.User.ID, noteID, body.ParentID, body.Body, mentionedUsernames(body.Body))
+	comment, _, err := s.Store.CreateComment(r.Context(), p.User.ID, noteID, body.ParentID, body.Body, mentionedUsernameTokens(body.Body))
 	if err != nil {
 		status, message := commentCreateError(err)
 		if status >= http.StatusInternalServerError {

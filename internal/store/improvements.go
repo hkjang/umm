@@ -484,6 +484,8 @@ const commentSelect = `SELECT c.id,c.note_id,c.author_id,u.display_name,u.userna
 	COALESCE((SELECT array_agg(mu.username::text ORDER BY mu.username::text) FROM comment_mentions cm JOIN users mu ON mu.id=cm.user_id WHERE cm.comment_id=c.id),'{}'::text[]),
 	c.resolved_at,c.resolved_by,c.created_at,c.updated_at`
 
+const mentionTrailingSyntax = ".,;:!?…，。！？；：)]}>\"'”’"
+
 func (s *Store) ListComments(ctx context.Context, userID, noteID uuid.UUID) ([]Comment, error) {
 	var canView bool
 	err := s.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM notes n JOIN spaces sp ON sp.id=n.space_id LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$2 WHERE n.id=$1 AND n.deleted_at IS NULL AND (sp.owner_id=$2 OR sm.user_id=$2))`, noteID, userID).Scan(&canView)
@@ -506,7 +508,7 @@ func (s *Store) ListComments(ctx context.Context, userID, noteID uuid.UUID) ([]C
 	return out, rows.Err()
 }
 
-func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, parentID *uuid.UUID, body string, usernames []string) (Comment, uuid.UUID, error) {
+func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, parentID *uuid.UUID, body string, mentionTokens []string) (Comment, uuid.UUID, error) {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return Comment{}, uuid.Nil, err
@@ -537,8 +539,8 @@ func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, par
 	if err = tx.QueryRow(ctx, `INSERT INTO note_comments(note_id,author_id,parent_id,body) VALUES($1,$2,$3,$4) RETURNING id`, noteID, userID, parentID, body).Scan(&commentID); err != nil {
 		return Comment{}, uuid.Nil, err
 	}
-	clean := make([]string, 0, len(usernames))
-	for _, name := range usernames {
+	clean := make([]string, 0, len(mentionTokens))
+	for _, name := range mentionTokens {
 		name = strings.ToLower(strings.TrimSpace(name))
 		if name != "" {
 			clean = append(clean, name)
@@ -546,7 +548,22 @@ func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, par
 	}
 	mentioned := map[uuid.UUID]bool{}
 	if len(clean) > 0 {
-		rows, queryErr := tx.Query(ctx, `SELECT u.id FROM users u WHERE lower(u.username::text)=ANY($1::text[]) AND u.active AND EXISTS(SELECT 1 FROM spaces sp LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=u.id WHERE sp.id=$2 AND (sp.owner_id=u.id OR sm.user_id=u.id))`, clean, spaceID)
+		rows, queryErr := tx.Query(ctx, `
+			WITH mention_tokens AS (
+			  SELECT lower(token) AS token,ordinality
+			  FROM unnest($1::text[]) WITH ORDINALITY AS raw(token,ordinality)
+			), resolved AS (
+			  SELECT DISTINCT ON (mt.ordinality) u.id,mt.ordinality
+			  FROM mention_tokens mt JOIN users u ON
+			    char_length(lower(u.username::text))>0 AND
+			    left(mt.token,char_length(lower(u.username::text)))=lower(u.username::text) AND
+			    translate(substr(mt.token,char_length(lower(u.username::text))+1), $3, '')=''
+			  WHERE u.active AND EXISTS(
+			    SELECT 1 FROM spaces sp LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=u.id
+			    WHERE sp.id=$2 AND (sp.owner_id=u.id OR sm.user_id=u.id))
+			  ORDER BY mt.ordinality,char_length(lower(u.username::text)) DESC,u.id
+			)
+			SELECT id FROM resolved ORDER BY ordinality`, clean, spaceID, mentionTrailingSyntax)
 		if queryErr != nil {
 			return Comment{}, uuid.Nil, queryErr
 		}
@@ -557,7 +574,8 @@ func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, par
 				rows.Close()
 				return Comment{}, uuid.Nil, err
 			}
-			if target != userID {
+			if target != userID && !mentioned[target] {
+				mentioned[target] = true
 				targets = append(targets, target)
 			}
 		}
@@ -567,7 +585,6 @@ func (s *Store) CreateComment(ctx context.Context, userID, noteID uuid.UUID, par
 		}
 		rows.Close()
 		for _, target := range targets {
-			mentioned[target] = true
 			if _, err = tx.Exec(ctx, `INSERT INTO comment_mentions(comment_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, commentID, target); err != nil {
 				return Comment{}, uuid.Nil, err
 			}

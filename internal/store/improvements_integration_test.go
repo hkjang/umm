@@ -228,6 +228,66 @@ func TestCreateCommentDoesNotNotifyRemovedNoteAuthorIntegration(t *testing.T) {
 	}
 }
 
+func TestCreateCommentResolvesLongestPunctuationUsernameIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx := context.Background()
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+
+	ownerID, bangID, plainBangID := uuid.New(), uuid.New(), uuid.New()
+	dotID, plainDotID, spaceID, noteID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	ownerName := "mention_owner_" + suffix
+	plainBangName, bangName := "ops"+suffix, "ops"+suffix+"!"
+	plainDotName, dotName := "alice"+suffix, "alice"+suffix+"."
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO users(id,username,display_name) VALUES
+		($1,$2::citext,$2::text),($3,$4::citext,$4::text),($5,$6::citext,$6::text),
+		($7,$8::citext,$8::text),($9,$10::citext,$10::text)`,
+		ownerID, ownerName, bangID, bangName, plainBangID, plainBangName,
+		dotID, dotName, plainDotID, plainDotName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'punctuation mentions')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO space_members(space_id,user_id,permission) VALUES($1,$2,'view'),($1,$3,'view'),($1,$4,'view'),($1,$5,'view')`, spaceID, bangID, plainBangID, dotID, plainDotID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO notes(id,space_id,author_id,content) VALUES($1,$2,$3,'punctuation mention target')`, noteID, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(ctx, `DELETE FROM users WHERE id=ANY($1::uuid[])`, []uuid.UUID{ownerID, bangID, plainBangID, dotID, plainDotID})
+
+	comment, _, err := db.CreateComment(ctx, ownerID, noteID, nil,
+		"확인 @"+bangName+" 그리고 @"+dotName+", 부탁합니다.",
+		[]string{bangName, dotName + ","})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, username := range comment.Mentions {
+		got[username] = true
+	}
+	if len(comment.Mentions) != 2 || !got[bangName] || !got[dotName] || got[plainBangName] || got[plainDotName] {
+		t.Fatalf("longest punctuation usernames were not selected: %#v", comment.Mentions)
+	}
+}
+
 func TestTodayReviewExcludesActivityFromDeletedNotesIntegration(t *testing.T) {
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {

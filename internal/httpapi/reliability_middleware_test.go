@@ -30,18 +30,26 @@ func TestOpaqueOffsetCursorRoundTripAndValidation(t *testing.T) {
 }
 
 func TestMentionParsingDeduplicatesCaseInsensitively(t *testing.T) {
-	got := mentionedUsernames("@Alice 확인 부탁해요. (@bob) @ALICE email@example.com")
-	want := []string{"alice", "bob"}
+	got := mentionedUsernameTokens("@Alice 확인 부탁해요. (@bob) @ALICE email@example.com")
+	want := []string{"alice", "bob)"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("mentions = %#v, want %#v", got, want)
 	}
 }
 
 func TestMentionParsingSupportsOIDCAndUnicodeUsernames(t *testing.T) {
-	got := mentionedUsernames("@alice@example.com, 확인해 주세요. (@김민수) @δοκιμή+team")
-	want := []string{"alice@example.com", "김민수", "δοκιμή+team"}
+	got := mentionedUsernameTokens("@alice@example.com, 확인해 주세요. (@김민수) @δοκιμή+team")
+	want := []string{"alice@example.com,", "김민수)", "δοκιμή+team"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("mentions = %#v, want %#v", got, want)
+	}
+}
+
+func TestMentionParsingPreservesUsernamePunctuation(t *testing.T) {
+	got := mentionedUsernameTokens("@ops! @alice., @normal,")
+	want := []string{"ops!", "alice.,", "normal,"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("mention tokens = %#v, want %#v", got, want)
 	}
 }
 
