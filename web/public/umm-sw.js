@@ -2,7 +2,9 @@ const CACHE = 'umm-shell-v0.8.1';
 const BUILD_MANIFEST = '/asset-manifest.json';
 const SHELL = ['/', '/manifest.webmanifest'];
 
-const assetURL = (path) => path.startsWith('/') ? path : `/${path}`;
+const assetURL = (path) => (path.startsWith('/') ? path : `/${path}`);
+const isHTMLShell = (response) =>
+  response.ok && (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase() === 'text/html';
 
 async function precacheShell() {
   const cache = await caches.open(CACHE);
@@ -27,22 +29,56 @@ self.addEventListener('install', (event) => {
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith('umm-shell-') && key !== CACHE).map((key) => caches.delete(key)))));
+  event.waitUntil(
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(
+          keys.filter((key) => key.startsWith('umm-shell-') && key !== CACHE).map((key) => caches.delete(key)),
+        ),
+      ),
+  );
 });
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
-  if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/') || url.pathname === '/mcp') return;
+  if (
+    request.method !== 'GET' ||
+    url.origin !== self.location.origin ||
+    url.pathname.startsWith('/api/') ||
+    url.pathname === '/mcp'
+  )
+    return;
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).then((response) => {
-      if (response.ok) caches.open(CACHE).then((cache) => cache.put('/', response.clone()));
-      return response;
-    }).catch(() => caches.match('/', { ignoreVary: true })));
+    event.respondWith(
+      (async () => {
+        try {
+          const response = await fetch(request);
+          // A direct navigation to a manifest, build manifest, or SVG also has
+          // mode=navigate. Only an HTML response is allowed to replace the app
+          // shell used for later offline navigations.
+          if (isHTMLShell(response)) {
+            const cache = await caches.open(CACHE);
+            await cache.put('/', response.clone());
+          }
+          return response;
+        } catch {
+          return caches.match('/', { ignoreVary: true });
+        }
+      })(),
+    );
     return;
   }
-  event.respondWith(caches.match(request, { ignoreVary: true }).then((cached) => cached || fetch(request).then((response) => {
-    if (response.ok && /\.(?:js|css|woff2?|png|svg)$/.test(url.pathname)) caches.open(CACHE).then((cache) => cache.put(request, response.clone()));
-    return response;
-  })));
+  event.respondWith(
+    caches.match(request, { ignoreVary: true }).then(
+      (cached) =>
+        cached ||
+        fetch(request).then((response) => {
+          if (response.ok && /\.(?:js|css|woff2?|png|svg)$/.test(url.pathname))
+            caches.open(CACHE).then((cache) => cache.put(request, response.clone()));
+          return response;
+        }),
+    ),
+  );
 });

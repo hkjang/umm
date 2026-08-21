@@ -77,7 +77,7 @@
 ### 2. 낙관적 동시성 제어 (Optimistic Concurrency Control)
 - 각 생각 노드는 단조 증가하는 `version` 번호를 가집니다.
 - 다중 사용자가 동시에 작업하더라도 버전 충돌을 감지하고 409 Problem Details에 최신 서버 메모를 포함합니다. 브라우저는 내 변경과 서버 변경을 나란히 보여 주고 선택·병합한 뒤 새 버전으로 저장합니다.
-- 오프라인 변경은 PWA local queue에 멱등 키와 함께 보관됩니다. 재연결 시 안전한 순서로 replay하고 같은 메모의 연속 PUT은 마지막 상태로 합칩니다.
+- 오프라인 변경은 PWA local queue에 멱등 키와 함께 보관됩니다. 재연결 시 안전한 순서로 replay하고 같은 메모의 연속 PUT은 마지막 상태로 합칩니다. 서비스 워커의 `/` 앱 셸 캐시는 성공한 `text/html` 탐색 응답만 갱신하므로 manifest·asset JSON·SVG를 주소창에서 직접 열어도 오프라인 셸이 비-HTML 응답으로 바뀌지 않습니다.
 
 ### 3. 분산 큐 & DB 트랜잭션 (SKIP LOCKED)
 - 외부 메시지 브로커(RabbitMQ, Redis 등) 없이 PostgreSQL의 `FOR UPDATE SKIP LOCKED`를 활용하여 Dream 백그라운드 작업을 분산 워커 간 중복 없이 안전하게 임대(Lease) 처리합니다.
