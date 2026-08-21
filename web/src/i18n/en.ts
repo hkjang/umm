@@ -49,6 +49,9 @@ export const en: Dictionary = {
   '오프라인 보관함에 저장했습니다. 연결되면 자동으로 다시 시도합니다.':
     'Saved to the offline queue. It will be retried automatically once you are back online.',
   '오프라인 저장': 'Saved offline',
+  '오프라인 변경을 브라우저에 안전하게 저장하지 못했습니다. 저장 공간과 사이트 권한을 확인한 뒤 다시 시도해 주세요.':
+    'Could not safely store the offline change in this browser. Check storage space and site permissions, then try again.',
+  '오프라인 저장 실패': 'Offline storage failed',
   '서버에 연결할 수 없습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.':
     'Could not reach the server. Check your connection and try again.',
   '연결 오류': 'Connection error',

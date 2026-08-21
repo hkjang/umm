@@ -13,6 +13,9 @@ import { commentMutationForbiddenProblem } from './offline-queue';
 
 const jsonResponse = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+const throwStorageDenied = () => {
+  throw new DOMException('storage denied', 'SecurityError');
+};
 
 describe('problemMessage', () => {
   beforeEach(() => setLocale('en'));
@@ -37,9 +40,9 @@ describe('problemMessage', () => {
 
 describe('offline queue', () => {
   beforeEach(async () => {
+    vi.restoreAllMocks();
     localStorage.clear();
     await setOfflineQueueOwner('user-1');
-    vi.restoreAllMocks();
   });
 
   it('queues a mutation when the network is unreachable', async () => {
@@ -51,6 +54,81 @@ describe('offline queue', () => {
       api('/spaces/s1/notes', { method: 'POST', body: '{"content":"x"}', queueIfOffline: true, silent: true }),
     ).rejects.toBeInstanceOf(APIError);
     expect(offlineQueueCount()).toBe(1);
+  });
+
+  it('reports a non-durable mutation when browser quota rejects the queue write', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('network down'))),
+    );
+    const nativeSetItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (key === 'umm:offline-mutations:v1:user-1') throw new DOMException('quota exceeded', 'QuotaExceededError');
+      return nativeSetItem.call(this, key, value);
+    });
+    const notices: Array<{ tone: string; title: string; message: string }> = [];
+    const onNotice = (event: Event) => notices.push((event as CustomEvent).detail);
+    window.addEventListener('umm:notice', onNotice);
+
+    await expect(
+      api('/notes/n1', {
+        method: 'PUT',
+        body: '{"content":"not durable"}',
+        queueIfOffline: true,
+        retry: false,
+      }),
+    ).rejects.toMatchObject({
+      status: 0,
+      queued: false,
+      payload: { type: 'offline-storage-unavailable' },
+    });
+    window.removeEventListener('umm:notice', onNotice);
+    expect(offlineQueueCount()).toBe(0);
+    expect(notices.at(-1)).toMatchObject({ tone: 'error', title: '오프라인 저장 실패' });
+    expect(notices.at(-1)?.message).toContain('안전하게 저장하지 못했습니다');
+  });
+
+  it('keeps owner bootstrap and queue status safe when browser storage is denied', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(throwStorageDenied);
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(throwStorageDenied);
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(throwStorageDenied);
+
+    expect(() => offlineQueueCount()).not.toThrow();
+    expect(offlineQueueCount()).toBe(0);
+    await expect(setOfflineQueueOwner('user-2')).resolves.toBeUndefined();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('network down'))),
+    );
+    await expect(
+      api('/notes/n2', {
+        method: 'PUT',
+        body: '{"content":"blocked storage"}',
+        queueIfOffline: true,
+        retry: false,
+        silent: true,
+      }),
+    ).rejects.toMatchObject({ payload: { type: 'offline-storage-unavailable' }, queued: false });
+  });
+
+  it('does not replace a corrupt queue with an apparently empty queue', async () => {
+    const storageKey = 'umm:offline-mutations:v1:user-1';
+    localStorage.setItem(storageKey, '{not-json');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('network down'))),
+    );
+
+    await expect(
+      api('/notes/n3', {
+        method: 'PUT',
+        body: '{"content":"preserve corrupt storage"}',
+        queueIfOffline: true,
+        retry: false,
+        silent: true,
+      }),
+    ).rejects.toMatchObject({ payload: { type: 'offline-storage-unavailable' }, queued: false });
+    expect(localStorage.getItem(storageKey)).toBe('{not-json');
   });
 
   // Two people signing in on one browser must not inherit each other's pending

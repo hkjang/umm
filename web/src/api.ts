@@ -126,21 +126,74 @@ const offlineKey = 'umm:offline-mutations:v1';
 const offlineOwnerKey = 'umm:offline-owner:v1';
 const mutationMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const requestID = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-const queueStorageKey = () => `${offlineKey}:${localStorage.getItem(offlineOwnerKey) || 'anonymous'}`;
+type StorageRead = { available: true; value: string | null } | { available: false; value: null };
+type QueueRead = { available: boolean; items: OfflineMutation[] };
+type OfflineEnqueueResult = 'queued' | 'full' | 'unavailable';
 
-function loadOfflineQueue(storageKey = queueStorageKey()): OfflineMutation[] {
+function readStorage(key: string): StorageRead {
   try {
-    const value = JSON.parse(localStorage.getItem(storageKey) || '[]');
-    return Array.isArray(value) ? value : [];
+    return { available: true, value: window.localStorage.getItem(key) };
   } catch {
-    return [];
+    return { available: false, value: null };
   }
 }
 
-function saveOfflineQueue(items: OfflineMutation[], storageKey = queueStorageKey()) {
-  localStorage.setItem(storageKey, JSON.stringify(items));
+function writeStorage(key: string, value: string): boolean {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeStorage(key: string): boolean {
+  try {
+    window.localStorage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The in-memory owner keeps this tab stable when a sandboxed/private browser
+// refuses storage access. Before authentication resolves, a persisted owner is
+// used when it can be read safely.
+let activeOfflineOwner: string | undefined;
+let offlineOwnerResolved = false;
+function resolveOfflineOwner(): string | undefined {
+  if (!offlineOwnerResolved) {
+    const stored = readStorage(offlineOwnerKey);
+    if (stored.available) {
+      activeOfflineOwner = stored.value || undefined;
+      offlineOwnerResolved = true;
+    }
+  }
+  return activeOfflineOwner;
+}
+const queueStorageKey = () => `${offlineKey}:${resolveOfflineOwner() || 'anonymous'}`;
+
+function readOfflineQueue(storageKey = queueStorageKey()): QueueRead {
+  const stored = readStorage(storageKey);
+  if (!stored.available) return { available: false, items: [] };
+  try {
+    const value = JSON.parse(stored.value || '[]');
+    return Array.isArray(value) ? { available: true, items: value } : { available: false, items: [] };
+  } catch {
+    // Do not overwrite an unreadable queue with an apparently empty one.
+    return { available: false, items: [] };
+  }
+}
+
+function loadOfflineQueue(storageKey = queueStorageKey()): OfflineMutation[] {
+  return readOfflineQueue(storageKey).items;
+}
+
+function saveOfflineQueue(items: OfflineMutation[], storageKey = queueStorageKey()): boolean {
+  if (!writeStorage(storageKey, JSON.stringify(items))) return false;
   const count = storageKey === queueStorageKey() ? items.length : offlineQueueCount();
   window.dispatchEvent(new CustomEvent('umm:offline-queue', { detail: { count } }));
+  return true;
 }
 
 async function withOfflineQueueLock<T>(storageKey: string, operation: () => T | Promise<T>): Promise<T> {
@@ -149,6 +202,8 @@ async function withOfflineQueueLock<T>(storageKey: string, operation: () => T | 
 }
 
 export async function setOfflineQueueOwner(userId?: string) {
+  activeOfflineOwner = userId;
+  offlineOwnerResolved = true;
   if (userId) {
     const target = `${offlineKey}:${userId}`;
     // Current tabs use the target lock for queue writes. The legacy lock also
@@ -156,31 +211,35 @@ export async function setOfflineQueueOwner(userId?: string) {
     // reconciled with late writes from an older app before legacy is removed.
     await withOfflineQueueLock(offlineKey, () =>
       withOfflineQueueLock(target, () => {
-        const legacy = loadOfflineQueue(offlineKey);
-        if (legacy.length > 0) {
-          localStorage.setItem(target, JSON.stringify(mergeOfflineQueues(loadOfflineQueue(target), legacy)));
+        const legacy = readOfflineQueue(offlineKey);
+        const account = readOfflineQueue(target);
+        if (legacy.available && account.available) {
+          const migrated =
+            legacy.items.length === 0 ||
+            writeStorage(target, JSON.stringify(mergeOfflineQueues(account.items, legacy.items)));
+          if (migrated) removeStorage(offlineKey);
         }
-        localStorage.removeItem(offlineKey);
-        localStorage.setItem(offlineOwnerKey, userId);
+        writeStorage(offlineOwnerKey, userId);
       }),
     );
   } else {
-    await withOfflineQueueLock(offlineKey, () => localStorage.removeItem(offlineOwnerKey));
+    await withOfflineQueueLock(offlineKey, () => removeStorage(offlineOwnerKey));
   }
   window.dispatchEvent(new CustomEvent('umm:offline-queue', { detail: { count: offlineQueueCount() } }));
 }
 
-async function enqueueOffline(item: OfflineMutation) {
+async function enqueueOffline(item: OfflineMutation): Promise<OfflineEnqueueResult> {
   const storageKey = queueStorageKey();
   return withOfflineQueueLock(storageKey, () => {
-    let items = loadOfflineQueue(storageKey);
+    const current = readOfflineQueue(storageKey);
+    if (!current.available) return 'unavailable';
+    let items = current.items;
     if (item.method === 'PUT' || item.method === 'PATCH') {
       items = items.filter((queued) => !(queued.path === item.path && queued.method === item.method));
     }
-    if (items.length >= 100) return false;
+    if (items.length >= 100) return 'full';
     items.push(item);
-    saveOfflineQueue(items, storageKey);
-    return true;
+    return saveOfflineQueue(items, storageKey) ? 'queued' : 'unavailable';
   });
 }
 
@@ -190,8 +249,10 @@ export async function discardOfflineMutation(id?: string) {
   if (!id) return;
   const storageKey = queueStorageKey();
   await withOfflineQueueLock(storageKey, () => {
+    const current = readOfflineQueue(storageKey);
+    if (!current.available) return;
     saveOfflineQueue(
-      loadOfflineQueue(storageKey).filter((item) => item.id !== id),
+      current.items.filter((item) => item.id !== id),
       storageKey,
     );
   });
@@ -267,20 +328,38 @@ export async function api<T>(path: string, options: APIOptions = {}): Promise<T>
         const value = headers.get(name);
         if (value) safeHeaders[name] = value;
       }
-      const queued = await enqueueOffline({
-        id: requestID(),
-        path,
-        method,
-        body: requestOptions.body as string | undefined,
-        headers: safeHeaders,
-        createdAt: new Date().toISOString(),
-      });
-      if (!queued) {
+      let queueResult: OfflineEnqueueResult = 'unavailable';
+      try {
+        queueResult = await enqueueOffline({
+          id: requestID(),
+          path,
+          method,
+          body: requestOptions.body as string | undefined,
+          headers: safeHeaders,
+          createdAt: new Date().toISOString(),
+        });
+      } catch {
+        // Web Locks or browser storage can be denied independently. In either
+        // case the optimistic mutation is not durable and must not be reported
+        // as queued.
+      }
+      if (queueResult !== 'queued') {
+        const storageUnavailable = queueResult === 'unavailable';
         const error = new APIError(
           0,
-          translate('오프라인 보관함이 100개로 가득 찼습니다. 연결 후 동기화를 완료하고 다시 시도해 주세요.'),
+          storageUnavailable
+            ? translate(
+                '오프라인 변경을 브라우저에 안전하게 저장하지 못했습니다. 저장 공간과 사이트 권한을 확인한 뒤 다시 시도해 주세요.',
+              )
+            : translate('오프라인 보관함이 100개로 가득 찼습니다. 연결 후 동기화를 완료하고 다시 시도해 주세요.'),
+          { type: storageUnavailable ? 'offline-storage-unavailable' : 'offline-queue-full' },
         );
-        if (!silent) showError(error.message, translate('오프라인 보관함 가득 참'), `api:${path}:queue-full`);
+        if (!silent)
+          showError(
+            error.message,
+            translate(storageUnavailable ? '오프라인 저장 실패' : '오프라인 보관함 가득 참'),
+            `api:${path}:${storageUnavailable ? 'queue-unavailable' : 'queue-full'}`,
+          );
         throw error;
       }
       const error = new APIError(
@@ -339,7 +418,9 @@ export function flushOfflineQueue(): Promise<FlushResult> {
 
 async function runFlush(): Promise<FlushResult> {
   const storageKey = queueStorageKey();
-  const queued = await withOfflineQueueLock(storageKey, () => loadOfflineQueue(storageKey));
+  const snapshot = await withOfflineQueueLock(storageKey, () => readOfflineQueue(storageKey));
+  if (!snapshot.available) return { synced: 0, remaining: 0 };
+  const queued = snapshot.items;
   if (queued.length === 0 || !navigator.onLine) return { synced: 0, remaining: queued.length };
   const remaining: OfflineMutation[] = [];
   let synced = 0;
@@ -396,14 +477,26 @@ async function runFlush(): Promise<FlushResult> {
       break;
     }
   }
-  const reconciled = await withOfflineQueueLock(storageKey, () => {
-    const next = reconcileOfflineQueue(queued, remaining, loadOfflineQueue(storageKey));
-    saveOfflineQueue(next, storageKey);
-    return next;
+  const persistence = await withOfflineQueueLock(storageKey, () => {
+    const current = readOfflineQueue(storageKey);
+    if (!current.available) return { saved: false, items: queued };
+    const next = reconcileOfflineQueue(queued, remaining, current.items);
+    if (!saveOfflineQueue(next, storageKey)) return { saved: false, items: current.items };
+    return { saved: true, items: next };
   });
+  const reconciled = persistence.items;
+  if (!persistence.saved) {
+    showError(
+      translate(
+        '오프라인 변경을 브라우저에 안전하게 저장하지 못했습니다. 저장 공간과 사이트 권한을 확인한 뒤 다시 시도해 주세요.',
+      ),
+      translate('오프라인 저장 실패'),
+      'offline:queue-unavailable',
+    );
+  }
   const snapshotIDs = new Set(queued.map((item) => item.id));
   const addedDuringFlush = reconciled.some((item) => !snapshotIDs.has(item.id));
-  if (navigator.onLine && reconciled.length > 0) {
+  if (persistence.saved && navigator.onLine && reconciled.length > 0) {
     if (retryAfterSeconds > 0) scheduleOfflineRetry(retryAfterSeconds);
     else if (addedDuringFlush) scheduleOfflineRetry(1);
   }

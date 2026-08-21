@@ -129,7 +129,7 @@ Canvas의 메모·연결·댓글 생성/수정/삭제 요청에 8~128자의 `Ide
 
 오류 본문은 `application/problem+json`이며 `type`, `title`, `status`, `detail`을 제공합니다. 기존 클라이언트를 위해 `error`도 같은 설명을 유지합니다. 접근 가능한 메모의 version 충돌만 409와 `clientVersion`, 최신 서버 `latest` 메모를 반환합니다. 메모가 삭제되었거나 공간 접근 권한을 잃은 경우에는 404로 종료합니다.
 
-브라우저 오프라인 queue는 409 충돌과 408·425·429·5xx처럼 다시 시도할 수 있는 응답만 보존하고 일시 오류는 `Retry-After` 또는 기본 5초 뒤 자동 재시도합니다. 400·404 등 영구적인 client 오류는 사용자에게 사유를 알린 뒤 queue에서 제거해 무한 재시도를 막습니다. 메모를 볼 수는 있지만 공간 권한이 `edit`에서 `view`로 낮아진 `note-read-only`, 더는 댓글을 바꿀 수 없는 `comment-mutation-forbidden` 403은 일반 인증/권한 403과 구분해 해당 변경만 제거하고 이후 항목을 계속 동기화합니다. flush 도중 다른 탭이나 새 편집이 추가한 항목은 최신 queue와 ID 단위로 병합하고 탭 간 Web Lock으로 저장을 직렬화해 진행 중이던 snapshot이 덮어쓰지 않습니다.
+브라우저 오프라인 queue는 409 충돌과 408·425·429·5xx처럼 다시 시도할 수 있는 응답만 보존하고 일시 오류는 `Retry-After` 또는 기본 5초 뒤 자동 재시도합니다. 400·404 등 영구적인 client 오류는 사용자에게 사유를 알린 뒤 queue에서 제거해 무한 재시도를 막습니다. 메모를 볼 수는 있지만 공간 권한이 `edit`에서 `view`로 낮아진 `note-read-only`, 더는 댓글을 바꿀 수 없는 `comment-mutation-forbidden` 403은 일반 인증/권한 403과 구분해 해당 변경만 제거하고 이후 항목을 계속 동기화합니다. flush 도중 다른 탭이나 새 편집이 추가한 항목은 최신 queue와 ID 단위로 병합하고 탭 간 Web Lock으로 저장을 직렬화해 진행 중이던 snapshot이 덮어쓰지 않습니다. 브라우저가 quota 초과나 사이트 권한으로 `localStorage` 쓰기를 거부하면 `offline-storage-unavailable` 오류로 종료하고 `queued=true`를 반환하지 않습니다. 읽기 또는 삭제도 예외 경계 안에서 처리해 인증 bootstrap과 queue count 렌더링을 유지하며, 읽을 수 없거나 손상된 기존 queue를 빈 queue로 덮어쓰지 않습니다.
 
 ### ⚡ 실시간 이벤트 스트림 (SSE)
 - **경로**: `GET /api/v1/spaces/{spaceID}/events`
