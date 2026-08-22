@@ -983,13 +983,43 @@ components:
     EdgeWrite:
       type: object
       required: [source, target]
-      properties: { source: { type: string, format: uuid }, target: { type: string, format: uuid }, relation: { type: string, default: related } }
+      properties:
+        source: { type: string, format: uuid }
+        target: { type: string, format: uuid }
+        relation:
+          type: string
+          default: related
+          enum: [related, supports, contradicts, refines, expands, follows]
+          description: |
+            What the connection asserts. Omit it for a line that says only "these
+            belong together". A value outside the vocabulary is rejected with 400
+            and an allowedRelations list rather than being rewritten, so a
+            connection is never recorded that the caller did not describe.
+            Provenance is not a request field: see Edge.origin.
     Edge:
       allOf:
         - { $ref: '#/components/schemas/EdgeWrite' }
         - type: object
-          required: [id, spaceId]
-          properties: { id: { type: string, format: uuid }, spaceId: { type: string, format: uuid } }
+          required: [id, spaceId, origin]
+          properties:
+            id: { type: string, format: uuid }
+            spaceId: { type: string, format: uuid }
+            origin:
+              type: string
+              enum: [manual, agent, dream, development, import, auto]
+              description: |
+                Who made the connection, set by the server and never accepted from
+                a request body. manual is a line drawn through the web interface,
+                agent one asserted through MCP, dream and development ones written
+                when a Dream is accepted or developed, import one created while
+                importing a document, and auto one umm inferred on its own.
+            confidence:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: |
+                Present only when origin is auto. A person drawing a line is not
+                expressing a probability, so it is absent for every other origin.
     Backlink:
       type: object
       required: [edge, note, direction]

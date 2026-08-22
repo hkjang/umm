@@ -76,6 +76,7 @@ import {
   type NoteComment,
   type Preferences,
   type Space,
+  type EdgeRelation,
   type ThoughtEdge,
   type ThoughtNote,
 } from '../api';
@@ -85,6 +86,7 @@ import { msg, useTranslation } from '../i18n';
 import ImportThoughtsModal from '../components/ImportThoughtsModal';
 import { readLocalStorage, readSessionStorage, writeLocalStorage, writeSessionStorage } from '../lib/browser-storage';
 import { importLayout, type ImportedThought, type ImportThoughtsResult } from '../lib/markdown-import';
+import { originLabel, relationLabel, relationOptions } from '../lib/edge-vocabulary';
 import { restoreAfterFailedWrite } from '../lib/optimistic-write';
 import { showError, showInfo, showSuccess } from '../ui-notifications';
 
@@ -178,6 +180,13 @@ function CanvasInner() {
   const [query, setQuery] = useState('');
   const [capture, setCapture] = useState('');
   const [loading, setLoading] = useState(true);
+  // What a line drawn from here on will assert. Kept in the toolbar rather than
+  // asked for after each drag: someone marking up contradictions draws several
+  // in a row, and a dialog per line would make that unbearable.
+  const [drawRelation, setDrawRelation] = useState<EdgeRelation>(() => {
+    const stored = readLocalStorage('umm:draw-relation').value;
+    return relationOptions.includes(stored as EdgeRelation) ? (stored as EdgeRelation) : 'related';
+  });
   const [edgeStyle, setEdgeStyle] = useState<EdgeStyle>(() => {
     const stored = readLocalStorage('umm:edge-style').value;
     return stored === 'smoothstep' || stored === 'straight' ? stored : 'bezier';
@@ -563,8 +572,12 @@ function CanvasInner() {
           source: e.source,
           target: e.target,
           type: edgeStyle,
-          animated: e.relation === 'dreamed',
-          label: e.relation === 'related' ? undefined : e.relation,
+          // Animation marks where a connection came from, not what it means: a
+          // line umm produced should be visibly different from one drawn by hand.
+          animated: e.origin === 'dream' || e.origin === 'auto',
+          // The generic relation adds nothing to a drawn line, so it stays
+          // unlabelled; everything else states what it claims.
+          label: e.relation === 'related' ? undefined : relationLabel(e.relation),
         })),
     );
   }, [edgeStyle, rawEdges, searchMatches]);
@@ -677,7 +690,7 @@ function CanvasInner() {
       if (!connection.source || !connection.target) return;
       try {
         const created = await api<ThoughtEdge>(`/spaces/${activeSpace}/edges`, {
-          ...json('POST', { source: connection.source, target: connection.target, relation: 'related' }),
+          ...json('POST', { source: connection.source, target: connection.target, relation: drawRelation }),
           queueIfOffline: true,
         });
         setRawEdges((all) => [...all, created]);
@@ -690,7 +703,7 @@ function CanvasInner() {
         throw error;
       }
     },
-    [activeSpace, edgeStyle],
+    [activeSpace, edgeStyle, drawRelation],
   );
   const onDragStart: OnNodeDrag<Node<PostItData>> = (_, node) => {
     dragStart.current[node.id] = { ...node.position };
@@ -1276,6 +1289,24 @@ function CanvasInner() {
             variant="filled"
           />
           <Group className="canvas-toolbar-actions" gap={2} wrap="nowrap">
+            <Tooltip label={t('새로 그리는 연결의 종류')}>
+              <Select
+                className="canvas-relation-select"
+                size="xs"
+                w={116}
+                withCheckIcon={false}
+                allowDeselect={false}
+                comboboxProps={{ withinPortal: true }}
+                aria-label={t('새로 그리는 연결의 종류')}
+                value={drawRelation}
+                onChange={(value) => {
+                  if (!value) return;
+                  setDrawRelation(value as EdgeRelation);
+                  writeLocalStorage('umm:draw-relation', value);
+                }}
+                data={relationOptions.map((relation) => ({ value: relation, label: relationLabel(relation) }))}
+              />
+            </Tooltip>
             <Tooltip label={listView ? t('공간 캔버스 보기') : t('접근 가능한 선형 목록')}>
               <ActionIcon
                 className="canvas-action"
@@ -1583,7 +1614,8 @@ function CanvasInner() {
                     </Text>
                     <Text size="xs" c="dimmed" ta="left">
                       {item.direction === 'incoming' ? t('이 생각을 가리킴') : t('이 생각이 가리킴')} ·{' '}
-                      {item.edge.relation}
+                      {relationLabel(item.edge.relation)}
+                      {item.edge.origin !== 'manual' && ` · ${originLabel(item.edge.origin)}`}
                     </Text>
                   </button>
                 ))}

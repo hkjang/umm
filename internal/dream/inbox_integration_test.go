@@ -639,7 +639,7 @@ func TestDreamInboxAcceptanceIntegration(t *testing.T) {
 		t.Fatalf("Dream was not staged with structured content: note=%v content=%q rationale=%q", stagedNoteID, stagedContent, rationale)
 	}
 	var preAcceptEdges int
-	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM note_edges WHERE relation='dreamed' AND space_id=$1`, space.ID).Scan(&preAcceptEdges); err != nil || preAcceptEdges != 0 {
+	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM note_edges WHERE origin='dream' AND space_id=$1`, space.ID).Scan(&preAcceptEdges); err != nil || preAcceptEdges != 0 {
 		t.Fatalf("staged Dream changed the canvas: edges=%d err=%v", preAcceptEdges, err)
 	}
 	type acceptResult struct {
@@ -671,7 +671,7 @@ func TestDreamInboxAcceptanceIntegration(t *testing.T) {
 	if err = db.Pool.QueryRow(ctx, `SELECT status FROM dream_notes WHERE dream_id=$1`, dreamID).Scan(&status); err != nil || status != "kept" {
 		t.Fatalf("Dream status was not kept: status=%q err=%v", status, err)
 	}
-	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM note_edges WHERE target_note_id=$1 AND relation='dreamed'`, accepted.ID).Scan(&edgeCount); err != nil || edgeCount != 2 {
+	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM note_edges WHERE target_note_id=$1 AND origin='dream'`, accepted.ID).Scan(&edgeCount); err != nil || edgeCount != 2 {
 		t.Fatalf("only the two cited source edges should be materialized: count=%d err=%v", edgeCount, err)
 	}
 	type developmentResult struct {
@@ -694,10 +694,11 @@ func TestDreamInboxAcceptanceIntegration(t *testing.T) {
 	if developedFirst.value.Created == developedSecond.value.Created {
 		t.Fatalf("exactly one development request should create data: first=%t second=%t", developedFirst.value.Created, developedSecond.value.Created)
 	}
-	if developedFirst.value.Note.Source != "dream" || developedFirst.value.Edge.SourceID != accepted.ID || developedFirst.value.Edge.TargetID != developedFirst.value.Note.ID || developedFirst.value.Edge.Relation != "expanded" {
+	if developedFirst.value.Note.Source != "dream" || developedFirst.value.Edge.SourceID != accepted.ID || developedFirst.value.Edge.TargetID != developedFirst.value.Note.ID || developedFirst.value.Edge.Relation != store.RelationExpands ||
+		developedFirst.value.Edge.Origin != store.OriginDevelopment {
 		t.Fatalf("unexpected developed note or edge: %#v", developedFirst.value)
 	}
-	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM note_edges WHERE source_note_id=$1 AND target_note_id=$2 AND relation='expanded'`, accepted.ID, developedFirst.value.Note.ID).Scan(&edgeCount); err != nil || edgeCount != 1 {
+	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM note_edges WHERE source_note_id=$1 AND target_note_id=$2 AND relation='expands' AND origin='development'`, accepted.ID, developedFirst.value.Note.ID).Scan(&edgeCount); err != nil || edgeCount != 1 {
 		t.Fatalf("developed note and edge were not saved atomically once: count=%d err=%v", edgeCount, err)
 	}
 	_ = service.Feedback(ctx, userID, dreamID, "kept")

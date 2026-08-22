@@ -58,6 +58,13 @@ jobs:
           POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
           POSTGRES_USER: postgres
         run: ./scripts/migrate-dry-run.sh
+      # The dry run covers an empty schema. This drives migration 010 over real
+      # edge data, where a rollback could otherwise lose someone's connections.
+      - name: Memory graph migration drill
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          POSTGRES_USER: postgres
+        run: ./scripts/graph-migration-drill.sh
       - name: Build server
         run: go build -ldflags '-X main.version=ci' -o /tmp/umm-ci ./cmd/umm
       - name: PostgreSQL integration smoke

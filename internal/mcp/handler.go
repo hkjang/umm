@@ -125,7 +125,7 @@ func (h *Handler) validOrigin(r *http.Request, origin string) bool {
 
 func toolDefinitions() []map[string]any {
 	return []map[string]any{
-		{"name": "connect_notes", "title": "Connect thoughts", "description": "Connect two notes in the same space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "source_note_id": str("Source note UUID"), "target_note_id": str("Target note UUID"), "relation": str("Relationship label")}, "space_id", "source_note_id", "target_note_id")},
+		{"name": "connect_notes", "title": "Connect thoughts", "description": "Connect two notes in the same space. The connection is recorded as written by an agent, which the owner can see; it cannot be presented as one they drew themselves.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "source_note_id": str("Source note UUID"), "target_note_id": str("Target note UUID"), "relation": str("What the connection asserts: related (default), supports, contradicts, refines, expands or follows. Anything else is rejected.")}, "space_id", "source_note_id", "target_note_id")},
 		{"name": "create_note", "title": "Drop a thought", "description": "Create a post-it in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "content": str("Thought text"), "x": num("Canvas x"), "y": num("Canvas y"), "color": str("Semantic color")}, "space_id", "content")},
 		{"name": "get_related_notes", "title": "Discover related thoughts", "description": "Find related notes using the offline similarity embedding.", "inputSchema": schema(map[string]any{"note_id": str("Source note UUID")}, "note_id")},
 		{"name": "list_clusters", "title": "List thought clusters", "description": "Discover coherent groups of notes in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
@@ -247,7 +247,8 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 		if err != nil {
 			return nil, errors.New("valid target_note_id required")
 		}
-		e, err := h.Store.CreateEdge(ctx, p.User.ID, store.Edge{SpaceID: sid, SourceID: source, TargetID: target, Relation: valueString(args, "relation", "related")})
+		e, err := h.Store.CreateAgentEdge(ctx, p.User.ID, store.Edge{SpaceID: sid, SourceID: source, TargetID: target,
+			Relation: store.Relation(valueString(args, "relation", string(store.RelationRelated)))})
 		if err != nil {
 			return nil, err
 		}

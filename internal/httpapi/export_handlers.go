@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -100,7 +101,14 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 	if len(edges) > 0 {
 		out.WriteString("## Connections\n\n")
 		for _, e := range edges {
-			fmt.Fprintf(&out, "- `%s` --%s--> `%s`\n", e.SourceID, e.Relation, e.TargetID)
+			// An export is what someone keeps when umm is gone, so it has to say
+			// which connections a person drew and which the software produced.
+			// Without the origin the two are indistinguishable on the page.
+			origin := ""
+			if e.Origin != store.OriginManual {
+				origin = fmt.Sprintf(" (%s)", e.Origin)
+			}
+			fmt.Fprintf(&out, "- `%s` --%s--> `%s`%s\n", e.SourceID, e.Relation, e.TargetID, origin)
 		}
 	}
 	filename := strings.Map(func(r rune) rune {

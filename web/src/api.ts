@@ -71,12 +71,21 @@ export interface NoteComment {
   updatedAt: string;
 }
 
+/** The connection vocabulary. The server rejects anything outside it. */
+export type EdgeRelation = 'related' | 'supports' | 'contradicts' | 'refines' | 'expands' | 'follows';
+
+/** Who made the connection. Set by the server; never sent by the client. */
+export type EdgeOrigin = 'manual' | 'agent' | 'dream' | 'development' | 'import' | 'auto';
+
 export interface ThoughtEdge {
   id: string;
   spaceId: string;
   source: string;
   target: string;
-  relation: string;
+  relation: EdgeRelation;
+  origin: EdgeOrigin;
+  /** Present only on inferred edges; a drawn line carries no probability. */
+  confidence?: number;
 }
 
 export interface NoteSearchResult {
