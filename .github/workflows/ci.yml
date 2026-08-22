@@ -44,7 +44,12 @@ jobs:
 
       # --- Go ---------------------------------------------------------------
       - run: go vet ./...
-      - run: go test ./...
+      # -p 1 because the integration tests share one PostgreSQL database, and
+      # app_settings holds a single global ai_gateway row. Run in parallel, two
+      # packages swap that row underneath each other: measured 2 failures in 3
+      # runs, 0 in 3 when serialised. The database serialises the slow work
+      # anyway, so this costs about 3% of wall time (116s -> 120s).
+      - run: go test -p 1 ./...
       - name: Go vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       # Prints the measured behaviour of the active embedding algorithm and

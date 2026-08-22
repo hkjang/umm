@@ -127,6 +127,7 @@ func toolDefinitions() []map[string]any {
 	return []map[string]any{
 		{"name": "connect_notes", "title": "Connect thoughts", "description": "Connect two notes in the same space. The connection is recorded as written by an agent, which the owner can see; it cannot be presented as one they drew themselves.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "source_note_id": str("Source note UUID"), "target_note_id": str("Target note UUID"), "relation": str("What the connection asserts: related (default), supports, contradicts, refines, expands or follows. Anything else is rejected.")}, "space_id", "source_note_id", "target_note_id")},
 		{"name": "create_note", "title": "Drop a thought", "description": "Create a post-it in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "content": str("Thought text"), "x": num("Canvas x"), "y": num("Canvas y"), "color": str("Semantic color")}, "space_id", "content")},
+		{"name": "get_connections", "title": "Walk the memory graph", "description": "List the connections attached to a note: what it points at, what points at it, what each connection asserts, and who made it. get_related_notes finds thoughts that merely resemble each other; this returns the connections that were actually recorded, including ones umm inferred, which are marked as such and carry a confidence.", "inputSchema": schema(map[string]any{"note_id": str("Note UUID")}, "note_id")},
 		{"name": "get_related_notes", "title": "Discover related thoughts", "description": "Find related notes using the offline similarity embedding.", "inputSchema": schema(map[string]any{"note_id": str("Source note UUID")}, "note_id")},
 		{"name": "list_clusters", "title": "List thought clusters", "description": "Discover coherent groups of notes in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
 		{"name": "list_dreams", "title": "List Dream notes", "description": "List the user's recent Dream notes.", "inputSchema": schema(map[string]any{})},
@@ -253,6 +254,36 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 			return nil, err
 		}
 		return success(e)
+	case "get_connections":
+		if err := require("notes:read"); err != nil {
+			return nil, err
+		}
+		noteID, err := uuid.Parse(fmt.Sprint(args["note_id"]))
+		if err != nil {
+			return nil, errors.New("valid note_id required")
+		}
+		links, err := h.Store.Backlinks(ctx, p.User.ID, noteID)
+		if err != nil {
+			return nil, err
+		}
+		// Flattened deliberately: an agent reading this needs the assertion and
+		// its provenance next to the thought, not a nested edge object to unpack.
+		connections := make([]map[string]any, 0, len(links))
+		for _, link := range links {
+			connection := map[string]any{
+				"direction": link.Direction,
+				"relation":  link.Edge.Relation,
+				"origin":    link.Edge.Origin,
+				"inferred":  link.Edge.Origin.Inferred(),
+				"note_id":   link.Note.ID,
+				"content":   link.Note.Content,
+			}
+			if link.Edge.Confidence != nil {
+				connection["confidence"] = *link.Edge.Confidence
+			}
+			connections = append(connections, connection)
+		}
+		return success(map[string]any{"connections": connections})
 	case "list_dreams":
 		if err := require("dreams:read"); err != nil {
 			return nil, err

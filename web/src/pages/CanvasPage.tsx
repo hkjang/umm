@@ -1682,7 +1682,7 @@ function CanvasInner() {
                     <Text size="xs" c="dimmed" ta="left">
                       {item.direction === 'incoming' ? t('이 생각을 가리킴') : t('이 생각이 가리킴')} ·{' '}
                       {relationLabel(item.edge.relation)}
-                      {item.edge.origin !== 'manual' && ` · ${originLabel(item.edge.origin)}`}
+                      {item.edge.origin && item.edge.origin !== 'manual' && ` · ${originLabel(item.edge.origin)}`}
                     </Text>
                   </button>
                 ))}
