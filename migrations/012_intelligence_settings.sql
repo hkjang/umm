@@ -21,6 +21,7 @@ VALUES ('intelligence', jsonb_build_object(
   'autolink_min_notes', 6,
   'semantic_accuracy_bar', 0.65,
   'semantic_purity_bar', 0.6,
-  'quality_cache_minutes', 10
+  'quality_cache_minutes', 10,
+  'duplicate_similarity', 0.92
 ), now())
 ON CONFLICT (key) DO NOTHING;

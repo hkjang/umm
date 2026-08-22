@@ -48,6 +48,15 @@ type IntelligenceSettings struct {
 	SemanticAccuracyBar float64 `json:"semantic_accuracy_bar"`
 	SemanticPurityBar   float64 `json:"semantic_purity_bar"`
 
+	// DuplicateSimilarity is the one absolute cosine threshold umm keeps, and it
+	// earns the exception by measurement. Every other bar is relative because
+	// backends disagree wildly about what "close" means — but near-identical text
+	// lands at the top of any sane embedding space, and two models agree on where:
+	// bge-m3 scores near-duplicates 0.943-0.983 and paraphrase-multilingual
+	// 0.954-0.986, while the next class down tops out at 0.681 and 0.581. The gap
+	// is wide enough that one number works for both.
+	DuplicateSimilarity float64 `json:"duplicate_similarity"`
+
 	// QualityCacheMinutes is how long a measurement of the backend is reused.
 	// Measuring costs one embedding request of sixty sentences.
 	QualityCacheMinutes int `json:"quality_cache_minutes"`
@@ -65,6 +74,7 @@ func DefaultIntelligenceSettings() IntelligenceSettings {
 		AutoLinkMinNote:     6,
 		SemanticAccuracyBar: intelligence.DefaultQualityBars().Accuracy,
 		SemanticPurityBar:   intelligence.DefaultQualityBars().Purity,
+		DuplicateSimilarity: 0.92,
 		QualityCacheMinutes: 10,
 	}
 }
@@ -98,6 +108,9 @@ func (s IntelligenceSettings) normalized() IntelligenceSettings {
 	s.AutoLinkBand = clampFloat(s.AutoLinkBand, 0, 4, d.AutoLinkBand)
 	s.SemanticAccuracyBar = clampFloat(s.SemanticAccuracyBar, 0, 1, d.SemanticAccuracyBar)
 	s.SemanticPurityBar = clampFloat(s.SemanticPurityBar, 0, 1, d.SemanticPurityBar)
+	// Below 0.7 this stops meaning "the same thought twice" — the offline
+	// algorithm alone reaches 0.889 on genuinely different sentences.
+	s.DuplicateSimilarity = clampFloat(s.DuplicateSimilarity, 0.7, 1, d.DuplicateSimilarity)
 	s.AutoLinkMaxRun = clampInt(s.AutoLinkMaxRun, 1, 100, d.AutoLinkMaxRun)
 	s.AutoLinkMinNote = clampInt(s.AutoLinkMinNote, 3, 1000, d.AutoLinkMinNote)
 	s.QualityCacheMinutes = clampInt(s.QualityCacheMinutes, 1, 1440, d.QualityCacheMinutes)

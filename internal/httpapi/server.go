@@ -89,6 +89,7 @@ func (s *Server) router() chi.Router {
 			protected.Get("/me", s.me)
 			protected.Get("/metrics", s.prometheusMetrics)
 			protected.Get("/today", s.todayReview)
+			protected.Get("/morning-brief", s.morningBrief)
 			protected.Get("/onboarding", s.onboardingProgress)
 			protected.Post("/onboarding/complete", s.completeOnboarding)
 			protected.Get("/search", s.searchNotes)

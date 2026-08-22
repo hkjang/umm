@@ -20,6 +20,7 @@ func TestIntelligenceSettingsNormalizeOutOfRangeValues(t *testing.T) {
 		AutoLinkMaxRun:      0,
 		AutoLinkMinNote:     1,
 		QualityCacheMinutes: 100000,
+		DuplicateSimilarity: 0.3,
 	}.normalized()
 
 	for _, check := range []struct {
@@ -32,6 +33,7 @@ func TestIntelligenceSettingsNormalizeOutOfRangeValues(t *testing.T) {
 		{"auto-link band", broken.AutoLinkBand, d.AutoLinkBand},
 		{"accuracy bar", broken.SemanticAccuracyBar, d.SemanticAccuracyBar},
 		{"purity bar", broken.SemanticPurityBar, d.SemanticPurityBar},
+		{"duplicate similarity", broken.DuplicateSimilarity, d.DuplicateSimilarity},
 	} {
 		if check.got != check.want {
 			t.Errorf("%s: got %v, want the default %v", check.name, check.got, check.want)
@@ -60,6 +62,9 @@ func TestDefaultsMatchTheMeasuredValues(t *testing.T) {
 		{"auto-link band", d.AutoLinkBand, 1.1},
 		{"accuracy bar", d.SemanticAccuracyBar, 0.65},
 		{"purity bar", d.SemanticPurityBar, 0.6},
+		// Measured: near-duplicates land at 0.943+ on bge-m3 and 0.954+ on
+		// paraphrase-multilingual, while the next class down tops out at 0.681.
+		{"duplicate similarity", d.DuplicateSimilarity, 0.92},
 	} {
 		if check.got != check.want {
 			t.Errorf("%s default is %v, but umm was measured and documented at %v", check.name, check.got, check.want)
@@ -75,7 +80,7 @@ func TestDefaultsMatchTheMeasuredValues(t *testing.T) {
 func TestIntelligenceSettingsKeepValidValues(t *testing.T) {
 	chosen := IntelligenceSettings{
 		RelatedBand: 0.9, ClusterBand: 1.6, StrongBand: 1.2, AutoLinkBand: 2.0,
-		SemanticAccuracyBar: 0.8, SemanticPurityBar: 0.75,
+		SemanticAccuracyBar: 0.8, SemanticPurityBar: 0.75, DuplicateSimilarity: 0.95,
 		AutoLinkMaxRun: 5, AutoLinkMinNote: 20, QualityCacheMinutes: 60,
 		AutoLinkEnabled: false,
 	}

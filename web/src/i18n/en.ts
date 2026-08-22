@@ -795,4 +795,18 @@ export const en: Dictionary = {
   '{space}(으)로 옮겼습니다. 공간이 달라 연결 {count}개는 정리했습니다.':
     'Filed into {space}. {count} connections were removed because they cannot span spaces.',
   '생각 정리': 'Thought filed',
+  '지난밤 umm이 살펴본 것': 'What umm looked at overnight',
+  '읽지 않은 Dream': 'Unread Dreams',
+  '검토 대기 중인 추천 연결': 'Suggested connections waiting',
+  '아직 정리하지 않은 생각': 'Thoughts not yet filed',
+  '겹쳐 보이는 생각': 'Thoughts that look duplicated',
+  '겹치는 생각은 확인하지 못했습니다. 지금 임베딩은 뜻이 아니라 단어 겹침을 재기 때문에, 찾아 봤자 표현이 비슷한 것만 나옵니다.':
+    'Duplicates were not checked. The current embedding measures shared words rather than meaning, so anything it found would just be similar wording.',
+  '겹치는 생각 확인이 꺼져 있습니다.': 'Duplicate checking is turned off.',
+  '중복 판정 기준': 'Duplicate threshold',
+  '기본 0.92 · 이 값만 코사인 절대값입니다': 'Default 0.92 · the only absolute cosine value here',
+  '중복 판정만 표준편차가 아니라 코사인 절대값을 씁니다. 거의 같은 글은 어떤 임베딩에서도 맨 위에 오고 두 모델이 같은 지점에 두기 때문입니다 — 측정값으로 bge-m3는 0.943 이상, paraphrase-multilingual은 0.954 이상이며 그다음 등급은 0.681에서 끝납니다.':
+    'Only the duplicate threshold is an absolute cosine rather than a standard deviation. Near-identical text lands at the top of any embedding space and two models agree on where — measured, bge-m3 puts duplicates at 0.943 and above, paraphrase-multilingual at 0.954 and above, while the next class down tops out at 0.681.',
+  반론: 'Counterpoint',
+  실행: 'Action',
 };

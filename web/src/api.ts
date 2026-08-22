@@ -108,6 +108,19 @@ export interface SpaceSuggestion {
   basis: 'meaning' | 'recent';
 }
 
+/** What accumulated while you were away. */
+export interface MorningBrief {
+  since: string;
+  dreams: { kind: string; count: number }[];
+  suggestions: number;
+  unfiled: number;
+  duplicates: { spaceId: string; space: string; first: ThoughtNote; second: ThoughtNote; score: number }[];
+  /** What umm did not examine — so an empty list above is not read as an all-clear. */
+  skipped: { kind: string; reason: 'backend-not-semantic' | 'disabled' }[];
+  /** Nothing to report *and* nothing skipped. */
+  quiet: boolean;
+}
+
 export interface NoteSearchResult {
   id: string;
   spaceId: string;
