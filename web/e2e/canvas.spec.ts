@@ -114,4 +114,30 @@ test.describe('canvas', () => {
     await page.reload();
     await expect(page.getByRole('combobox', { name: '새로 그리는 연결의 종류' })).toHaveValue('상충함');
   });
+  // Capture exists to remove the "choose a space first" step, so the test that
+  // matters is that it works from a page which is not that space.
+  test('captures a thought from anywhere without choosing a space', async ({ page }) => {
+    const thought = unique('수집');
+    await page.goto('/today');
+    const box = page.getByLabel('무슨 생각을 하고 있나요?');
+    await expect(box).toBeVisible();
+    await box.fill(thought);
+    await box.press('Enter');
+
+    // The box clears only after the write lands, so an empty box is the signal
+    // that the thought was actually kept rather than dropped.
+    await expect(box).toHaveValue('');
+
+    // And it has to be somewhere real. The inbox is an ordinary space, so it
+    // appears in the switcher — which is also how a person gets back to what
+    // they captured.
+    await openCanvas(page);
+    await page
+      .getByRole('button', { name: /^(?!.*생각 검색).*$/ })
+      .first()
+      .waitFor();
+    await page.locator('.space-switcher').click();
+    await page.getByRole('menuitem', { name: /생각 수집함/ }).click();
+    await expect(page.getByRole('group', { name: new RegExp(thought) })).toBeVisible({ timeout: 15000 });
+  });
 });

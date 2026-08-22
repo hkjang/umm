@@ -137,6 +137,7 @@ func TestIdempotencyKeyPattern(t *testing.T) {
 
 func TestIdempotencyIsLimitedToAtomicCanvasMutations(t *testing.T) {
 	for _, request := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/capture"},
 		{http.MethodPost, "/api/v1/spaces/space-id/notes"},
 		{http.MethodPost, "/api/v1/spaces/space-id/edges"},
 		{http.MethodPost, "/api/v1/notes/note-id/comments"},
@@ -154,6 +155,9 @@ func TestIdempotencyIsLimitedToAtomicCanvasMutations(t *testing.T) {
 		{http.MethodPost, "/api/v1/dreams/id/regenerate"},
 		{http.MethodPost, "/api/v1/admin/ai-evals/id/run"},
 		{http.MethodPost, "/api/v1/api-keys"},
+		// Neighbours of capture that must not inherit its allowance.
+		{http.MethodPost, "/api/v1/capture/extra"},
+		{http.MethodPut, "/api/v1/capture"},
 	} {
 		if idempotencySupported(request.method, request.path) {
 			t.Errorf("non-atomic or long mutation accepted: %s %s", request.method, request.path)

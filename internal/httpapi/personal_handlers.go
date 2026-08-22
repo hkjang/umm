@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -429,3 +431,69 @@ func (s *Server) saveDevelopedDream(w http.ResponseWriter, r *http.Request) {
 }
 
 var _ = uuid.Nil
+
+// captureThought writes a thought down without asking where it belongs.
+//
+// The whole point is that it works from anywhere, so it takes no space id: the
+// thought lands in the person's inbox and the question of where it goes is
+// answered later, or never.
+func (s *Server) captureThought(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Content string `json:"content"`
+	}
+	if decodeJSON(w, r, &body) != nil || strings.TrimSpace(body.Content) == "" {
+		writeError(w, 400, "생각 내용을 입력해 주세요.")
+		return
+	}
+	p := principal(r)
+	note, err := s.Store.CaptureThought(r.Context(), p.User.ID, body.Content)
+	if err != nil {
+		slog.Warn("capture failed", "user_id", p.User.ID, "error", err)
+		writeError(w, 500, "생각을 저장하지 못했습니다.")
+		return
+	}
+	writeJSON(w, 201, note)
+}
+
+// moveNote files a thought into another space.
+func (s *Server) moveNote(w http.ResponseWriter, r *http.Request) {
+	noteID, ok := parseID(w, r, "noteID")
+	if !ok {
+		return
+	}
+	var body struct {
+		SpaceID uuid.UUID `json:"spaceId"`
+	}
+	if decodeJSON(w, r, &body) != nil || body.SpaceID == uuid.Nil {
+		writeError(w, 400, "옮길 공간을 지정해 주세요.")
+		return
+	}
+	p := principal(r)
+	note, removedEdges, err := s.Store.MoveNote(r.Context(), p.User.ID, noteID, body.SpaceID)
+	if err != nil {
+		if notFound(err) {
+			writeError(w, 404, "생각을 찾을 수 없습니다.")
+			return
+		}
+		writeError(w, 400, "생각을 옮길 수 없습니다.")
+		return
+	}
+	// The caller needs the count to explain what happened, because connections
+	// are scoped to a space and a note that leaves cannot keep them.
+	writeJSON(w, 200, map[string]any{"note": note, "removedEdges": removedEdges})
+}
+
+// spaceSuggestions ranks where a captured thought might belong.
+func (s *Server) spaceSuggestions(w http.ResponseWriter, r *http.Request) {
+	noteID, ok := parseID(w, r, "noteID")
+	if !ok {
+		return
+	}
+	p := principal(r)
+	suggestions, err := s.Store.SuggestSpaces(r.Context(), p.User.ID, noteID, 3)
+	if err != nil {
+		writeError(w, 500, "추천 공간을 찾지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"suggestions": suggestions})
+}

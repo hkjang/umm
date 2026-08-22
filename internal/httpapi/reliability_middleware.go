@@ -36,6 +36,12 @@ func idempotencySupported(method, path string) bool {
 	parts := strings.Split(strings.TrimPrefix(path, "/api/v1/"), "/")
 	switch method {
 	case http.MethodPost:
+		// Capture is a single segment and belongs here for the same reason the
+		// canvas mutations do: a thought written on a train has to survive the
+		// tunnel, and a retry must not leave two copies of it.
+		if len(parts) == 1 && parts[0] == "capture" {
+			return true
+		}
 		return len(parts) == 3 && parts[1] != "" && ((parts[0] == "spaces" && (parts[2] == "notes" || parts[2] == "edges")) || (parts[0] == "notes" && parts[2] == "comments"))
 	case http.MethodPut:
 		return (len(parts) == 2 && parts[0] == "notes" && parts[1] != "") || (len(parts) == 3 && parts[0] == "comments" && parts[1] != "" && parts[2] == "resolve")

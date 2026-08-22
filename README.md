@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.14.0-success?style=flat-square" alt="v0.14.0" />
+  <img src="https://img.shields.io/badge/Release-v0.15.0-success?style=flat-square" alt="v0.15.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,14 +25,14 @@
 
 ---
 
-## v0.14.0 — 판정 기준을 관리자에게
+## v0.15.0 — 생각 수집함
 
-- **유사도 기준이 설정으로**: 연관·군집·검색 라벨·자동 연결의 문턱이 전부 관리자 화면에서 조절됩니다. 기본값은 측정한 값 그대로라 바꾸지 않으면 동작이 같습니다.
-- **게이트웨이 연결 테스트**: 주소 오류·모델 이름 오류·의미를 못 재는 모델을 구분해 알려 줍니다.
-- **바꿀 수 없는 것 하나**: 어휘가 뜻을 앞서는 백엔드는 어떤 설정으로도 자동 연결을 통과하지 못합니다.
-- 범위를 벗어난 값은 조용히 보정하지 않고 거부합니다.
+- **어디서든 담기**: 모든 화면 상단에서 공간을 고르지 않고 생각을 적습니다. Enter 한 번이면 수집함으로.
+- **나중에 정리**: 옆 패널에서 옮길 공간을 추천받습니다. 임베딩이 의미를 판별하지 못하면 **"내용이 가깝다"고 말하지 않고** 최근 순으로 보여 주며 그렇다고 밝힙니다.
+- **연결 비용을 미리**: 연결은 공간을 넘지 못하므로, 옮길 때 몇 개가 정리되는지 먼저 알려 줍니다.
+- **MCP `capture_thought`**: 에이전트도 공간을 몰라도 생각을 남길 수 있습니다.
 
-이전 릴리스: [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
@@ -138,7 +138,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.14.0
+  umm:v0.15.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

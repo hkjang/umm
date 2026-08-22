@@ -781,4 +781,18 @@ export const en: Dictionary = {
   '연결 테스트': 'Test connection',
   '연결됨 · {model} · {dimensions}차원': 'Connected · {model} · {dimensions} dimensions',
   '연결 실패: {detail}': 'Connection failed: {detail}',
+  '무슨 생각을 하고 있나요?': 'What are you thinking?',
+  '수집함에 담기': 'Send to inbox',
+  '수집함에 담았습니다.': 'Kept in your inbox.',
+  '생각 기록': 'Thought captured',
+  '생각을 저장하지 못했습니다. 입력한 내용은 그대로 두었습니다.':
+    'Could not save the thought. What you typed is still here.',
+  '다른 공간으로 옮기기': 'File into another space',
+  '내용이 가까운 순서입니다.': 'Ordered by how close the contents are.',
+  '임베딩이 의미를 판별하지 못해 최근 작업한 순서로 보여 줍니다.':
+    'The embedding cannot judge meaning, so these are simply the spaces worked in most recently.',
+  '{space}(으)로 옮겼습니다.': 'Filed into {space}.',
+  '{space}(으)로 옮겼습니다. 공간이 달라 연결 {count}개는 정리했습니다.':
+    'Filed into {space}. {count} connections were removed because they cannot span spaces.',
+  '생각 정리': 'Thought filed',
 };

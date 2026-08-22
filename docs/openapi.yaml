@@ -768,6 +768,89 @@ paths:
       responses:
         '200': { description: What the run produced and why, content: { application/json: { schema: { $ref: '#/components/schemas/SuggestionResult' } } } }
         '500': { $ref: '#/components/responses/Error' }
+  /capture:
+    post:
+      operationId: post_capture
+      tags: [Notes]
+      summary: Write a thought down without choosing where it belongs
+      description: |
+        Takes no space id on purpose. A thought arrives before you know where it
+        goes, and asking first is why thoughts get written somewhere else. The
+        thought lands in the caller's inbox — an ordinary space, so search,
+        embeddings, Dream and connections all work on it — and can be filed later
+        with /notes/{noteId}/move.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [content], properties: { content: { type: string } } }
+      responses:
+        '201': { description: The captured thought, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /notes/{noteId}/move:
+    post:
+      operationId: post_note_move
+      tags: [Notes]
+      summary: File a thought into another space
+      description: |
+        Requires write access to both the origin and the destination.
+
+        Connections are scoped to a space and need both endpoints in it, so a
+        note that leaves cannot keep them: they are removed and the count comes
+        back as removedEdges, so a caller can say what the move costs before the
+        person agrees rather than have them discover it afterwards.
+      parameters:
+        - { name: noteId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [spaceId], properties: { spaceId: { type: string, format: uuid } } }
+      responses:
+        '200':
+          description: The filed thought and what the move removed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [note, removedEdges]
+                properties:
+                  note: { $ref: '#/components/schemas/Note' }
+                  removedEdges: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /notes/{noteId}/space-suggestions:
+    get:
+      operationId: get_note_space_suggestions
+      tags: [Notes, AI]
+      summary: Where a captured thought might belong
+      description: |
+        basis says what the ranking rests on. "meaning" when the embedding
+        backend has been measured as semantic and the ranking is by closeness to
+        what each space holds; "recent" when it has not, in which case these are
+        simply the spaces worked in most recently. Presenting word overlap as
+        understanding would be worse than admitting the limit, so umm says which
+        it is doing.
+      parameters:
+        - { name: noteId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Candidate homes, best first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [suggestions]
+                properties:
+                  suggestions:
+                    type: array
+                    items:
+                      type: object
+                      required: [space, score, basis]
+                      properties:
+                        space: { $ref: '#/components/schemas/Space' }
+                        score: { type: number }
+                        basis: { type: string, enum: [meaning, recent] }
   /admin/ai-gateway/test:
     post:
       operationId: post_admin_ai_gateway_test
@@ -946,8 +1029,14 @@ components:
         active: { type: boolean }
     Space:
       type: object
-      required: [id, ownerId, name, color, aiExcluded]
-      properties: { id: { type: string, format: uuid }, ownerId: { type: string, format: uuid }, name: { type: string }, color: { type: string }, aiExcluded: { type: boolean, description: Exclude every note in this space from AI processing and remote embedding gateways } }
+      required: [id, ownerId, name, color, aiExcluded, isInbox]
+      properties:
+        id: { type: string, format: uuid }
+        ownerId: { type: string, format: uuid }
+        name: { type: string }
+        color: { type: string }
+        aiExcluded: { type: boolean, description: Exclude every note in this space from AI processing and remote embedding gateways }
+        isInbox: { type: boolean, description: Where unfiled captures land. An ordinary space in every other respect, but it cannot be deleted — removing it would leave captures with nowhere to go and the next one would silently make a new one. }
     DreamSource:
       type: object
       required: [noteId, title, excerpt, rank, similarityScore, cited]

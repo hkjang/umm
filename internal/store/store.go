@@ -63,6 +63,9 @@ type Space struct {
 	Name       string    `json:"name"`
 	Color      string    `json:"color"`
 	AIExcluded bool      `json:"aiExcluded"`
+	// IsInbox marks where this person's unfiled captures land. It is an ordinary
+	// space in every other respect.
+	IsInbox bool `json:"isInbox"`
 }
 
 type Note struct {
@@ -523,19 +526,19 @@ func AllowedSetting(key string) bool {
 
 func (s *Store) EnsureDefaultSpace(ctx context.Context, userID uuid.UUID) (Space, error) {
 	var sp Space
-	err := s.Pool.QueryRow(ctx, `SELECT id,owner_id,name,color,ai_excluded FROM spaces WHERE owner_id=$1 ORDER BY created_at LIMIT 1`, userID).Scan(&sp.ID, &sp.OwnerID, &sp.Name, &sp.Color, &sp.AIExcluded)
+	err := s.Pool.QueryRow(ctx, `SELECT id,owner_id,name,color,ai_excluded,is_inbox FROM spaces WHERE owner_id=$1 ORDER BY created_at LIMIT 1`, userID).Scan(&sp.ID, &sp.OwnerID, &sp.Name, &sp.Color, &sp.AIExcluded, &sp.IsInbox)
 	if err == nil {
 		return sp, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return sp, err
 	}
-	err = s.Pool.QueryRow(ctx, `INSERT INTO spaces(owner_id,name) VALUES($1,'My Space') RETURNING id,owner_id,name,color,ai_excluded`, userID).Scan(&sp.ID, &sp.OwnerID, &sp.Name, &sp.Color, &sp.AIExcluded)
+	err = s.Pool.QueryRow(ctx, `INSERT INTO spaces(owner_id,name) VALUES($1,'My Space') RETURNING id,owner_id,name,color,ai_excluded,is_inbox`, userID).Scan(&sp.ID, &sp.OwnerID, &sp.Name, &sp.Color, &sp.AIExcluded, &sp.IsInbox)
 	return sp, err
 }
 
 func (s *Store) ListSpaces(ctx context.Context, userID uuid.UUID) ([]Space, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT s.id,s.owner_id,s.name,s.color,s.ai_excluded FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id WHERE s.owner_id=$1 OR m.user_id=$1 ORDER BY s.name`, userID)
+	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT s.id,s.owner_id,s.name,s.color,s.ai_excluded,s.is_inbox FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id WHERE s.owner_id=$1 OR m.user_id=$1 ORDER BY s.name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -543,7 +546,7 @@ func (s *Store) ListSpaces(ctx context.Context, userID uuid.UUID) ([]Space, erro
 	out := []Space{}
 	for rows.Next() {
 		var v Space
-		if err := rows.Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded); err != nil {
+		if err := rows.Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded, &v.IsInbox); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -557,7 +560,7 @@ func (s *Store) CreateSpace(ctx context.Context, userID uuid.UUID, name string) 
 		name = "새 공간"
 	}
 	var v Space
-	err := s.Pool.QueryRow(ctx, `INSERT INTO spaces(owner_id,name) VALUES($1,$2) RETURNING id,owner_id,name,color,ai_excluded`, userID, name).Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded)
+	err := s.Pool.QueryRow(ctx, `INSERT INTO spaces(owner_id,name) VALUES($1,$2) RETURNING id,owner_id,name,color,ai_excluded,is_inbox`, userID, name).Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded, &v.IsInbox)
 	return v, err
 }
 
@@ -569,8 +572,8 @@ func (s *Store) UpdateSpace(ctx context.Context, userID, spaceID uuid.UUID, name
 	}
 	defer tx.Rollback(ctx)
 	var v Space
-	err = tx.QueryRow(ctx, `UPDATE spaces sp SET name=$3,ai_excluded=COALESCE($4,ai_excluded),updated_at=now() WHERE sp.id=$1 AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2 AND sm.permission='manage')) RETURNING id,owner_id,name,color,ai_excluded`, spaceID, userID, name, aiExcluded).
-		Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded)
+	err = tx.QueryRow(ctx, `UPDATE spaces sp SET name=$3,ai_excluded=COALESCE($4,ai_excluded),updated_at=now() WHERE sp.id=$1 AND (sp.owner_id=$2 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$2 AND sm.permission='manage')) RETURNING id,owner_id,name,color,ai_excluded,is_inbox`, spaceID, userID, name, aiExcluded).
+		Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded, &v.IsInbox)
 	if err != nil {
 		return Space{}, err
 	}
@@ -584,6 +587,13 @@ func (s *Store) UpdateSpace(ctx context.Context, userID, spaceID uuid.UUID, name
 }
 
 func (s *Store) DeleteSpace(ctx context.Context, userID, spaceID uuid.UUID) error {
+	// Removing the inbox would leave captures with nowhere to land, and the next
+	// one would silently recreate it — losing whatever was in the old one. Refuse
+	// with a reason instead.
+	var isInbox bool
+	if err := s.Pool.QueryRow(ctx, `SELECT is_inbox FROM spaces WHERE id=$1 AND owner_id=$2`, spaceID, userID).Scan(&isInbox); err == nil && isInbox {
+		return ErrInboxSpace
+	}
 	cmd, err := s.Pool.Exec(ctx, `DELETE FROM spaces WHERE id=$1 AND owner_id=$2`, spaceID, userID)
 	if err != nil {
 		return err

@@ -31,6 +31,7 @@ import { msg, useTranslation } from '../i18n';
 import AppearanceMenu from './AppearanceMenu';
 import NotificationMenu from './NotificationMenu';
 import OfflineStatus from './OfflineStatus';
+import CaptureBox from './CaptureBox';
 import QuickNavigator from './QuickNavigator';
 
 const links = [
@@ -80,6 +81,7 @@ export default function AppLayout() {
               </UnstyledButton>
             </Group>
             <Group>
+              <CaptureBox />
               <QuickNavigator />
               <NotificationMenu />
               <Menu shadow="md" width={245} position="bottom-end">

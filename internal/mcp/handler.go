@@ -125,6 +125,7 @@ func (h *Handler) validOrigin(r *http.Request, origin string) bool {
 
 func toolDefinitions() []map[string]any {
 	return []map[string]any{
+		{"name": "capture_thought", "title": "Capture a thought", "description": "Write a thought down without deciding where it belongs. It lands in the owner's inbox, ready to be filed later. Use this when you have something worth keeping but no reason to choose a space — create_note is for when you do.", "inputSchema": schema(map[string]any{"content": str("Thought text")}, "content")},
 		{"name": "connect_notes", "title": "Connect thoughts", "description": "Connect two notes in the same space. The connection is recorded as written by an agent, which the owner can see; it cannot be presented as one they drew themselves.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "source_note_id": str("Source note UUID"), "target_note_id": str("Target note UUID"), "relation": str("What the connection asserts: related (default), supports, contradicts, refines, expands or follows. Anything else is rejected.")}, "space_id", "source_note_id", "target_note_id")},
 		{"name": "create_note", "title": "Drop a thought", "description": "Create a post-it in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "content": str("Thought text"), "x": num("Canvas x"), "y": num("Canvas y"), "color": str("Semantic color")}, "space_id", "content")},
 		{"name": "get_connections", "title": "Walk the memory graph", "description": "List the connections attached to a note: what it points at, what points at it, what each connection asserts, and who made it. get_related_notes finds thoughts that merely resemble each other; this returns the connections that were actually recorded, including ones umm inferred, which are marked as such and carry a confidence.", "inputSchema": schema(map[string]any{"note_id": str("Note UUID")}, "note_id")},
@@ -231,6 +232,20 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 			return nil, err
 		}
 		h.Store.Audit(ctx, &p.User.ID, "mcp.note.create", "note", n.ID.String(), map[string]any{"key": true})
+		return success(n)
+	case "capture_thought":
+		if err := require("notes:write"); err != nil {
+			return nil, err
+		}
+		content := valueString(args, "content", "")
+		if strings.TrimSpace(content) == "" {
+			return nil, errors.New("content required")
+		}
+		n, err := h.Store.CaptureThought(ctx, p.User.ID, content)
+		if err != nil {
+			return nil, err
+		}
+		h.Store.Audit(ctx, &p.User.ID, "mcp.thought.capture", "note", n.ID.String(), map[string]any{"key": true})
 		return success(n)
 	case "connect_notes":
 		if err := require("notes:write"); err != nil {

@@ -77,6 +77,7 @@ import {
   type Preferences,
   type Space,
   type EdgeRelation,
+  type SpaceSuggestion,
   type SuggestionResult,
   type ThoughtEdge,
   type ThoughtNote,
@@ -210,6 +211,11 @@ function CanvasInner() {
   // Suggestions umm wrote into the graph on this run. They already exist as
   // inferred edges, so this list is only the review queue for them.
   const [suggestions, setSuggestions] = useState<ThoughtEdge[]>([]);
+  // Where the selected thought could be filed. Loaded with the connection panel,
+  // because filing and connecting are the two things you do to a thought you are
+  // looking at.
+  const [homes, setHomes] = useState<SpaceSuggestion[]>([]);
+  const [filing, setFiling] = useState('');
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestBusy, setSuggestBusy] = useState(false);
   const [listView, setListView] = useState(false);
@@ -414,6 +420,9 @@ function CanvasInner() {
         api<{ backlinks: Backlink[] }>(`/notes/${id}/backlinks`),
       ]);
       setRelated({ source: id, items: result.related });
+      api<{ suggestions: SpaceSuggestion[] }>(`/notes/${id}/space-suggestions`, { silent: true })
+        .then((value) => setHomes(value.suggestions))
+        .catch(() => setHomes([]));
       setBacklinks(linked.backlinks);
       const source = flow.getNode(id);
       if (source) {
@@ -759,6 +768,37 @@ function CanvasInner() {
     }
     setSuggestions((all) => all.filter((edge) => edge.id !== edgeID));
   }, []);
+
+  // Filing a thought into another space. Connections are scoped to a space and
+  // both endpoints must be in it, so the server reports how many it had to
+  // remove — the person hears about that rather than discovering it later.
+  const fileThought = useCallback(
+    async (noteID: string, spaceID: string, spaceName: string) => {
+      setFiling(spaceID);
+      try {
+        const result = await api<{ note: ThoughtNote; removedEdges: number }>(
+          `/notes/${noteID}/move`,
+          json('POST', { spaceId: spaceID }),
+        );
+        setNotes((all) => all.filter((note) => note.id !== noteID));
+        setRawEdges((all) => all.filter((edge) => edge.source !== noteID && edge.target !== noteID));
+        setRelated(undefined);
+        setHomes([]);
+        showSuccess(
+          result.removedEdges > 0
+            ? t('{space}(으)로 옮겼습니다. 공간이 달라 연결 {count}개는 정리했습니다.', {
+                space: spaceName,
+                count: result.removedEdges,
+              })
+            : t('{space}(으)로 옮겼습니다.', { space: spaceName }),
+          t('생각 정리'),
+        );
+      } finally {
+        setFiling('');
+      }
+    },
+    [t],
+  );
 
   const onDragStart: OnNodeDrag<Node<PostItData>> = (_, node) => {
     dragStart.current[node.id] = { ...node.position };
@@ -1664,6 +1704,36 @@ function CanvasInner() {
               <IconX size={16} />
             </ActionIcon>
           </Group>
+          {homes.length > 0 && related && (
+            <>
+              <Text size="xs" fw={700} c="teal.7" mt="md">
+                {t('다른 공간으로 옮기기')}
+              </Text>
+              <Text size="xs" c="dimmed">
+                {homes[0].basis === 'meaning'
+                  ? t('내용이 가까운 순서입니다.')
+                  : t('임베딩이 의미를 판별하지 못해 최근 작업한 순서로 보여 줍니다.')}
+              </Text>
+              <Stack gap={6} mt="xs">
+                {homes.map((home) => (
+                  <Button
+                    key={home.space.id}
+                    size="xs"
+                    variant="light"
+                    color="teal"
+                    justify="space-between"
+                    loading={filing === home.space.id}
+                    onClick={() => void fileThought(related.source, home.space.id, home.space.name)}
+                    rightSection={
+                      home.basis === 'meaning' ? <Text size="xs">{Math.round(home.score * 100)}%</Text> : null
+                    }
+                  >
+                    {home.space.name}
+                  </Button>
+                ))}
+              </Stack>
+            </>
+          )}
           {backlinks.length > 0 && (
             <>
               <Text size="xs" fw={700} c="grape.7" mt="md">
