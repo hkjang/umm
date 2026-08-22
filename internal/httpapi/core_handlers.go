@@ -619,3 +619,63 @@ func (s *Server) restoreNote(w http.ResponseWriter, r *http.Request) {
 	s.Store.Audit(r.Context(), &p.User.ID, "note.restore", "note", id.String(), map[string]any{"fromVersion": version})
 	writeJSON(w, 200, restored)
 }
+
+// suggestLinks asks umm to propose connections in a space.
+//
+// It writes inferred edges rather than returning a transient list, because a
+// suggestion someone has to act on immediately or lose is worse than no
+// suggestion. They are marked as inferred and can be accepted or dismissed.
+func (s *Server) suggestLinks(w http.ResponseWriter, r *http.Request) {
+	spaceID, ok := parseID(w, r, "spaceID")
+	if !ok {
+		return
+	}
+	p := principal(r)
+	result, err := s.Store.SuggestLinks(r.Context(), p.User.ID, spaceID)
+	if err != nil {
+		slog.Warn("suggest links failed", "space_id", spaceID, "user_id", p.User.ID, "error", err)
+		writeError(w, 500, "연결을 추천하지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, result)
+}
+
+// acceptSuggestion records that a person stands behind an inferred connection.
+func (s *Server) acceptSuggestion(w http.ResponseWriter, r *http.Request) {
+	edgeID, ok := parseID(w, r, "edgeID")
+	if !ok {
+		return
+	}
+	p := principal(r)
+	edge, err := s.Store.AcceptSuggestion(r.Context(), p.User.ID, edgeID)
+	if err != nil {
+		if notFound(err) {
+			writeError(w, 404, "추천 연결을 찾을 수 없습니다.")
+			return
+		}
+		slog.Warn("accept suggestion failed", "edge_id", edgeID, "user_id", p.User.ID, "error", err)
+		writeError(w, 500, "추천을 반영하지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, edge)
+}
+
+// deleteEdge removes a connection: how a suggestion is dismissed, and the only
+// way any edge can be removed.
+func (s *Server) deleteEdge(w http.ResponseWriter, r *http.Request) {
+	edgeID, ok := parseID(w, r, "edgeID")
+	if !ok {
+		return
+	}
+	p := principal(r)
+	if err := s.Store.DeleteEdge(r.Context(), p.User.ID, edgeID); err != nil {
+		if notFound(err) {
+			writeError(w, 404, "연결을 찾을 수 없습니다.")
+			return
+		}
+		slog.Warn("delete edge failed", "edge_id", edgeID, "user_id", p.User.ID, "error", err)
+		writeError(w, 500, "연결을 삭제하지 못했습니다.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

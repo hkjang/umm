@@ -117,6 +117,9 @@ func (s *Server) router() chi.Router {
 			protected.Get("/spaces/{spaceID}/export/markdown", s.exportMarkdown)
 			protected.Delete("/notes/{noteID}", s.deleteNote)
 			protected.Post("/spaces/{spaceID}/edges", s.createEdge)
+			protected.Delete("/edges/{edgeID}", s.deleteEdge)
+			protected.Post("/edges/{edgeID}/accept", s.acceptSuggestion)
+			protected.Post("/spaces/{spaceID}/links/suggest", s.suggestLinks)
 			protected.Get("/notifications", s.listNotifications)
 			protected.Post("/notifications/{notificationID}/read", s.readNotification)
 			protected.Group(func(account chi.Router) {

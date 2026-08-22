@@ -77,6 +77,7 @@ import {
   type Preferences,
   type Space,
   type EdgeRelation,
+  type SuggestionResult,
   type ThoughtEdge,
   type ThoughtNote,
 } from '../api';
@@ -206,6 +207,11 @@ function CanvasInner() {
   const [aiResult, setAIResult] = useState<{ mode: string; content: string }>();
   const [aiBusy, setAIBusy] = useState(false);
   const [backlinks, setBacklinks] = useState<Backlink[]>([]);
+  // Suggestions umm wrote into the graph on this run. They already exist as
+  // inferred edges, so this list is only the review queue for them.
+  const [suggestions, setSuggestions] = useState<ThoughtEdge[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestBusy, setSuggestBusy] = useState(false);
   const [listView, setListView] = useState(false);
   const [commentNote, setCommentNote] = useState<ThoughtNote>();
   const [comments, setComments] = useState<NoteComment[]>([]);
@@ -705,6 +711,55 @@ function CanvasInner() {
     },
     [activeSpace, edgeStyle, drawRelation],
   );
+  // Ask umm to propose connections. It writes them as inferred edges, so the
+  // canvas shows them immediately and this list is the review queue.
+  const requestSuggestions = useCallback(async () => {
+    if (!activeSpace) return;
+    setSuggestBusy(true);
+    try {
+      const result = await api<SuggestionResult>(`/spaces/${activeSpace}/links/suggest`, json('POST', {}));
+      if (result.outcome === 'suggested') {
+        setSuggestions(result.edges);
+        setRawEdges((all) => [...all, ...result.edges]);
+        setSuggestOpen(true);
+        return;
+      }
+      // A quiet result needs to say which kind of quiet it is. "Nothing found"
+      // and "umm declined to guess" call for completely different responses.
+      if (result.outcome === 'backend-not-semantic') {
+        showInfo(
+          t(
+            '지금 임베딩이 뜻이 아니라 겹치는 단어를 재고 있어 추천을 만들지 않았습니다. 관리자 → AI Gateway에서 임베딩 모델을 설정하면 켜집니다.',
+          ),
+          t('추천을 건너뛰었습니다'),
+        );
+        return;
+      }
+      if (result.outcome === 'too-few-notes') {
+        showInfo(t('무엇이 유난히 가까운지 판단하기에 생각이 아직 적습니다.'), t('추천을 건너뛰었습니다'));
+        return;
+      }
+      showInfo(
+        t('{count}개 짝을 살펴봤지만 눈에 띄게 가까운 것이 없었습니다.', { count: result.considered }),
+        t('추천할 연결이 없습니다'),
+      );
+    } finally {
+      setSuggestBusy(false);
+    }
+  }, [activeSpace, t]);
+
+  const answerSuggestion = useCallback(async (edgeID: string, keep: boolean) => {
+    if (keep) {
+      const accepted = await api<ThoughtEdge>(`/edges/${edgeID}/accept`, json('POST', {}));
+      setRawEdges((all) => all.map((edge) => (edge.id === edgeID ? accepted : edge)));
+    } else {
+      await api<void>(`/edges/${edgeID}`, { method: 'DELETE' });
+      setRawEdges((all) => all.filter((edge) => edge.id !== edgeID));
+      setEdges((all) => all.filter((edge) => edge.id !== edgeID));
+    }
+    setSuggestions((all) => all.filter((edge) => edge.id !== edgeID));
+  }, []);
+
   const onDragStart: OnNodeDrag<Node<PostItData>> = (_, node) => {
     dragStart.current[node.id] = { ...node.position };
   };
@@ -1307,6 +1362,18 @@ function CanvasInner() {
                 data={relationOptions.map((relation) => ({ value: relation, label: relationLabel(relation) }))}
               />
             </Tooltip>
+            <Tooltip label={t('연결 추천 받기')}>
+              <ActionIcon
+                className="canvas-action"
+                variant="subtle"
+                color="dark"
+                loading={suggestBusy}
+                onClick={() => void requestSuggestions()}
+                aria-label={t('연결 추천 받기')}
+              >
+                <IconSparkles size={19} />
+              </ActionIcon>
+            </Tooltip>
             <Tooltip label={listView ? t('공간 캔버스 보기') : t('접근 가능한 선형 목록')}>
               <ActionIcon
                 className="canvas-action"
@@ -1643,6 +1710,56 @@ function CanvasInner() {
           </Stack>
         </Paper>
       )}
+      <Modal
+        opened={suggestOpen}
+        onClose={() => setSuggestOpen(false)}
+        title={t('umm이 찾은 연결 {count}개', { count: suggestions.length })}
+        centered
+        size="lg"
+      >
+        <Stack>
+          <Text size="sm" c="dimmed">
+            {t(
+              '아래 연결은 umm이 추측한 것이라 캔버스에도 추천으로 표시됩니다. 남기면 직접 그은 연결이 되고, 지우면 사라집니다.',
+            )}
+          </Text>
+          {suggestions.length === 0 && <Text size="sm">{t('모두 검토했습니다.')}</Text>}
+          {suggestions.map((edge) => {
+            const source = notes.find((note) => note.id === edge.source);
+            const target = notes.find((note) => note.id === edge.target);
+            return (
+              <Paper key={edge.id} p="md" radius="md" withBorder>
+                <Group justify="space-between" align="flex-start" wrap="nowrap" gap="md">
+                  <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
+                    <Text size="sm" lineClamp={2}>
+                      {source?.title || source?.content}
+                    </Text>
+                    <Text size="xs" c="dimmed">
+                      ↕ {t('두드러진 정도')} {Math.round((edge.confidence ?? 0) * 100)}%
+                    </Text>
+                    <Text size="sm" lineClamp={2}>
+                      {target?.title || target?.content}
+                    </Text>
+                  </Stack>
+                  <Group gap="xs" wrap="nowrap">
+                    <Button size="xs" variant="light" onClick={() => void answerSuggestion(edge.id, true)}>
+                      {t('남기기')}
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      color="gray"
+                      onClick={() => void answerSuggestion(edge.id, false)}
+                    >
+                      {t('추천 지우기')}
+                    </Button>
+                  </Group>
+                </Group>
+              </Paper>
+            );
+          })}
+        </Stack>
+      </Modal>
       <Modal
         opened={!!aiResult}
         onClose={() => setAIResult(undefined)}
