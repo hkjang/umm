@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/dream"
+	"github.com/hkjang/umm/internal/intelligence"
 )
 
 const secretMask = "••••••••"
@@ -381,4 +382,46 @@ func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
 		next = encodeOffsetCursor(offset + limit)
 	}
 	writeJSON(w, 200, map[string]any{"audit": out, "nextCursor": next})
+}
+
+// embeddingQuality reports what the configured embedding backend actually
+// measures, so an administrator can tell a semantic model from a lexical
+// fallback without reading the source.
+//
+// The measurement runs against the gateway they configured, which means it costs
+// one embedding request. The store caches the result per backend; ?refresh=true
+// forces a fresh run after a settings change.
+func (s *Server) embeddingQuality(w http.ResponseWriter, r *http.Request) {
+	refresh := r.URL.Query().Get("refresh") == "true"
+	report, err := s.Store.MeasureEmbeddingQuality(r.Context(), refresh)
+	if err != nil {
+		writeError(w, 502, "임베딩 백엔드를 측정하지 못했습니다.")
+		return
+	}
+	classes := make([]map[string]any, 0, len(report.Classes))
+	for _, class := range report.Classes {
+		classes = append(classes, map[string]any{
+			"class": string(class.Class),
+			"mean":  math.Round(class.Mean*1000) / 1000,
+			"min":   math.Round(class.Min*1000) / 1000,
+			"max":   math.Round(class.Max*1000) / 1000,
+			"count": class.Count,
+		})
+	}
+	// fellBack tells the operator the difference that matters most: a model is
+	// configured, but these numbers came from the offline algorithm instead.
+	fellBack := report.Model != "" && report.Algorithm == intelligence.LocalAlgorithm
+	writeJSON(w, 200, map[string]any{
+		"algorithm":        report.Algorithm,
+		"model":            report.Model,
+		"classes":          classes,
+		"discrimination":   math.Round(report.Discrimination*1000) / 1000,
+		"pairwiseAccuracy": math.Round(report.PairwiseAccuracy*1000) / 1000,
+		"pairs":            report.Pairs,
+		"topicSeparation":  math.Round(report.TopicSeparation*1000) / 1000,
+		"neighbourPurity":  math.Round(report.NeighbourPurity*1000) / 1000,
+		"sentences":        report.Sentences,
+		"semantic":         report.Semantic,
+		"fellBack":         fellBack,
+	})
 }

@@ -3,7 +3,6 @@ package intelligence
 import (
 	"context"
 	"fmt"
-	"math"
 	"os"
 	"sort"
 	"strings"
@@ -11,71 +10,10 @@ import (
 	"time"
 )
 
-// The embedding layer decides which thoughts umm calls related, which ones it
-// clusters, and which pair a Dream is built from. Those decisions are only as
-// good as the vectors underneath them, so this file measures the vectors
-// directly instead of inferring their quality from the features built on top.
-//
-// The question it answers is narrow and checkable: does the active algorithm
-// score two ways of saying the same thing above two unrelated sentences that
-// merely share vocabulary? A lexical algorithm gets that backwards.
-
-type pairClass string
-
-const (
-	// classParaphrase: same meaning, deliberately different wording. These must
-	// score high or "related thoughts" misses the connections worth surfacing.
-	classParaphrase pairClass = "paraphrase"
-	// classRelated: different claims about the same subject. Should sit between
-	// paraphrase and unrelated.
-	classRelated pairClass = "related"
-	// classLexicalDecoy: unrelated meaning, shared vocabulary. The trap for any
-	// algorithm that scores surface overlap.
-	classLexicalDecoy pairClass = "lexical-decoy"
-	// classUnrelated: no meaningful relationship. The floor.
-	classUnrelated pairClass = "unrelated"
-)
-
-type semanticPair struct {
-	Class pairClass
-	A, B  string
-}
-
-// semanticPairs is a small hand-labelled set drawn from the kind of notes umm
-// actually holds: working thoughts about a product, in Korean and English.
-// It is not a benchmark of record — it is a regression fence and a way to
-// compare one embedding backend against another on the same ground.
-var semanticPairs = []semanticPair{
-	// Same meaning, different words.
-	{classParaphrase, "외부 API 없이 사내망에서만 모델을 돌린다", "폐쇄망 내부 GPU 서버로 추론을 처리한다"},
-	{classParaphrase, "메모를 고칠 때마다 이전 상태를 남긴다", "편집 시점마다 스냅샷을 보관한다"},
-	{classParaphrase, "밤사이 쌓인 생각에서 새 연결을 찾아준다", "자는 동안 기록을 훑어 관계를 발견한다"},
-	{classParaphrase, "로그인 실패가 반복되면 잠시 막는다", "인증 시도가 계속 틀리면 일시적으로 차단한다"},
-	{classParaphrase, "the database stores every note revision", "each edit to a memo is kept as a snapshot"},
-	{classParaphrase, "search should work without any network access", "lookups must succeed on a fully isolated machine"},
-	{classParaphrase, "팀원마다 볼 수 있는 범위를 다르게 준다", "구성원별로 접근 권한을 구분한다"},
-	{classParaphrase, "오래 안 본 기록을 다시 꺼내 보여준다", "잊고 있던 메모를 되살려 제시한다"},
-
-	// Same subject, different claim.
-	{classRelated, "임베딩 모델을 바꾸면 다시 계산해야 한다", "벡터 차원이 달라지면 기존 인덱스를 못 쓴다"},
-	{classRelated, "캔버스에서 생각을 드래그해 배치한다", "포스트잇 위치를 자유롭게 옮길 수 있다"},
-	{classRelated, "webhook payload is signed with HMAC", "receivers must verify the signature header"},
-	{classRelated, "Dream은 하루에 한 번 생성된다", "야간 배치가 사용자별로 돌아간다"},
-
-	// Shared vocabulary, unrelated meaning — the trap.
-	{classLexicalDecoy, "PostgreSQL 백업 주기를 하루로 정했다", "PostgreSQL 로고 색상이 마음에 든다"},
-	{classLexicalDecoy, "임베딩 모델 교체 계획을 세웠다", "모델하우스 임베딩 광고를 봤다"},
-	{classLexicalDecoy, "the memory graph needs typed edges", "the graph on the wall of the memory ward"},
-	{classLexicalDecoy, "검색 결과를 점수 순으로 정렬한다", "검색대에서 결과를 기다리며 줄을 섰다"},
-	{classLexicalDecoy, "캔버스 확대 배율을 조정했다", "캔버스 천으로 만든 가방을 샀다"},
-	{classLexicalDecoy, "token limit을 4096으로 올렸다", "지하철 token을 잃어버렸다"},
-
-	// Unrelated.
-	{classUnrelated, "고객 인터뷰를 매주 정리한다", "쿠버네티스 인그레스 설정"},
-	{classUnrelated, "점심에 김치찌개를 먹었다", "분산 트랜잭션의 격리 수준"},
-	{classUnrelated, "the release pipeline builds an image", "he practised the violin for an hour"},
-	{classUnrelated, "주말에 자전거를 탔다", "TLS 인증서 만료일 확인"},
-}
+// The dataset and the scoring live in quality.go, because the administrator
+// screen runs the same measurement against whatever backend is configured. This
+// file is where the numbers become assertions: what must not get worse, what a
+// candidate model has to beat, and what the default algorithm currently cannot do.
 
 // discriminationFloor is the recorded behaviour of the default offline
 // algorithm. It is deliberately a floor and not a target: the value is negative
@@ -92,111 +30,69 @@ const discriminationFloor = -0.30
 // which is what makes every "semantic" feature built on top of it lexical.
 const pairAccuracyFloor = 0.02
 
-type classReport struct {
-	class pairClass
-	mean  float64
-	min   float64
-	max   float64
-	count int
-}
-
-func scorePairs(t *testing.T, provider Provider) (map[pairClass][]float64, error) {
+func measure(t *testing.T, provider Provider) QualityReport {
 	t.Helper()
-	scores := map[pairClass][]float64{}
-	for _, pair := range semanticPairs {
-		vectors, _ := provider.Embed(context.Background(), []string{pair.A, pair.B})
-		if len(vectors) != 2 {
-			return nil, fmt.Errorf("provider returned %d vectors for a pair", len(vectors))
-		}
-		scores[pair.Class] = append(scores[pair.Class], Cosine(vectors[0], vectors[1]))
+	report, err := MeasureQuality(context.Background(), provider)
+	if err != nil {
+		t.Fatalf("measure quality: %v", err)
 	}
-	return scores, nil
+	return report
 }
 
-func summarise(scores map[pairClass][]float64) []classReport {
-	order := []pairClass{classParaphrase, classRelated, classLexicalDecoy, classUnrelated}
-	reports := make([]classReport, 0, len(order))
-	for _, class := range order {
-		values := scores[class]
-		if len(values) == 0 {
-			continue
-		}
-		report := classReport{class: class, min: values[0], max: values[0], count: len(values)}
-		for _, value := range values {
-			report.mean += value
-			report.min = math.Min(report.min, value)
-			report.max = math.Max(report.max, value)
-		}
-		report.mean /= float64(len(values))
-		reports = append(reports, report)
-	}
-	return reports
-}
-
-// pairwiseAccuracy asks the only question that matters for retrieval: given one
-// paraphrase and one lexical decoy, does the algorithm rank the paraphrase
-// higher? Every pairing is compared, so the result does not depend on where a
-// threshold happens to sit.
-func pairwiseAccuracy(scores map[pairClass][]float64) float64 {
-	paraphrases, decoys := scores[classParaphrase], scores[classLexicalDecoy]
-	if len(paraphrases) == 0 || len(decoys) == 0 {
-		return 0
-	}
-	correct, total := 0, 0
-	for _, paraphrase := range paraphrases {
-		for _, decoy := range decoys {
-			total++
-			if paraphrase > decoy {
-				correct++
-			}
-		}
-	}
-	return float64(correct) / float64(total)
-}
-
-func meanOf(scores map[pairClass][]float64, class pairClass) float64 {
-	values := scores[class]
-	if len(values) == 0 {
-		return 0
-	}
-	total := 0.0
-	for _, value := range values {
-		total += value
-	}
-	return total / float64(len(values))
-}
-
-func reportTable(t *testing.T, name string, scores map[pairClass][]float64) {
+func reportTable(t *testing.T, name string, report QualityReport) {
 	t.Helper()
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "\n%s\n", name)
 	fmt.Fprintf(&builder, "  %-14s %6s %6s %6s %5s\n", "class", "mean", "min", "max", "n")
-	for _, report := range summarise(scores) {
+	for _, class := range report.Classes {
 		fmt.Fprintf(&builder, "  %-14s %6.3f %6.3f %6.3f %5d\n",
-			report.class, report.mean, report.min, report.max, report.count)
+			class.Class, class.Mean, class.Min, class.Max, class.Count)
 	}
-	discrimination := meanOf(scores, classParaphrase) - meanOf(scores, classLexicalDecoy)
-	fmt.Fprintf(&builder, "  discrimination (paraphrase - lexical-decoy): %+.3f\n", discrimination)
-	fmt.Fprintf(&builder, "  pairwise accuracy (paraphrase > decoy):      %6.1f%%\n", pairwiseAccuracy(scores)*100)
+	fmt.Fprintf(&builder, "  discrimination (paraphrase - lexical-decoy): %+.3f\n", report.Discrimination)
+	fmt.Fprintf(&builder, "  pairwise accuracy (paraphrase > decoy):      %6.1f%%\n", report.PairwiseAccuracy*100)
+	fmt.Fprintf(&builder, "  topic separation (same - different):        %+.3f\n", report.TopicSeparation)
+	fmt.Fprintf(&builder, "  nearest neighbour shares its topic:         %6.1f%% (%d sentences)\n",
+		report.NeighbourPurity*100, report.Sentences)
+	fmt.Fprintf(&builder, "  usable as a semantic layer:                 %v\n", report.Semantic)
 	t.Log(builder.String())
+}
+
+func classMeanIn(report QualityReport, class PairClass) float64 {
+	for _, score := range report.Classes {
+		if score.Class == class {
+			return score.Mean
+		}
+	}
+	return 0
 }
 
 // TestEmbeddingQualityIsMeasured records what the active algorithm actually
 // captures. It fails only on regression, so it documents the ceiling rather
 // than demanding one.
 func TestEmbeddingQualityIsMeasured(t *testing.T) {
-	scores, err := scorePairs(t, Provider{})
-	if err != nil {
-		t.Fatalf("score pairs: %v", err)
-	}
-	reportTable(t, "offline default (character n-gram hashing)", scores)
+	report := measure(t, Provider{})
+	reportTable(t, "offline default (character n-gram hashing)", report)
 
-	discrimination := meanOf(scores, classParaphrase) - meanOf(scores, classLexicalDecoy)
-	if discrimination < discriminationFloor {
-		t.Errorf("discrimination fell to %+.3f, below the recorded floor of %+.3f", discrimination, discriminationFloor)
+	if report.Discrimination < discriminationFloor {
+		t.Errorf("discrimination fell to %+.3f, below the recorded floor of %+.3f",
+			report.Discrimination, discriminationFloor)
 	}
-	if accuracy := pairwiseAccuracy(scores); accuracy < pairAccuracyFloor {
-		t.Errorf("pairwise accuracy fell to %.1f%%, below the recorded floor of %.1f%%", accuracy*100, pairAccuracyFloor*100)
+	if report.PairwiseAccuracy < pairAccuracyFloor {
+		t.Errorf("pairwise accuracy fell to %.1f%%, below the recorded floor of %.1f%%",
+			report.PairwiseAccuracy*100, pairAccuracyFloor*100)
+	}
+	if report.Algorithm != LocalAlgorithm {
+		t.Errorf("the zero-value provider must use the offline algorithm, reported %q", report.Algorithm)
+	}
+}
+
+// TestOfflineDefaultIsNotASemanticBackend is the assertion the administrator
+// screen depends on: the default must report itself as lexical, so the warning
+// that tells an operator to configure a model actually appears.
+func TestOfflineDefaultIsNotASemanticBackend(t *testing.T) {
+	if report := measure(t, Provider{}); report.Semantic {
+		t.Fatal("the offline default reported itself as a semantic backend; " +
+			"the administrator warning would never be shown")
 	}
 }
 
@@ -205,12 +101,9 @@ func TestEmbeddingQualityIsMeasured(t *testing.T) {
 // this, the test fails and must be rewritten — which is exactly the moment the
 // features built on top stop being lexical.
 func TestOfflineDefaultRanksVocabularyAboveMeaning(t *testing.T) {
-	scores, err := scorePairs(t, Provider{})
-	if err != nil {
-		t.Fatalf("score pairs: %v", err)
-	}
-	paraphrase := meanOf(scores, classParaphrase)
-	decoy := meanOf(scores, classLexicalDecoy)
+	report := measure(t, Provider{})
+	paraphrase := classMeanIn(report, ClassParaphrase)
+	decoy := classMeanIn(report, ClassLexicalDecoy)
 	if paraphrase > decoy {
 		t.Fatalf("the offline default now scores meaning (%.3f) above vocabulary (%.3f): "+
 			"update discriminationFloor and pairAccuracyFloor to lock in the improvement", paraphrase, decoy)
@@ -227,41 +120,47 @@ func TestRelatedThoughtThresholdMissesParaphrases(t *testing.T) {
 		relatedThreshold = .22
 		clusterThreshold = .34
 	)
-	scores, err := scorePairs(t, Provider{})
-	if err != nil {
-		t.Fatalf("score pairs: %v", err)
-	}
-	paraphrases := scores[classParaphrase]
-	related, clustered := 0, 0
-	for _, score := range paraphrases {
-		if score >= relatedThreshold {
-			related++
-		}
-		if score >= clusterThreshold {
-			clustered++
-		}
-	}
-	decoysClustered := 0
-	for _, score := range scores[classLexicalDecoy] {
-		if score >= clusterThreshold {
-			decoysClustered++
+	vectors, _ := Provider{}.Embed(context.Background(), pairTexts())
+	related, clustered, paraphrases := 0, 0, 0
+	decoysClustered, decoys := 0, 0
+	for index, pair := range QualityPairs {
+		score := Cosine(vectors[index*2], vectors[index*2+1])
+		switch pair.Class {
+		case ClassParaphrase:
+			paraphrases++
+			if score >= relatedThreshold {
+				related++
+			}
+			if score >= clusterThreshold {
+				clustered++
+			}
+		case ClassLexicalDecoy:
+			decoys++
+			if score >= clusterThreshold {
+				decoysClustered++
+			}
 		}
 	}
 	t.Logf("of %d paraphrases: %d reach the related bar (%.2f), %d reach the cluster bar (%.2f)",
-		len(paraphrases), related, relatedThreshold, clustered, clusterThreshold)
+		paraphrases, related, relatedThreshold, clustered, clusterThreshold)
 	t.Logf("of %d lexical decoys: %d reach the cluster bar and would be grouped as one topic",
-		len(scores[classLexicalDecoy]), decoysClustered)
-	if related > len(paraphrases) {
-		t.Fatal("impossible count")
+		decoys, decoysClustered)
+}
+
+func pairTexts() []string {
+	texts := make([]string, 0, len(QualityPairs)*2)
+	for _, pair := range QualityPairs {
+		texts = append(texts, pair.A, pair.B)
 	}
+	return texts
 }
 
 // TestGatewayEmbeddingQuality runs the same measurement against a configured
 // gateway so a candidate model can be compared on identical ground. It is
 // skipped unless UMM_EMBEDDING_TEST_URL and UMM_EMBEDDING_TEST_MODEL are set:
 //
-//	UMM_EMBEDDING_TEST_URL=http://127.0.0.1:8080 \
-//	UMM_EMBEDDING_TEST_MODEL=intfloat/multilingual-e5-small \
+//	UMM_EMBEDDING_TEST_URL=http://127.0.0.1:11434 \
+//	UMM_EMBEDDING_TEST_MODEL=bge-m3 \
 //	go test ./internal/intelligence -run Gateway -v
 func TestGatewayEmbeddingQuality(t *testing.T) {
 	baseURL := strings.TrimSpace(os.Getenv("UMM_EMBEDDING_TEST_URL"))
@@ -278,21 +177,36 @@ func TestGatewayEmbeddingQuality(t *testing.T) {
 	if _, err := provider.EmbedStrict(context.Background(), []string{"probe"}); err != nil {
 		t.Fatalf("gateway unreachable: %v", err)
 	}
-	scores, err := scorePairs(t, provider)
-	if err != nil {
-		t.Fatalf("score pairs: %v", err)
-	}
-	reportTable(t, "gateway: "+model, scores)
+	report := measure(t, provider)
+	reportTable(t, "gateway: "+model, report)
 
-	discrimination := meanOf(scores, classParaphrase) - meanOf(scores, classLexicalDecoy)
-	accuracy := pairwiseAccuracy(scores)
+	// The measurement is worthless if the vectors quietly fell back to the local
+	// algorithm, so check what actually produced them before judging the model.
+	if report.Algorithm == LocalAlgorithm {
+		t.Fatal("vectors came from the offline algorithm, not the gateway; the candidate was never measured")
+	}
 	// A candidate worth adopting has to get the basic question right. These are
 	// the numbers to beat, not a claim that the candidate will.
-	if discrimination <= 0 {
-		t.Errorf("candidate scores vocabulary above meaning (discrimination %+.3f); it is not an improvement", discrimination)
+	if report.Discrimination <= 0 {
+		t.Errorf("candidate scores vocabulary above meaning (discrimination %+.3f); it is not an improvement",
+			report.Discrimination)
 	}
-	if accuracy < 0.8 {
-		t.Errorf("candidate ranks a paraphrase above a lexical decoy only %.1f%% of the time", accuracy*100)
+	if report.PairwiseAccuracy < 0.8 {
+		t.Errorf("candidate ranks a paraphrase above a lexical decoy only %.1f%% of the time",
+			report.PairwiseAccuracy*100)
+	}
+	// Topic grouping is what related thoughts and clustering actually do, and a
+	// backend can score well on isolated pairs while mixing subjects.
+	if report.NeighbourPurity < semanticPurityBar {
+		t.Errorf("only %.1f%% of sentences had a same-topic nearest match; clusters would mix subjects",
+			report.NeighbourPurity*100)
+	}
+	if report.TopicSeparation <= 0 {
+		t.Errorf("topic separation %+.3f: different subjects score as close as the same subject",
+			report.TopicSeparation)
+	}
+	if !report.Semantic {
+		t.Errorf("candidate did not clear the semantic bar; umm would still warn the operator about it")
 	}
 }
 
@@ -300,8 +214,8 @@ func TestGatewayEmbeddingQuality(t *testing.T) {
 // empty pair would quietly skew every number above.
 func TestSemanticPairsAreWellFormed(t *testing.T) {
 	seen := map[string]bool{}
-	counts := map[pairClass]int{}
-	for index, pair := range semanticPairs {
+	counts := map[PairClass]int{}
+	for index, pair := range QualityPairs {
 		if strings.TrimSpace(pair.A) == "" || strings.TrimSpace(pair.B) == "" {
 			t.Fatalf("pair %d has an empty side", index)
 		}
@@ -315,7 +229,7 @@ func TestSemanticPairsAreWellFormed(t *testing.T) {
 		seen[key] = true
 		counts[pair.Class]++
 	}
-	for _, class := range []pairClass{classParaphrase, classRelated, classLexicalDecoy, classUnrelated} {
+	for _, class := range []PairClass{ClassParaphrase, ClassRelated, ClassLexicalDecoy, ClassUnrelated} {
 		if counts[class] < 4 {
 			t.Errorf("class %s has only %d pairs; too few to average", class, counts[class])
 		}
@@ -325,5 +239,46 @@ func TestSemanticPairsAreWellFormed(t *testing.T) {
 		classes = append(classes, fmt.Sprintf("%s=%d", class, count))
 	}
 	sort.Strings(classes)
-	t.Logf("dataset: %d pairs (%s)", len(semanticPairs), strings.Join(classes, ", "))
+	t.Logf("dataset: %d pairs (%s)", len(QualityPairs), strings.Join(classes, ", "))
+}
+
+// TestQualityTopicsAreWellFormed guards the topic dataset. A sentence repeated
+// across two groups, or a group too small to average, would quietly corrupt both
+// topic numbers — and those numbers gate whether umm calls a backend semantic.
+func TestQualityTopicsAreWellFormed(t *testing.T) {
+	seen := map[string]int{}
+	for index, group := range QualityTopics {
+		if strings.TrimSpace(group.Topic) == "" {
+			t.Fatalf("topic %d has no name", index)
+		}
+		if len(group.Sentences) < 3 {
+			t.Errorf("topic %q has only %d sentences; too few to average", group.Topic, len(group.Sentences))
+		}
+		for _, sentence := range group.Sentences {
+			if strings.TrimSpace(sentence) == "" {
+				t.Fatalf("topic %q has an empty sentence", group.Topic)
+			}
+			if previous, ok := seen[sentence]; ok {
+				t.Fatalf("sentence %q appears in topics %d and %d", sentence, previous, index)
+			}
+			seen[sentence] = index
+		}
+	}
+	if len(QualityTopics) < 3 {
+		t.Fatalf("only %d topics; cross-topic scores need more than a single contrast", len(QualityTopics))
+	}
+	t.Logf("dataset: %d topics, %d sentences", len(QualityTopics), len(seen))
+}
+
+// The offline algorithm must fail the topic measurement too. If it ever passes,
+// the purity bar is no longer separating a lexical backend from a semantic one
+// and needs to be re-derived from fresh measurements.
+func TestOfflineDefaultCannotGroupTopics(t *testing.T) {
+	report := measure(t, Provider{})
+	if report.NeighbourPurity >= semanticPurityBar {
+		t.Fatalf("the offline algorithm reached %.1f%% same-topic neighbours, at or above the %.1f%% bar: "+
+			"re-derive semanticPurityBar from current measurements", report.NeighbourPurity*100, semanticPurityBar*100)
+	}
+	t.Logf("offline default: %.1f%% same-topic nearest matches, topic separation %+.3f",
+		report.NeighbourPurity*100, report.TopicSeparation)
 }

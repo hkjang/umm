@@ -161,6 +161,7 @@ func (s *Server) router() chi.Router {
 				admin.Get("/users", s.adminUsers)
 				admin.Put("/users/{userID}", s.updateUser)
 				admin.Get("/metrics", s.adminMetrics)
+				admin.Get("/embedding-quality", s.embeddingQuality)
 				admin.Post("/dreams/run", s.runDreams)
 				admin.Get("/audit", s.adminAudit)
 				admin.Get("/security/encryption", s.encryptionKeyStatus)

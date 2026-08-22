@@ -692,4 +692,31 @@ export const en: Dictionary = {
   '연결된 구독': 'Open subscriptions',
   '수신 대기': 'Listening',
   '폴백 폴링': 'Fallback polling',
+  '임베딩 품질 측정': 'Embedding quality',
+  '연관 생각·군집·검색·Dream이 실제로 의미를 재고 있는지 라벨링된 문장쌍으로 확인합니다.':
+    'Checks against labelled sentence pairs whether related thoughts, clusters, search and Dream are measuring meaning at all.',
+  '다시 측정': 'Measure again',
+  '임베딩 백엔드를 측정하지 못했습니다. 게이트웨이 주소와 모델 이름을 확인하세요.':
+    'Could not measure the embedding backend. Check the gateway URL and the model name.',
+  '설정한 모델이 쓰이지 않고 있습니다': 'The configured model is not being used',
+  '모델이 설정되어 있지만 벡터는 내장 로컬 알고리즘에서 나왔습니다. 게이트웨이가 응답하지 않거나 모델 이름이 잘못되었을 수 있습니다.':
+    'A model is configured, but these vectors came from the built-in local algorithm. The gateway may be unreachable, or the model name may be wrong.',
+  '의미 기반으로 동작합니다': 'Running on meaning',
+  '이 백엔드는 표현이 달라도 같은 뜻을 알아봅니다.': 'This backend recognises the same meaning in different words.',
+  '지금은 어휘가 겹치는 정도만 재고 있습니다': 'Right now this only measures shared vocabulary',
+  '내장 로컬 임베딩은 단어가 겹치는 문장을 뜻이 같은 문장보다 높게 봅니다. 연관 생각·군집·검색의 "의미상 유사"는 실제로는 어휘 유사입니다. 임베딩 모델을 설정하면 해결됩니다.':
+    'The built-in local embedding ranks sentences that share words above sentences that share meaning. What related thoughts, clusters and search call "semantically similar" is lexical similarity. Configuring an embedding model fixes this.',
+  판별력: 'Discrimination',
+  '쌍별 정확도': 'Pairwise accuracy',
+  '측정된 백엔드': 'Backend measured',
+  '문장쌍 종류': 'Pair type',
+  '평균 유사도': 'Mean similarity',
+  개수: 'Count',
+  '같은 뜻, 다른 표현': 'Same meaning, different words',
+  '같은 주제, 다른 주장': 'Same subject, different claim',
+  '단어만 겹침 (함정)': 'Shared words only (decoy)',
+  무관: 'Unrelated',
+  '최근접 동일 주제': 'Same-topic nearest match',
+  '판별력은 "같은 뜻, 다른 표현"의 평균에서 "단어만 겹침"의 평균을 뺀 값입니다. 음수라면 뜻보다 어휘를 높게 보고 있다는 뜻입니다. 최근접 동일 주제는 라벨된 4개 주제 문장들에서 각 문장의 가장 가까운 이웃이 같은 주제인 비율로, 연관 생각과 군집이 실제로 하는 일에 가장 가깝습니다.':
+    'Discrimination is the mean of "same meaning, different words" minus the mean of "shared words only". A negative value means vocabulary is outranking meaning. Same-topic nearest match is how often a sentence\'s closest match comes from its own topic across four labelled topics — the closest measure of what related thoughts and clustering actually do.',
 };

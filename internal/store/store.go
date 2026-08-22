@@ -33,6 +33,7 @@ type Store struct {
 	Cipher Decrypter
 
 	embeddings        embeddingCache
+	embeddingQuality  embeddingQualityCache
 	leaseConfig       *pgx.ConnConfig
 	aiLeaseSlots      chan struct{}
 	webhookLeaseSlots chan struct{}
