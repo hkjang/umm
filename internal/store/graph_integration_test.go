@@ -203,3 +203,43 @@ func TestConfidenceIsTiedToInferenceIntegration(t *testing.T) {
 		t.Errorf("a well-formed inferred edge was rejected: %v", err)
 	}
 }
+
+// Every place an edge is read has to carry its provenance, or the interface
+// shows a connection without saying where it came from — which is the whole
+// point of recording it. Backlinks was missed when the Edge struct gained
+// origin and confidence, and nothing failed: the field simply arrived empty.
+func TestEveryEdgeReadCarriesProvenanceIntegration(t *testing.T) {
+	db, ownerID, spaceID, notes := graphSpace(t)
+	ctx := context.Background()
+
+	drawn, err := db.CreateEdge(ctx, ownerID, Edge{
+		SpaceID: spaceID, SourceID: notes[0], TargetID: notes[1], Relation: RelationSupports,
+	})
+	if err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+
+	backlinks, err := db.Backlinks(ctx, ownerID, notes[1])
+	if err != nil {
+		t.Fatalf("backlinks: %v", err)
+	}
+	if len(backlinks) == 0 {
+		t.Fatal("the connection did not appear as a backlink")
+	}
+	for _, item := range backlinks {
+		if item.Edge.ID != drawn.ID {
+			continue
+		}
+		if item.Edge.Origin == "" {
+			t.Fatal("backlinks returned an edge with no origin; the interface cannot say who made it")
+		}
+		if item.Edge.Origin != OriginManual {
+			t.Errorf("origin=%q, want %q", item.Edge.Origin, OriginManual)
+		}
+		if item.Edge.Relation != RelationSupports {
+			t.Errorf("relation=%q, want %q", item.Edge.Relation, RelationSupports)
+		}
+		return
+	}
+	t.Fatal("the created edge was not among the backlinks")
+}
