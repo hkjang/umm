@@ -32,7 +32,7 @@ const pairAccuracyFloor = 0.02
 
 func measure(t *testing.T, provider Provider) QualityReport {
 	t.Helper()
-	report, err := MeasureQuality(context.Background(), provider)
+	report, err := MeasureQuality(context.Background(), provider, DefaultQualityBars())
 	if err != nil {
 		t.Fatalf("measure quality: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestGatewayEmbeddingQuality(t *testing.T) {
 	}
 	// Topic grouping is what related thoughts and clustering actually do, and a
 	// backend can score well on isolated pairs while mixing subjects.
-	if report.NeighbourPurity < semanticPurityBar {
+	if report.NeighbourPurity < defaultSemanticPurityBar {
 		t.Errorf("only %.1f%% of sentences had a same-topic nearest match; clusters would mix subjects",
 			report.NeighbourPurity*100)
 	}
@@ -275,10 +275,72 @@ func TestQualityTopicsAreWellFormed(t *testing.T) {
 // and needs to be re-derived from fresh measurements.
 func TestOfflineDefaultCannotGroupTopics(t *testing.T) {
 	report := measure(t, Provider{})
-	if report.NeighbourPurity >= semanticPurityBar {
+	if report.NeighbourPurity >= defaultSemanticPurityBar {
 		t.Fatalf("the offline algorithm reached %.1f%% same-topic neighbours, at or above the %.1f%% bar: "+
-			"re-derive semanticPurityBar from current measurements", report.NeighbourPurity*100, semanticPurityBar*100)
+			"re-derive defaultSemanticPurityBar from current measurements", report.NeighbourPurity*100, defaultSemanticPurityBar*100)
 	}
 	t.Logf("offline default: %.1f%% same-topic nearest matches, topic separation %+.3f",
 		report.NeighbourPurity*100, report.TopicSeparation)
+}
+
+// The bug this pins: the quality report is cached, and the verdict depends on
+// thresholds an administrator can change. Returning the stored verdict meant a
+// raised bar had no effect until the cache expired — measured live, auto-link
+// kept running on a backend the new bar excluded.
+//
+// The measurements do not depend on the bars, so re-judging is exact and free.
+func TestVerdictFollowsTheBarsWithoutRemeasuring(t *testing.T) {
+	report := measure(t, Provider{})
+	if report.Semantic {
+		t.Fatal("the offline default should not clear the shipped bars")
+	}
+
+	// Lowering the bars to nothing must still not pass this backend: positive
+	// discrimination is a floor, not a setting. An administrator can decide how
+	// strict umm is, but not that a backend ranking vocabulary above meaning
+	// counts as semantic — that is the failure the whole gate exists to prevent.
+	if floored := report.WithBars(QualityBars{Accuracy: 0.01, Purity: 0.01}); floored.Semantic {
+		t.Errorf("bars of 0.01 admitted a backend with discrimination %+.3f; "+
+			"meaning outranking vocabulary must not be configurable away", report.Discrimination)
+	}
+
+	// A backend that does separate meaning follows the bars in both directions.
+	working := QualityReport{Discrimination: 0.08, PairwiseAccuracy: 0.83, NeighbourPurity: 0.75}
+	if !working.WithBars(QualityBars{Accuracy: 0.65, Purity: 0.6}).Semantic {
+		t.Error("a backend measured above the shipped bars should pass")
+	}
+	strict := working.WithBars(QualityBars{Accuracy: 0.9, Purity: 0.6})
+	if strict.Semantic {
+		t.Error("raising the accuracy bar above the measurement should fail the verdict")
+	}
+
+	// Re-judging must not disturb the measurements themselves.
+	if strict.PairwiseAccuracy != working.PairwiseAccuracy || strict.NeighbourPurity != working.NeighbourPurity {
+		t.Error("re-judging changed the measurements it was supposed to re-read")
+	}
+	// The report has to say which bars produced the verdict, or a reader cannot
+	// tell a strict deployment from a failing backend.
+	if strict.AccuracyBar != 0.9 {
+		t.Errorf("the report did not record the bar it was judged against: %.3f", strict.AccuracyBar)
+	}
+}
+
+// An out-of-range bar is not a stricter rule, it is one that can never be met or
+// never fails, so it falls back to the measured default.
+func TestQualityBarsNormalize(t *testing.T) {
+	d := DefaultQualityBars()
+	for _, broken := range []QualityBars{
+		{Accuracy: 0, Purity: 0.6},
+		{Accuracy: 1.4, Purity: 0.6},
+		{Accuracy: 0.65, Purity: -1},
+		{Accuracy: 0.65, Purity: 2},
+	} {
+		got := broken.normalized()
+		if got.Accuracy <= 0 || got.Accuracy > 1 || got.Purity <= 0 || got.Purity > 1 {
+			t.Errorf("normalizing %+v left an unusable bar: %+v", broken, got)
+		}
+	}
+	if d.normalized() != d {
+		t.Error("the defaults must survive normalization unchanged")
+	}
 }

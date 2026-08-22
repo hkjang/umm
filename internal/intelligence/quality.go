@@ -145,17 +145,56 @@ type QualityReport struct {
 	// scores on isolated pairs.
 	NeighbourPurity float64 `json:"neighbourPurity"`
 	Sentences       int     `json:"sentences"`
+	// AccuracyBar and PurityBar are the thresholds this verdict was reached
+	// against, so a reader can see what "semantic" meant on this deployment
+	// rather than assuming the shipped defaults.
+	AccuracyBar float64 `json:"accuracyBar"`
+	PurityBar   float64 `json:"purityBar"`
 	// Semantic reports whether this backend is usable as a semantic layer at all.
 	Semantic bool `json:"semantic"`
 }
 
-// semanticAccuracyBar is the point below which a backend is not telling meaning
-// from vocabulary well enough for related thoughts, clustering or Dream pair
-// selection to mean what their names say. The offline algorithm scores 4.2%.
-const semanticAccuracyBar = 0.65
+// QualityBars is where a backend has to land before umm will treat it as a
+// semantic layer. They are settings rather than constants because an operator
+// running an unusual corpus — one language, one narrow domain — may legitimately
+// need a different line, and because the only honest way to pick one is to
+// measure. The defaults below are the values umm was measured against.
+type QualityBars struct {
+	// Accuracy is the fraction of (paraphrase, lexical-decoy) comparisons the
+	// backend must rank the right way round.
+	Accuracy float64
+	// Purity is the share of sentences whose nearest match must share their
+	// topic — the question related thoughts and clustering actually ask.
+	Purity float64
+}
 
-// semanticPurityBar separates a backend that groups subjects from one that does
-// not. The gap is wide and unambiguous: the offline character n-gram algorithm
+// DefaultQualityBars are the measured values. The offline algorithm scores 4.2%
+// accuracy and 18.8% purity; every sentence embedding model measured so far
+// scores 81-85% and 69-88%. The bars sit in the empty space between them.
+func DefaultQualityBars() QualityBars {
+	return QualityBars{Accuracy: defaultSemanticAccuracyBar, Purity: defaultSemanticPurityBar}
+}
+
+// normalized keeps a stored setting inside the range where it means anything. A
+// bar outside 0..1 is not a stricter rule, it is a rule that can never be met or
+// never fails.
+func (b QualityBars) normalized() QualityBars {
+	if b.Accuracy <= 0 || b.Accuracy > 1 {
+		b.Accuracy = defaultSemanticAccuracyBar
+	}
+	if b.Purity <= 0 || b.Purity > 1 {
+		b.Purity = defaultSemanticPurityBar
+	}
+	return b
+}
+
+// defaultSemanticAccuracyBar is the point below which a backend is not telling
+// meaning from vocabulary well enough for related thoughts, clustering or Dream
+// pair selection to mean what their names say. The offline algorithm scores 4.2%.
+const defaultSemanticAccuracyBar = 0.65
+
+// defaultSemanticPurityBar separates a backend that groups subjects from one that
+// does not. The gap is wide and unambiguous: the offline character n-gram algorithm
 // lands at 18.8%, while every sentence embedding model measured so far scores
 // between 68.8% and 87.5%. The bar sits in the empty space between them.
 //
@@ -164,14 +203,15 @@ const semanticAccuracyBar = 0.65
 // better clusters in a given workspace — see docs/admin-guide.md, where the
 // candidates are compared on this and on umm's end-to-end clustering test, which
 // they do not rank the same way.
-const semanticPurityBar = 0.6
+const defaultSemanticPurityBar = 0.6
 
 // MeasureQuality scores every labelled pair with the supplied provider.
 //
 // It embeds all sides in a single batch so a remote backend is contacted once
 // rather than once per pair, and so the report cannot be skewed by a provider
 // that behaves differently on small and large requests.
-func MeasureQuality(ctx context.Context, provider Provider) (QualityReport, error) {
+func MeasureQuality(ctx context.Context, provider Provider, bars QualityBars) (QualityReport, error) {
+	bars = bars.normalized()
 	texts := make([]string, 0, len(QualityPairs)*2)
 	for _, pair := range QualityPairs {
 		texts = append(texts, pair.A, pair.B)
@@ -217,10 +257,23 @@ func MeasureQuality(ctx context.Context, provider Provider) (QualityReport, erro
 	report.Discrimination = classMean(byClass, ClassParaphrase) - classMean(byClass, ClassLexicalDecoy)
 	report.PairwiseAccuracy = pairwiseAccuracy(byClass)
 	report.TopicSeparation, report.NeighbourPurity = topicScores(vectors[pairTexts:], topicOf)
-	report.Semantic = report.Discrimination > 0 &&
-		report.PairwiseAccuracy >= semanticAccuracyBar &&
-		report.NeighbourPurity >= semanticPurityBar
-	return report, nil
+	return report.WithBars(bars), nil
+}
+
+// WithBars re-decides the verdict against a different set of thresholds.
+//
+// The measurements themselves do not depend on where the bars sit, so a stored
+// report can be re-judged without embedding anything again. That matters because
+// the report is cached: an administrator who raises the bar must see the effect
+// immediately, not once the cache expires, and a second instance that never saw
+// the settings change must reach the same conclusion from the same numbers.
+func (r QualityReport) WithBars(bars QualityBars) QualityReport {
+	bars = bars.normalized()
+	r.AccuracyBar, r.PurityBar = bars.Accuracy, bars.Purity
+	r.Semantic = r.Discrimination > 0 &&
+		r.PairwiseAccuracy >= bars.Accuracy &&
+		r.NeighbourPurity >= bars.Purity
+	return r
 }
 
 // topicScores measures what related thoughts and clustering actually do: how far

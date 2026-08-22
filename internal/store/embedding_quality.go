@@ -18,8 +18,6 @@ import (
 // internal/intelligence/quality.go and hands the numbers to the administrator
 // screen, so the person who can fix it is the person who can see it.
 
-const embeddingQualityTTL = 10 * time.Minute
-
 type embeddingQualityCache struct {
 	mu       sync.Mutex
 	report   intelligence.QualityReport
@@ -39,18 +37,23 @@ type embeddingQualityCache struct {
 // round trip to someone's inference server. Pass refresh to force a new run.
 func (s *Store) MeasureEmbeddingQuality(ctx context.Context, refresh bool) (intelligence.QualityReport, error) {
 	provider := s.configuredEmbeddingProvider(ctx)
+	settings := s.IntelligenceSettings(ctx)
+	ttl := time.Duration(settings.QualityCacheMinutes) * time.Minute
 
 	s.embeddingQuality.mu.Lock()
 	cached, cachedProvider, measured := s.embeddingQuality.report, s.embeddingQuality.provider, s.embeddingQuality.measured
 	s.embeddingQuality.mu.Unlock()
 
 	if !refresh && !measured.IsZero() &&
-		time.Since(measured) < embeddingQualityTTL &&
+		time.Since(measured) < ttl &&
 		sameEmbeddingProvider(cachedProvider, provider) {
-		return cached, nil
+		// Re-judge rather than return the stored verdict. The measurements do not
+		// change with the thresholds, but the answer does, and an administrator
+		// who just raised the bar must not be told the old one still holds.
+		return cached.WithBars(settings.QualityBars()), nil
 	}
 
-	report, err := intelligence.MeasureQuality(ctx, provider)
+	report, err := intelligence.MeasureQuality(ctx, provider, settings.QualityBars())
 	if err != nil {
 		return intelligence.QualityReport{}, err
 	}

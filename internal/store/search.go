@@ -208,8 +208,9 @@ func (s *Store) SearchNotesHybrid(ctx context.Context, userID uuid.UUID, options
 		return HybridSearchPage{}, err
 	}
 	semanticScale := intelligence.NewSimilarityScale(semanticScores)
-	dropCutoff := semanticScale.ThresholdOr(intelligence.BandRelated, legacySemanticDropCutoff)
-	labelCutoff := semanticScale.ThresholdOr(intelligence.BandStrong, legacySemanticReasonCutoff)
+	bands := s.IntelligenceSettings(ctx)
+	dropCutoff := semanticScale.ThresholdOr(intelligence.Band(bands.RelatedBand), legacySemanticDropCutoff)
+	labelCutoff := semanticScale.ThresholdOr(intelligence.Band(bands.StrongBand), legacySemanticReasonCutoff)
 	for _, candidate := range scored {
 		// A row with no keyword match earns its place only by being unusually
 		// close to the query for this result set.

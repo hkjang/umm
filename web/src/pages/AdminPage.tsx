@@ -110,6 +110,7 @@ const menu = [
   ['oidc', 'Keycloak SSO', IconPlugConnected],
   ['dream', 'Dream Layer', IconBrain],
   ['ai_gateway', 'AI Gateway', IconRobot],
+  ['intelligence', msg('유사도 기준'), IconAdjustments],
   ['ai_evals', msg('AI 품질 평가'), IconFlask],
   ['security', msg('키 · 권한'), IconShield],
   ['workflow', msg('검토 프로세스'), IconRoute],
@@ -144,6 +145,7 @@ export default function AdminPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState('');
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -197,6 +199,36 @@ export default function AdminPage() {
   }, [dirtySections.length]);
   const update = (name: string, key: string, value: any) =>
     setSettings((all) => ({ ...all, [name]: { ...all[name], [key]: value } }));
+  // Probing before saving separates the two failures an administrator can fix
+  // here — wrong address, wrong model name — from the third, a working model
+  // that is not semantic, which the quality panel answers.
+  const testGateway = async () => {
+    const gateway = settings.ai_gateway || {};
+    setBusy('gateway-test');
+    try {
+      const result = await api<{ ok: boolean; detail?: string; model?: string; dimensions?: number }>(
+        '/admin/ai-gateway/test',
+        json('POST', {
+          base_url: gateway.base_url || '',
+          embedding_model: gateway.embedding_model || '',
+          api_key: gateway.api_key || '',
+        }),
+      );
+      if (result.ok) {
+        setMessage(
+          t('연결됨 · {model} · {dimensions}차원', {
+            model: result.model ?? '',
+            dimensions: result.dimensions ?? 0,
+          }),
+        );
+      } else {
+        setMessage(t('연결 실패: {detail}', { detail: result.detail || '' }));
+      }
+    } finally {
+      setBusy('');
+    }
+  };
+
   const save = async (name: string) => {
     setError('');
     try {
@@ -518,6 +550,17 @@ export default function AdminPage() {
                 value={settings.ai_gateway.prompt_version || ''}
                 onChange={(e) => update('ai_gateway', 'prompt_version', e.currentTarget.value)}
               />
+              <Group justify="flex-end">
+                <Button
+                  size="xs"
+                  variant="light"
+                  leftSection={<IconPlugConnected size={14} />}
+                  loading={busy === 'gateway-test'}
+                  onClick={() => void testGateway()}
+                >
+                  {t('연결 테스트')}
+                </Button>
+              </Group>
               <TextInput
                 label={t('임베딩 모델')}
                 description={t(
@@ -534,6 +577,127 @@ export default function AdminPage() {
                 checked={!!settings.ai_gateway.log_prompt}
                 onChange={(e) => update('ai_gateway', 'log_prompt', e.currentTarget.checked)}
               />
+            </SettingCard>
+          )}
+          {section === 'intelligence' && settings.intelligence && (
+            <SettingCard
+              dirty={settingChanged(settings.intelligence, savedSettings.intelligence)}
+              title={t('유사도 판정 기준')}
+              description={t(
+                '연관 생각·군집·검색·자동 연결이 무엇을 "가깝다"고 볼지 정합니다. 기본값은 umm이 실제로 측정해 정한 값이며, 바꾸지 않으면 그대로 동작합니다.',
+              )}
+              onSave={() => save('intelligence')}
+            >
+              <Alert color="blue" variant="light">
+                {t(
+                  '기준은 코사인 값이 아니라 "그 후보 집합의 평균에서 표준편차 몇 개 위인가"입니다. 그래서 임베딩 모델을 바꿔도 같은 뜻을 유지합니다.',
+                )}
+              </Alert>
+              <SimpleGrid cols={{ base: 1, sm: 3 }}>
+                <NumberInput
+                  label={t('연관 생각 기준')}
+                  description={t('기본 0.6 · 낮을수록 더 많이 연관으로 봅니다')}
+                  min={0}
+                  max={4}
+                  step={0.1}
+                  decimalScale={2}
+                  value={settings.intelligence.related_band}
+                  onChange={(v) => update('intelligence', 'related_band', v)}
+                />
+                <NumberInput
+                  label={t('군집 기준')}
+                  description={t('기본 1.1 · 한 주제로 묶는 문턱')}
+                  min={0}
+                  max={4}
+                  step={0.1}
+                  decimalScale={2}
+                  value={settings.intelligence.cluster_band}
+                  onChange={(v) => update('intelligence', 'cluster_band', v)}
+                />
+                <NumberInput
+                  label={t('강한 일치 기준')}
+                  description={t('기본 0.9 · 검색에 "의미상 유사" 라벨을 붙이는 문턱')}
+                  min={0}
+                  max={4}
+                  step={0.1}
+                  decimalScale={2}
+                  value={settings.intelligence.strong_band}
+                  onChange={(v) => update('intelligence', 'strong_band', v)}
+                />
+              </SimpleGrid>
+
+              <Divider label={t('자동 연결')} labelPosition="left" mt="md" />
+              <Switch
+                label={t('umm이 연결을 먼저 제안')}
+                description={t('끄면 그래프에는 사람과 에이전트가 넣은 연결만 남습니다.')}
+                checked={!!settings.intelligence.autolink_enabled}
+                onChange={(e) => update('intelligence', 'autolink_enabled', e.currentTarget.checked)}
+              />
+              <SimpleGrid cols={{ base: 1, sm: 3 }}>
+                <NumberInput
+                  label={t('제안 기준')}
+                  description={t('기본 1.1 · 연관으로 보는 것보다 높게 둡니다')}
+                  min={0}
+                  max={4}
+                  step={0.1}
+                  decimalScale={2}
+                  value={settings.intelligence.autolink_band}
+                  onChange={(v) => update('intelligence', 'autolink_band', v)}
+                />
+                <NumberInput
+                  label={t('한 번에 제안할 최대 개수')}
+                  description={t('기본 12 · 많이 쌓이면 전부 무시하게 됩니다')}
+                  min={1}
+                  max={100}
+                  value={settings.intelligence.autolink_max_per_run}
+                  onChange={(v) => update('intelligence', 'autolink_max_per_run', v)}
+                />
+                <NumberInput
+                  label={t('필요한 최소 메모 수')}
+                  description={t('기본 6 · 이보다 적으면 판단하지 않습니다')}
+                  min={3}
+                  max={1000}
+                  value={settings.intelligence.autolink_min_notes}
+                  onChange={(v) => update('intelligence', 'autolink_min_notes', v)}
+                />
+              </SimpleGrid>
+
+              <Divider label={t('임베딩 판정 관문')} labelPosition="left" mt="md" />
+              <Alert color="yellow" variant="light">
+                {t(
+                  '이 값을 낮추면 뜻보다 겹치는 단어를 높게 보는 백엔드에서도 자동 연결이 실행됩니다. 단, 어휘가 뜻을 앞서는 백엔드는 어떤 값으로도 통과하지 못합니다 — 그건 설정이 아니라 바닥입니다.',
+                )}
+              </Alert>
+              <SimpleGrid cols={{ base: 1, sm: 3 }}>
+                <NumberInput
+                  label={t('쌍별 정확도 하한')}
+                  description={t('기본 0.65 · 내장 임베딩은 0.042')}
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  decimalScale={2}
+                  value={settings.intelligence.semantic_accuracy_bar}
+                  onChange={(v) => update('intelligence', 'semantic_accuracy_bar', v)}
+                />
+                <NumberInput
+                  label={t('최근접 동일 주제 하한')}
+                  description={t('기본 0.6 · 내장 임베딩은 0.188')}
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  decimalScale={2}
+                  value={settings.intelligence.semantic_purity_bar}
+                  onChange={(v) => update('intelligence', 'semantic_purity_bar', v)}
+                />
+                <NumberInput
+                  label={t('측정 결과 보관(분)')}
+                  description={t('기본 10 · 측정 한 번은 문장 60개 임베딩 요청입니다')}
+                  min={1}
+                  max={1440}
+                  value={settings.intelligence.quality_cache_minutes}
+                  onChange={(v) => update('intelligence', 'quality_cache_minutes', v)}
+                />
+              </SimpleGrid>
             </SettingCard>
           )}
           {section === 'ai_evals' && <AIEvals cases={evals} dreamTypes={evalTypes} reload={load} notify={setMessage} />}
