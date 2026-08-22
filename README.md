@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.13.0-success?style=flat-square" alt="v0.13.0" />
+  <img src="https://img.shields.io/badge/Release-v0.14.0-success?style=flat-square" alt="v0.14.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,14 +25,14 @@
 
 ---
 
-## v0.13.0 — 그래프를 읽을 수 있게
+## v0.14.0 — 판정 기준을 관리자에게
 
-- **`get_connections`**: 에이전트가 MCP로 그래프를 걷습니다. 방향·뜻·출처가 함께 나오므로 자기가 쓴 연결과 사람이 그은 연결을 구별할 수 있습니다.
-- **v0.11.0 결함 수정**: 백링크 조회가 `origin`을 가져오지 않아 화면의 출처 표시가 비어 있었습니다. 명세는 옳았고 구현이 틀렸는데 확인하는 것이 없었습니다.
-- 엣지를 읽는 모든 경로가 출처를 싣는지 확인하는 테스트를 넣었습니다.
-- **테스트 스위트 불안정 해결**: 통합 테스트가 전역 `ai_gateway` 행을 공유하는데 패키지가 병렬로 돌아 서로를 덮고 있었습니다(병렬 3회 중 2회 실패 → 직렬 3회 중 0회). CI를 직렬로 바꿨고 비용은 3%입니다.
+- **유사도 기준이 설정으로**: 연관·군집·검색 라벨·자동 연결의 문턱이 전부 관리자 화면에서 조절됩니다. 기본값은 측정한 값 그대로라 바꾸지 않으면 동작이 같습니다.
+- **게이트웨이 연결 테스트**: 주소 오류·모델 이름 오류·의미를 못 재는 모델을 구분해 알려 줍니다.
+- **바꿀 수 없는 것 하나**: 어휘가 뜻을 앞서는 백엔드는 어떤 설정으로도 자동 연결을 통과하지 못합니다.
+- 범위를 벗어난 값은 조용히 보정하지 않고 거부합니다.
 
-이전 릴리스: [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
@@ -138,7 +138,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.13.0
+  umm:v0.14.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

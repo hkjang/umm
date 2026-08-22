@@ -768,6 +768,46 @@ paths:
       responses:
         '200': { description: What the run produced and why, content: { application/json: { schema: { $ref: '#/components/schemas/SuggestionResult' } } } }
         '500': { $ref: '#/components/responses/Error' }
+  /admin/ai-gateway/test:
+    post:
+      operationId: post_admin_ai_gateway_test
+      tags: [Admin, AI]
+      summary: Probe an embedding gateway before saving it
+      description: |
+        Embeds two short strings against the supplied address and model and
+        reports what happened. This separates the two failures an administrator
+        can fix from this screen — a wrong address and a wrong model name — from
+        the third, a working model that is not semantic, which
+        /admin/embedding-quality answers.
+
+        An omitted or masked api_key falls back to the stored one, so an
+        unchanged gateway can be tested without retyping the secret. A key that
+        cannot be decrypted is treated as absent rather than sent as ciphertext.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [base_url, embedding_model]
+              properties:
+                base_url: { type: string }
+                embedding_model: { type: string }
+                api_key: { type: string }
+      responses:
+        '200':
+          description: The probe result. ok is false with a detail when the gateway refused or was unreachable; this is not an HTTP error because the request itself succeeded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  detail: { type: string, description: Present when ok is false }
+                  model: { type: string }
+                  dimensions: { type: integer, description: Vector width the gateway returned }
+        '400': { $ref: '#/components/responses/Error' }
   /admin/embedding-quality:
     get:
       operationId: get_admin_embedding_quality
@@ -1172,7 +1212,7 @@ components:
         considered: { type: integer, minimum: 0, description: Pairs scored, so a quiet result is distinguishable from no attempt }
     EmbeddingQualityReport:
       type: object
-      required: [algorithm, model, classes, discrimination, pairwiseAccuracy, pairs, topicSeparation, neighbourPurity, sentences, semantic, fellBack]
+      required: [algorithm, model, classes, discrimination, pairwiseAccuracy, pairs, topicSeparation, neighbourPurity, sentences, accuracyBar, purityBar, semantic, fellBack]
       properties:
         algorithm: { type: string, description: Identifier of the algorithm that produced the vectors }
         model: { type: string, description: Configured model name; empty when no gateway model is set }
@@ -1193,6 +1233,8 @@ components:
         topicSeparation: { type: number, description: mean(same-topic similarity) - mean(different-topic similarity) }
         neighbourPurity: { type: number, minimum: 0, maximum: 1, description: Fraction of sentences whose nearest match shares its topic; this is the question related thoughts and clustering ask }
         sentences: { type: integer, minimum: 1 }
+        accuracyBar: { type: number, minimum: 0, maximum: 1, description: The pairwise-accuracy threshold this verdict was judged against, configurable under the intelligence settings }
+        purityBar: { type: number, minimum: 0, maximum: 1, description: The same-topic-neighbour threshold this verdict was judged against }
         semantic: { type: boolean, description: Whether the backend is usable as a semantic layer }
         fellBack: { type: boolean, description: A model is configured but these vectors came from the offline algorithm }
     EncryptionKeyStatus:

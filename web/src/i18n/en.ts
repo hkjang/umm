@@ -745,4 +745,40 @@ export const en: Dictionary = {
   '무엇이 유난히 가까운지 판단하기에 생각이 아직 적습니다.':
     'There are still too few thoughts to say what counts as unusually close.',
   '{count}개 짝을 살펴봤지만 눈에 띄게 가까운 것이 없었습니다.': 'Scored {count} pairs and none stood out.',
+  '유사도 기준': 'Similarity',
+  '유사도 판정 기준': 'Similarity thresholds',
+  '연관 생각·군집·검색·자동 연결이 무엇을 "가깝다"고 볼지 정합니다. 기본값은 umm이 실제로 측정해 정한 값이며, 바꾸지 않으면 그대로 동작합니다.':
+    'What related thoughts, clustering, search and auto-link treat as close. The defaults are the values umm was measured against; leaving them alone keeps the behaviour it shipped with.',
+  '기준은 코사인 값이 아니라 "그 후보 집합의 평균에서 표준편차 몇 개 위인가"입니다. 그래서 임베딩 모델을 바꿔도 같은 뜻을 유지합니다.':
+    'A threshold is not a cosine value but "how many standard deviations above the mean of these candidates" — which is what lets one number mean the same thing after you change the embedding model.',
+  '연관 생각 기준': 'Related thoughts',
+  '기본 0.6 · 낮을수록 더 많이 연관으로 봅니다': 'Default 0.6 · lower shows more as related',
+  '군집 기준': 'Clustering',
+  '기본 1.1 · 한 주제로 묶는 문턱': 'Default 1.1 · the bar for calling two notes one topic',
+  '강한 일치 기준': 'Strong match',
+  '기본 0.9 · 검색에 "의미상 유사" 라벨을 붙이는 문턱':
+    'Default 0.9 · the bar for labelling a search hit semantically similar',
+  '자동 연결': 'Auto-link',
+  'umm이 연결을 먼저 제안': 'Let umm propose connections',
+  '끄면 그래프에는 사람과 에이전트가 넣은 연결만 남습니다.':
+    'With this off, the graph holds only connections people and agents put there.',
+  '제안 기준': 'Suggestion threshold',
+  '기본 1.1 · 연관으로 보는 것보다 높게 둡니다': 'Default 1.1 · keep it above the related bar',
+  '한 번에 제안할 최대 개수': 'Most suggestions per run',
+  '기본 12 · 많이 쌓이면 전부 무시하게 됩니다': 'Default 12 · a pile of proposals gets ignored wholesale',
+  '필요한 최소 메모 수': 'Minimum notes required',
+  '기본 6 · 이보다 적으면 판단하지 않습니다': 'Default 6 · below this umm does not judge',
+  '임베딩 판정 관문': 'Embedding gate',
+  '이 값을 낮추면 뜻보다 겹치는 단어를 높게 보는 백엔드에서도 자동 연결이 실행됩니다. 단, 어휘가 뜻을 앞서는 백엔드는 어떤 값으로도 통과하지 못합니다 — 그건 설정이 아니라 바닥입니다.':
+    'Lowering these lets auto-link run on a backend that scores shared words above shared meaning. A backend where vocabulary outranks meaning still cannot pass at any value — that is a floor, not a setting.',
+  '쌍별 정확도 하한': 'Pairwise accuracy floor',
+  '기본 0.65 · 내장 임베딩은 0.042': 'Default 0.65 · the built-in embedding scores 0.042',
+  '최근접 동일 주제 하한': 'Same-topic neighbour floor',
+  '기본 0.6 · 내장 임베딩은 0.188': 'Default 0.6 · the built-in embedding scores 0.188',
+  '측정 결과 보관(분)': 'Cache measurement (minutes)',
+  '기본 10 · 측정 한 번은 문장 60개 임베딩 요청입니다':
+    'Default 10 · one measurement is a 60-sentence embedding request',
+  '연결 테스트': 'Test connection',
+  '연결됨 · {model} · {dimensions}차원': 'Connected · {model} · {dimensions} dimensions',
+  '연결 실패: {detail}': 'Connection failed: {detail}',
 };

@@ -18,17 +18,6 @@ import (
 // as inferred, carries a score, and can be accepted or dismissed. A suggestion
 // that cannot be told from a drawn line is not a suggestion.
 
-// maxSuggestionsPerRun bounds a single pass. A workspace with two hundred notes
-// has twenty thousand pairs, and burying a person in proposals is a way of
-// making them ignore all of them.
-const maxSuggestionsPerRun = 12
-
-// suggestionBand is where a pair has to sit in the workspace's own distribution
-// before umm will propose it. Deliberately higher than the bar for merely
-// showing a note as related: being worth a glance and being worth writing into
-// the graph are different thresholds.
-const suggestionBand = intelligence.BandCluster
-
 // SuggestionOutcome explains what a run did, including when it did nothing. A
 // caller that gets an empty list needs to know whether the workspace has no
 // candidates or whether umm refused to guess.
@@ -47,6 +36,9 @@ const (
 	// OutcomeTooFewNotes: not enough notes to say what "unusually similar" means
 	// in this workspace.
 	OutcomeTooFewNotes SuggestionOutcome = "too-few-notes"
+	// OutcomeDisabled: an administrator turned proposals off, for a deployment
+	// that wants the graph to hold only what people put in it.
+	OutcomeDisabled SuggestionOutcome = "disabled"
 )
 
 // SuggestionResult is what a run produced and why.
@@ -60,11 +52,6 @@ type SuggestionResult struct {
 	Considered int `json:"considered"`
 }
 
-// minNotesForSuggestions is the point below which a distribution says more about
-// sampling noise than about the workspace. Suggesting from three notes would
-// mean proposing a link between whichever two happen to be closest.
-const minNotesForSuggestions = 6
-
 // SuggestLinks proposes connections between notes that sit unusually close
 // together in the active embedding space, and records them as inferred edges.
 //
@@ -73,6 +60,10 @@ const minNotesForSuggestions = 6
 // above two that share meaning — proposing from it would connect "PostgreSQL
 // backup schedule" to "I like the PostgreSQL logo" and call it a discovery.
 func (s *Store) SuggestLinks(ctx context.Context, userID, spaceID uuid.UUID) (SuggestionResult, error) {
+	settings := s.IntelligenceSettings(ctx)
+	if !settings.AutoLinkEnabled {
+		return SuggestionResult{Outcome: OutcomeDisabled, Edges: []Edge{}}, nil
+	}
 	report, err := s.MeasureEmbeddingQuality(ctx, false)
 	if err != nil {
 		return SuggestionResult{}, fmt.Errorf("measure embedding backend: %w", err)
@@ -85,7 +76,7 @@ func (s *Store) SuggestLinks(ctx context.Context, userID, spaceID uuid.UUID) (Su
 	if err != nil {
 		return SuggestionResult{}, err
 	}
-	if len(notes) < minNotesForSuggestions {
+	if len(notes) < settings.AutoLinkMinNote {
 		return SuggestionResult{Outcome: OutcomeTooFewNotes, Edges: []Edge{}}, nil
 	}
 	vectors := s.loadEmbeddings(ctx, notes)
@@ -130,7 +121,7 @@ func (s *Store) SuggestLinks(ctx context.Context, userID, spaceID uuid.UUID) (Su
 		result.Outcome = OutcomeNoCandidates
 		return result, nil
 	}
-	cutoff := scale.Threshold(suggestionBand)
+	cutoff := scale.Threshold(intelligence.Band(settings.AutoLinkBand))
 
 	kept := candidates[:0]
 	for _, item := range candidates {
@@ -139,8 +130,8 @@ func (s *Store) SuggestLinks(ctx context.Context, userID, spaceID uuid.UUID) (Su
 		}
 	}
 	sort.Slice(kept, func(i, j int) bool { return kept[i].score > kept[j].score })
-	if len(kept) > maxSuggestionsPerRun {
-		kept = kept[:maxSuggestionsPerRun]
+	if len(kept) > settings.AutoLinkMaxRun {
+		kept = kept[:settings.AutoLinkMaxRun]
 	}
 	if len(kept) == 0 {
 		result.Outcome = OutcomeNoCandidates
@@ -148,7 +139,7 @@ func (s *Store) SuggestLinks(ctx context.Context, userID, spaceID uuid.UUID) (Su
 	}
 
 	for _, item := range kept {
-		confidence := suggestionConfidence(item.score, scale)
+		confidence := suggestionConfidence(item.score, scale, settings.AutoLinkBand)
 		edge, err := s.createInferredEdge(ctx, userID, spaceID, item.source, item.target, confidence)
 		if err != nil {
 			return SuggestionResult{}, err
@@ -166,7 +157,7 @@ func (s *Store) SuggestLinks(ctx context.Context, userID, spaceID uuid.UUID) (Su
 // estimate that. It says how strongly this pair stands out from everything else
 // in the space, which is the only claim the measurement supports, and it is what
 // the interface should show a person deciding whether to keep the suggestion.
-func suggestionConfidence(score float64, scale intelligence.SimilarityScale) float64 {
+func suggestionConfidence(score float64, scale intelligence.SimilarityScale, band float64) float64 {
 	if scale.StdDev <= 0 {
 		return 0.5
 	}
@@ -174,7 +165,7 @@ func suggestionConfidence(score float64, scale intelligence.SimilarityScale) flo
 	// The bar already sits at suggestionBand deviations, so a pair that barely
 	// clears it starts at 0.5 and rises from there; three deviations above the
 	// bar reaches the ceiling.
-	confidence := 0.5 + (deviations-float64(suggestionBand))/6
+	confidence := 0.5 + (deviations-band)/6
 	return math.Min(0.99, math.Max(0.5, confidence))
 }
 

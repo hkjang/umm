@@ -34,6 +34,7 @@ type Store struct {
 
 	embeddings        embeddingCache
 	embeddingQuality  embeddingQualityCache
+	intelligence      intelligenceCache
 	leaseConfig       *pgx.ConnConfig
 	aiLeaseSlots      chan struct{}
 	webhookLeaseSlots chan struct{}
@@ -514,7 +515,7 @@ func (s *Store) putSettingPreserving(ctx context.Context, key string, value any,
 
 func AllowedSetting(key string) bool {
 	switch key {
-	case "general", "oidc", "security", "workflow", "dream", "ai_gateway":
+	case "general", "oidc", "security", "workflow", "dream", "ai_gateway", "intelligence":
 		return true
 	}
 	return false
@@ -651,7 +652,7 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 			pairScores = append(pairScores, intelligence.Cosine(vectors[notes[i].ID], vectors[notes[j].ID]))
 		}
 	}
-	relatedCutoff := intelligence.NewSimilarityScale(pairScores).ThresholdOr(intelligence.BandCluster, legacyClusterCutoff)
+	relatedCutoff := intelligence.NewSimilarityScale(pairScores).ThresholdOr(intelligence.Band(s.IntelligenceSettings(ctx).ClusterBand), legacyClusterCutoff)
 	for i := range notes {
 		for j := range notes {
 			if i != j && intelligence.Cosine(vectors[notes[i].ID], vectors[notes[j].ID]) >= relatedCutoff {
@@ -861,7 +862,8 @@ func (s *Store) RelatedNotes(ctx context.Context, userID, noteID uuid.UUID, limi
 		scores[n.ID] = score
 		observed = append(observed, score)
 	}
-	cutoff := intelligence.NewSimilarityScale(observed).ThresholdOr(intelligence.BandRelated, legacyRelatedCutoff)
+	bands := s.IntelligenceSettings(ctx)
+	cutoff := intelligence.NewSimilarityScale(observed).ThresholdOr(intelligence.Band(bands.RelatedBand), legacyRelatedCutoff)
 	related := []RelatedNote{}
 	for _, n := range notes {
 		if n.ID == noteID {
@@ -894,7 +896,7 @@ func (s *Store) Clusters(ctx context.Context, userID, spaceID uuid.UUID) ([]Thou
 			pairScores = append(pairScores, intelligence.Cosine(vectors[notes[i].ID], vectors[notes[j].ID]))
 		}
 	}
-	cutoff := intelligence.NewSimilarityScale(pairScores).ThresholdOr(intelligence.BandCluster, legacyClusterCutoff)
+	cutoff := intelligence.NewSimilarityScale(pairScores).ThresholdOr(intelligence.Band(s.IntelligenceSettings(ctx).ClusterBand), legacyClusterCutoff)
 	used := map[uuid.UUID]bool{}
 	clusters := []ThoughtCluster{}
 	for _, seed := range notes {

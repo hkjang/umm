@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/intelligence"
+	"github.com/hkjang/umm/internal/store"
 )
 
 const secretMask = "••••••••"
@@ -44,7 +45,10 @@ func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	section := chiParam(r, "section")
-	if !slices.Contains([]string{"general", "oidc", "security", "workflow", "dream", "ai_gateway"}, section) {
+	// The store owns this list. Keeping a second copy here meant a new section
+	// had to be added in two places, and forgetting one produced a 404 that looks
+	// like the section does not exist rather than like a missed edit.
+	if !store.AllowedSetting(section) {
 		writeError(w, 404, "알 수 없는 설정 영역입니다.")
 		return
 	}
@@ -86,6 +90,9 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	if section == "security" {
 		s.invalidateSecurityPolicy()
 	}
+	if section == "intelligence" {
+		s.Store.InvalidateIntelligenceSettings()
+	}
 	s.Store.Audit(r.Context(), &p.User.ID, "settings.update", "settings", section, map[string]any{})
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
@@ -125,6 +132,34 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 			}
 			if strings.TrimSpace(fmt.Sprint(v["client_id"])) == "" {
 				return errors.New("OIDC Client ID가 필요합니다")
+			}
+		}
+	case "intelligence":
+		// Clamping a bad value would hide the mistake: an administrator who typed
+		// 40 into a standard-deviation field needs to be told it is not one,
+		// rather than have umm quietly use 1.1 and behave unlike the screen says.
+		for _, field := range []struct {
+			key      string
+			low, max float64
+			unit     string
+		}{
+			{"related_band", 0, 4, "표준편차"},
+			{"cluster_band", 0, 4, "표준편차"},
+			{"strong_band", 0, 4, "표준편차"},
+			{"autolink_band", 0, 4, "표준편차"},
+			{"semantic_accuracy_bar", 0, 1, "0~1 비율"},
+			{"semantic_purity_bar", 0, 1, "0~1 비율"},
+			{"autolink_max_per_run", 1, 100, "개"},
+			{"autolink_min_notes", 3, 1000, "개"},
+			{"quality_cache_minutes", 1, 1440, "분"},
+		} {
+			raw, present := v[field.key]
+			if !present {
+				continue
+			}
+			number, ok := raw.(float64)
+			if !ok || math.IsNaN(number) || number < field.low || number > field.max {
+				return fmt.Errorf("%s은(는) %g~%g %s 범위여야 합니다", field.key, field.low, field.max, field.unit)
 			}
 		}
 	case "security":
@@ -419,9 +454,73 @@ func (s *Server) embeddingQuality(w http.ResponseWriter, r *http.Request) {
 		"pairwiseAccuracy": math.Round(report.PairwiseAccuracy*1000) / 1000,
 		"pairs":            report.Pairs,
 		"topicSeparation":  math.Round(report.TopicSeparation*1000) / 1000,
-		"neighbourPurity":  math.Round(report.NeighbourPurity*1000) / 1000,
-		"sentences":        report.Sentences,
-		"semantic":         report.Semantic,
-		"fellBack":         fellBack,
+		// The thresholds this verdict was reached against, so the screen shows
+		// what "semantic" meant on this deployment rather than the shipped
+		// defaults an administrator may have changed.
+		"accuracyBar":     report.AccuracyBar,
+		"purityBar":       report.PurityBar,
+		"neighbourPurity": math.Round(report.NeighbourPurity*1000) / 1000,
+		"sentences":       report.Sentences,
+		"semantic":        report.Semantic,
+		"fellBack":        fellBack,
+	})
+}
+
+// testEmbeddingGateway probes the configured embedding backend and says what
+// actually happened.
+//
+// Until now the only way to find out whether a gateway worked was to save it and
+// read the quality report, which conflates three different failures: the address
+// is wrong, the model name is wrong, or the model works but is not semantic.
+// This separates the first two, which are the ones an administrator can fix from
+// this screen.
+func (s *Server) testEmbeddingGateway(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		BaseURL string `json:"base_url"`
+		APIKey  string `json:"api_key"`
+		Model   string `json:"embedding_model"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		writeError(w, 400, "게이트웨이 정보가 올바르지 않습니다.")
+		return
+	}
+	if strings.TrimSpace(body.BaseURL) == "" || strings.TrimSpace(body.Model) == "" {
+		writeError(w, 400, "주소와 임베딩 모델 이름이 모두 필요합니다.")
+		return
+	}
+	// A saved key arrives masked, because the settings screen never sends the
+	// stored secret back. Fall back to the stored one so testing an unchanged
+	// gateway does not require retyping it.
+	key := body.APIKey
+	if key == "" || key == secretMask {
+		var stored struct {
+			APIKey string `json:"api_key"`
+		}
+		if s.Store.GetSetting(r.Context(), "ai_gateway", &stored) == nil {
+			key = s.Store.DecryptSetting(stored.APIKey)
+		}
+	}
+
+	ctx, cancel := contextWithTimeout(r, 30*time.Second)
+	defer cancel()
+	provider := intelligence.Provider{Remote: &intelligence.RemoteConfig{
+		BaseURL: body.BaseURL, APIKey: key, Model: body.Model, Timeout: 25 * time.Second,
+	}}
+	vectors, err := provider.EmbedStrict(ctx, []string{"연결 확인", "connection check"})
+	if err != nil {
+		writeJSON(w, 200, map[string]any{
+			"ok":     false,
+			"detail": err.Error(),
+		})
+		return
+	}
+	dimensions := 0
+	if len(vectors) > 0 {
+		dimensions = len(vectors[0])
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":         true,
+		"model":      body.Model,
+		"dimensions": dimensions,
 	})
 }
