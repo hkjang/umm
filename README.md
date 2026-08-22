@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.10.0-success?style=flat-square" alt="v0.10.0" />
+  <img src="https://img.shields.io/badge/Release-v0.11.0-success?style=flat-square" alt="v0.11.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,15 +25,15 @@
 
 ---
 
-## v0.10.0 — 임베딩 품질을 보이게, 그리고 고칠 수 있게
+## v0.11.0 — 연결에 뜻과 출처를 붙이다
 
-- **보이게**: 관리자 → AI Gateway에 **임베딩 품질 측정** 패널이 생겼습니다. 지금 붙어 있는 백엔드가 의미를 재는지 어휘를 재는지 라벨 문장쌍으로 즉시 확인합니다.
-- **조용한 실패 감지**: 모델을 설정했는데 게이트웨이가 죽었거나 모델 이름이 틀려 로컬로 폴백 중이면 **경고가 뜹니다.** 이전에는 아무 데서도 알 수 없었습니다.
-- **고칠 수 있게**: `--profile embeddings` 하나로 오프라인 임베딩 서버를 umm 옆에 띄웁니다. 정적 단일 바이너리(`CGO_ENABLED=0`)는 그대로입니다.
-- **주제 분리 측정 추가**: 연관 생각·군집이 실제로 하는 일(같은 주제끼리 묶이는가)을 재기 시작했습니다. 내장 알고리즘 **18.8%**, bge-m3 **75.0%**.
-- **권장 모델은 측정으로 골랐습니다**: 라벨 지표 1위 모델이 umm의 종단 군집 테스트에서 실패해 `bge-m3`를 기본으로 정했습니다. [비교표](docs/admin-guide.md)
+- **검사되는 어휘**: 연결은 이제 `related·supports·contradicts·refines·expands·follows` 중 하나입니다. 그 밖의 값은 조용히 바꾸지 않고 거부하며, 가능한 목록을 알려 줍니다.
+- **위조할 수 없는 출처**: 이전에는 일반 사용자가 `relation:"dreamed"`를 보내 **"umm의 Dream이 발견했다"고 주장하는 연결**을 만들 수 있었습니다. 출처는 이제 별도 칸이며 요청 본문에서 읽지 않습니다.
+- **에이전트가 쓴 것은 에이전트가 쓴 것으로**: MCP로 만든 연결은 `origin=agent`로 남습니다. 화면과 내보내기가 이를 구별해 보여 줍니다.
+- **한 쌍에 여러 관계**: 두 생각이 서로를 뒷받침하면서 동시에 구체화할 수 있습니다. 역방향 탐색 인덱스도 추가했습니다.
+- **롤백 드릴**: 마이그레이션 010을 실제 데이터로 앞뒤로 굴리는 검증을 CI에 넣었습니다.
 
-이전 릴리스: [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md) · [v0.8.0](docs/releases/v0.8.0.md)
+이전 릴리스: [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
@@ -139,7 +139,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.10.0
+  umm:v0.11.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

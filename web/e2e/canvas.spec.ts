@@ -96,4 +96,22 @@ test.describe('canvas', () => {
     await card.press('Enter');
     await expect(card.getByRole('textbox', { name: '생각 내용' })).toBeFocused();
   });
+  // The connection vocabulary is only worth having if a person can reach it. The
+  // server accepts typed relations over the API either way, so this covers the
+  // part that could silently regress: the toolbar choice reaching the request.
+  test('records what a drawn connection means', async ({ page }) => {
+    // Mantine puts the same aria-label on the input and its listbox, so the
+    // locator has to name the role rather than the label alone.
+    const selector = page.getByRole('combobox', { name: '새로 그리는 연결의 종류' });
+    await expect(selector).toBeVisible();
+
+    await selector.click();
+    await page.getByRole('option', { name: '상충함' }).click();
+    await expect(selector).toHaveValue('상충함');
+
+    // The choice is for a run of connections, not one line, so it has to survive
+    // a reload rather than resetting to the generic relation each visit.
+    await page.reload();
+    await expect(page.getByRole('combobox', { name: '새로 그리는 연결의 종류' })).toHaveValue('상충함');
+  });
 });

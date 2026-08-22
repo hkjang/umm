@@ -272,8 +272,8 @@ func (s *Service) Accept(ctx context.Context, userID, dreamID uuid.UUID, overrid
 		return store.Note{}, err
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by)
-		SELECT $2,ds.source_note_id,$3,'dreamed',$4
+		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,origin,created_by)
+		SELECT $2,ds.source_note_id,$3,'related','dream',$4
 		FROM dream_sources ds
 		JOIN notes n ON n.id=ds.source_note_id AND n.deleted_at IS NULL AND n.space_id=$2
 		WHERE ds.dream_id=$1 AND ds.cited=true
@@ -387,10 +387,10 @@ func (s *Service) MaterializeDevelopment(ctx context.Context, userID, dreamID uu
 	err = tx.QueryRow(ctx, `
 		SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
 		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at,
-		       e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation
+		       e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation,e.origin,e.confidence
 		FROM note_edges e
 		JOIN notes n ON n.id=e.target_note_id AND n.deleted_at IS NULL
-		WHERE e.space_id=$1 AND e.source_note_id=$2 AND e.relation='expanded'
+		WHERE e.space_id=$1 AND e.source_note_id=$2 AND e.relation='expands' AND e.origin='development'
 		  AND n.source='dream' AND n.content=$3
 		ORDER BY n.created_at
 		LIMIT 1`, spaceID, sourceID, content).
@@ -398,7 +398,8 @@ func (s *Service) MaterializeDevelopment(ctx context.Context, userID, dreamID uu
 			&existing.Note.Color, &existing.Note.Kind, &existing.Note.Source, &existing.Note.AIExcluded,
 			&existing.Note.X, &existing.Note.Y, &existing.Note.Width, &existing.Note.Height, &existing.Note.Rotation,
 			&existing.Note.Version, &existing.Note.CreatedAt, &existing.Note.UpdatedAt,
-			&existing.Edge.ID, &existing.Edge.SpaceID, &existing.Edge.SourceID, &existing.Edge.TargetID, &existing.Edge.Relation)
+			&existing.Edge.ID, &existing.Edge.SpaceID, &existing.Edge.SourceID, &existing.Edge.TargetID, &existing.Edge.Relation,
+			&existing.Edge.Origin, &existing.Edge.Confidence)
 	if err == nil {
 		if err = tx.Commit(ctx); err != nil {
 			return DevelopmentMaterialization{}, err
@@ -410,7 +411,9 @@ func (s *Service) MaterializeDevelopment(ctx context.Context, userID, dreamID uu
 		return DevelopmentMaterialization{}, err
 	}
 	var siblingCount int
-	if err = tx.QueryRow(ctx, `SELECT count(*) FROM note_edges WHERE source_note_id=$1 AND relation='expanded'`, sourceID).Scan(&siblingCount); err != nil {
+	if err = tx.QueryRow(ctx,
+		`SELECT count(*) FROM note_edges WHERE source_note_id=$1 AND relation='expands' AND origin='development'`,
+		sourceID).Scan(&siblingCount); err != nil {
 		return DevelopmentMaterialization{}, err
 	}
 	result := DevelopmentMaterialization{Created: true}
@@ -427,10 +430,11 @@ func (s *Service) MaterializeDevelopment(ctx context.Context, userID, dreamID uu
 	if err != nil {
 		return DevelopmentMaterialization{}, err
 	}
-	result.Edge = store.Edge{SpaceID: spaceID, SourceID: sourceID, TargetID: result.Note.ID, Relation: "expanded"}
+	result.Edge = store.Edge{SpaceID: spaceID, SourceID: sourceID, TargetID: result.Note.ID,
+		Relation: store.RelationExpands, Origin: store.OriginDevelopment}
 	if err = tx.QueryRow(ctx, `
-		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by)
-		VALUES($1,$2,$3,$4,$5)
+		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,origin,created_by)
+		VALUES($1,$2,$3,$4,'development',$5)
 		RETURNING id`, spaceID, sourceID, result.Note.ID, result.Edge.Relation, userID).Scan(&result.Edge.ID); err != nil {
 		return DevelopmentMaterialization{}, err
 	}

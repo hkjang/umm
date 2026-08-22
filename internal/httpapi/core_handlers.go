@@ -458,12 +458,20 @@ func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "연결 정보가 올바르지 않습니다.")
 		return
 	}
-	e := store.Edge{SourceID: body.SourceID, TargetID: body.TargetID, Relation: body.Relation}
+	e := store.Edge{SourceID: body.SourceID, TargetID: body.TargetID, Relation: store.Relation(body.Relation)}
 	e.ID = uuid.Nil
 	e.SpaceID = spaceID
 	p := principal(r)
 	created, err := s.Store.CreateEdge(r.Context(), p.User.ID, e)
 	if err != nil {
+		if errors.Is(err, store.ErrUnknownRelation) {
+			// The client named a relation umm does not have. Say which ones exist
+			// rather than silently recording a connection it did not describe.
+			writeProblem(w, r, http.StatusBadRequest, "unknown-edge-relation", "연결 종류가 올바르지 않습니다",
+				"umm이 아는 연결 종류가 아닙니다. allowedRelations 중에서 선택해 주세요.",
+				map[string]any{"allowedRelations": store.Relations()})
+			return
+		}
 		status := createEdgeErrorStatus(err)
 		message := "생각을 연결할 수 없습니다."
 		if status == http.StatusInternalServerError {

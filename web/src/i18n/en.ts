@@ -719,4 +719,15 @@ export const en: Dictionary = {
   '최근접 동일 주제': 'Same-topic nearest match',
   '판별력은 "같은 뜻, 다른 표현"의 평균에서 "단어만 겹침"의 평균을 뺀 값입니다. 음수라면 뜻보다 어휘를 높게 보고 있다는 뜻입니다. 최근접 동일 주제는 라벨된 4개 주제 문장들에서 각 문장의 가장 가까운 이웃이 같은 주제인 비율로, 연관 생각과 군집이 실제로 하는 일에 가장 가깝습니다.':
     'Discrimination is the mean of "same meaning, different words" minus the mean of "shared words only". A negative value means vocabulary is outranking meaning. Same-topic nearest match is how often a sentence\'s closest match comes from its own topic across four labelled topics — the closest measure of what related thoughts and clustering actually do.',
+  연결됨: 'Related',
+  뒷받침함: 'Supports',
+  상충함: 'Contradicts',
+  구체화함: 'Refines',
+  확장됨: 'Expands',
+  이어짐: 'Follows',
+  '직접 연결': 'Drawn by hand',
+  에이전트: 'Agent',
+  'Dream 확장': 'Dream development',
+  '자동 추천': 'Suggested',
+  '새로 그리는 연결의 종류': 'What a new connection means',
 };

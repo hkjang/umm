@@ -90,7 +90,14 @@ type Edge struct {
 	SpaceID  uuid.UUID `json:"spaceId"`
 	SourceID uuid.UUID `json:"source"`
 	TargetID uuid.UUID `json:"target"`
-	Relation string    `json:"relation"`
+	Relation Relation  `json:"relation"`
+	// Origin says who made this connection. It is set by whichever code performs
+	// the write and is never taken from a request body, so a client cannot claim
+	// that umm inferred a line the client drew.
+	Origin Origin `json:"origin"`
+	// Confidence is set only for inferred edges. A person who drew a line is not
+	// expressing a probability, so it stays null for everything else.
+	Confidence *float64 `json:"confidence,omitempty"`
 }
 
 type RelatedNote struct {
@@ -653,7 +660,7 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 		}
 	}
 	edgeRows, err := s.Pool.Query(ctx, `
-		SELECT e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation
+		SELECT e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation,e.origin,e.confidence
 		FROM note_edges e
 		JOIN spaces sp ON sp.id=e.space_id
 		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$3
@@ -666,7 +673,7 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 	edges := []Edge{}
 	for edgeRows.Next() {
 		var e Edge
-		if err := edgeRows.Scan(&e.ID, &e.SpaceID, &e.SourceID, &e.TargetID, &e.Relation); err != nil {
+		if err := edgeRows.Scan(&e.ID, &e.SpaceID, &e.SourceID, &e.TargetID, &e.Relation, &e.Origin, &e.Confidence); err != nil {
 			return nil, nil, err
 		}
 		edges = append(edges, e)
@@ -771,22 +778,44 @@ func (s *Store) DeleteNote(ctx context.Context, userID, noteID uuid.UUID) error 
 	return tx.Commit(ctx)
 }
 
+// CreateEdge records a connection a person drew through the web API.
 func (s *Store) CreateEdge(ctx context.Context, userID uuid.UUID, e Edge) (Edge, error) {
-	if e.Relation == "" {
-		e.Relation = "related"
+	return s.createEdge(ctx, userID, e, OriginManual)
+}
+
+// CreateAgentEdge records a connection asserted through MCP by an agent holding
+// a scoped key. Same rules as a manual edge, different provenance: once agents
+// write into someone's memory, the person has to be able to see which parts of
+// it they wrote.
+func (s *Store) CreateAgentEdge(ctx context.Context, userID uuid.UUID, e Edge) (Edge, error) {
+	return s.createEdge(ctx, userID, e, OriginAgent)
+}
+
+// createEdge is the single write path for asserted connections. Origin is an
+// argument from the calling code, never a field carried in from a request body:
+// letting a client choose it would restore exactly the hole this vocabulary was
+// introduced to close — claiming that Dream, or umm's own inference, produced a
+// connection the client drew.
+func (s *Store) createEdge(ctx context.Context, userID uuid.UUID, e Edge, origin Origin) (Edge, error) {
+	relation, err := ParseRelation(string(e.Relation))
+	if err != nil {
+		return Edge{}, err
 	}
+	e.Relation = relation
+	e.Origin = origin
+	e.Confidence = nil
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return Edge{}, err
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
-		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,created_by)
-		SELECT $1,$2,$3,$4,$5
+		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,origin,created_by)
+		SELECT $1,$2,$3,$4,$6,$5
 		WHERE EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$5 WHERE s.id=$1 AND (s.owner_id=$5 OR m.permission IN ('edit','manage')))
 		  AND EXISTS(SELECT 1 FROM notes WHERE id=$2 AND space_id=$1 AND deleted_at IS NULL)
 		  AND EXISTS(SELECT 1 FROM notes WHERE id=$3 AND space_id=$1 AND deleted_at IS NULL)
-		RETURNING id`, e.SpaceID, e.SourceID, e.TargetID, e.Relation, userID).Scan(&e.ID)
+		RETURNING id`, e.SpaceID, e.SourceID, e.TargetID, e.Relation, userID, e.Origin).Scan(&e.ID)
 	if err != nil {
 		return Edge{}, err
 	}

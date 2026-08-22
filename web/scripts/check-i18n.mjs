@@ -87,8 +87,19 @@ for (const file of walk(sourceRoot)) {
 }
 const english = readFileSync(join(sourceRoot, 'i18n/en.ts'), 'utf8');
 const translated = new Set();
+const duplicated = [];
 for (const match of english.matchAll(/^\s*(?:'((?:[^'\\]|\\.)*)'|([^\s:'"]+))\s*:/gm)) {
-  translated.add((match[1] ?? match[2]).replaceAll("\\'", "'"));
+  const key = (match[1] ?? match[2]).replaceAll("\\'", "'");
+  // A repeated key is not a type error the editor surfaces reliably, and the
+  // later entry silently wins — so two translations of one phrase can disagree
+  // with only one of them ever reaching a reader.
+  if (translated.has(key)) duplicated.push(key);
+  translated.add(key);
+}
+if (duplicated.length > 0) {
+  console.error(`Keys translated more than once (${duplicated.length}):`);
+  for (const key of duplicated.sort()) console.error(`  ${key}`);
+  process.exit(1);
 }
 const untranslated = [...requested].filter((key) => !translated.has(key)).sort();
 if (untranslated.length > 0) {
