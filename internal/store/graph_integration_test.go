@@ -206,8 +206,15 @@ func TestConfidenceIsTiedToInferenceIntegration(t *testing.T) {
 
 // Every place an edge is read has to carry its provenance, or the interface
 // shows a connection without saying where it came from — which is the whole
-// point of recording it. Backlinks was missed when the Edge struct gained
-// origin and confidence, and nothing failed: the field simply arrived empty.
+// point of recording it.
+//
+// This is the defect that reached a release: Backlinks was missed when the Edge
+// struct gained origin and confidence, and nothing failed. The fields simply
+// arrived empty, so the canvas rendered a connection with a separator and
+// nothing after it, while the release notes said umm now showed the origin.
+//
+// The table below is the guard. Every function that hands an Edge to a caller
+// belongs in it; a read path added without an entry is one nobody is checking.
 func TestEveryEdgeReadCarriesProvenanceIntegration(t *testing.T) {
 	db, ownerID, spaceID, notes := graphSpace(t)
 	ctx := context.Background()
@@ -219,27 +226,89 @@ func TestEveryEdgeReadCarriesProvenanceIntegration(t *testing.T) {
 		t.Fatalf("create edge: %v", err)
 	}
 
-	backlinks, err := db.Backlinks(ctx, ownerID, notes[1])
+	readPaths := []struct {
+		name string
+		read func() (Edge, error)
+	}{
+		{"CreateEdge", func() (Edge, error) { return drawn, nil }},
+		{"Backlinks", func() (Edge, error) {
+			links, err := db.Backlinks(ctx, ownerID, notes[1])
+			if err != nil {
+				return Edge{}, err
+			}
+			for _, link := range links {
+				if link.Edge.ID == drawn.ID {
+					return link.Edge, nil
+				}
+			}
+			return Edge{}, errors.New("the connection did not appear as a backlink")
+		}},
+		{"ListNotes", func() (Edge, error) {
+			_, edges, err := db.ListNotes(ctx, ownerID, spaceID, "")
+			if err != nil {
+				return Edge{}, err
+			}
+			for _, edge := range edges {
+				if edge.ID == drawn.ID {
+					return edge, nil
+				}
+			}
+			return Edge{}, errors.New("the connection was not among the space edges")
+		}},
+	}
+
+	for _, path := range readPaths {
+		t.Run(path.name, func(t *testing.T) {
+			edge, err := path.read()
+			if err != nil {
+				t.Fatalf("%s: %v", path.name, err)
+			}
+			if edge.Origin == "" {
+				t.Fatalf("%s returned an edge with no origin; the interface cannot say who made it", path.name)
+			}
+			if edge.Origin != OriginManual {
+				t.Errorf("origin=%q, want %q", edge.Origin, OriginManual)
+			}
+			if edge.Relation != RelationSupports {
+				t.Errorf("relation=%q, want %q", edge.Relation, RelationSupports)
+			}
+			if edge.SpaceID != spaceID {
+				t.Errorf("spaceId=%v, want %v", edge.SpaceID, spaceID)
+			}
+		})
+	}
+}
+
+// The inferred half of the same guard: a suggestion read back anywhere has to
+// keep both the mark that umm guessed it and the score, or the interface cannot
+// present it as a suggestion.
+func TestInferredEdgesKeepTheirScoreWhenReadBackIntegration(t *testing.T) {
+	db, ownerID, spaceID, notes := graphSpace(t)
+	ctx := context.Background()
+
+	confidence := 0.73
+	if _, err := db.Pool.Exec(ctx,
+		`INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,origin,confidence,created_by)
+		 VALUES($1,$2,$3,'related','auto',$4,$5)`,
+		spaceID, notes[0], notes[1], confidence, ownerID); err != nil {
+		t.Fatal(err)
+	}
+
+	links, err := db.Backlinks(ctx, ownerID, notes[1])
 	if err != nil {
 		t.Fatalf("backlinks: %v", err)
 	}
-	if len(backlinks) == 0 {
-		t.Fatal("the connection did not appear as a backlink")
+	if len(links) == 0 {
+		t.Fatal("the inferred connection did not appear as a backlink")
 	}
-	for _, item := range backlinks {
-		if item.Edge.ID != drawn.ID {
-			continue
-		}
-		if item.Edge.Origin == "" {
-			t.Fatal("backlinks returned an edge with no origin; the interface cannot say who made it")
-		}
-		if item.Edge.Origin != OriginManual {
-			t.Errorf("origin=%q, want %q", item.Edge.Origin, OriginManual)
-		}
-		if item.Edge.Relation != RelationSupports {
-			t.Errorf("relation=%q, want %q", item.Edge.Relation, RelationSupports)
-		}
-		return
+	edge := links[0].Edge
+	if !edge.Origin.Inferred() {
+		t.Errorf("origin=%q; a suggestion read back must still report itself as inferred", edge.Origin)
 	}
-	t.Fatal("the created edge was not among the backlinks")
+	if edge.Confidence == nil {
+		t.Fatal("the score was dropped on the way out; the interface cannot show how strong the guess was")
+	}
+	if *edge.Confidence < confidence-1e-6 || *edge.Confidence > confidence+1e-6 {
+		t.Errorf("confidence=%.3f, want %.3f", *edge.Confidence, confidence)
+	}
 }
