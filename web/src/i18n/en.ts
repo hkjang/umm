@@ -730,4 +730,19 @@ export const en: Dictionary = {
   'Dream 확장': 'Dream development',
   '자동 추천': 'Suggested',
   '새로 그리는 연결의 종류': 'What a new connection means',
+  '연결 추천 받기': 'Suggest connections',
+  'umm이 찾은 연결 {count}개': '{count} connections umm found',
+  '아래 연결은 umm이 추측한 것이라 캔버스에도 추천으로 표시됩니다. 남기면 직접 그은 연결이 되고, 지우면 사라집니다.':
+    "These are umm's guesses, and the canvas shows them as suggestions. Keeping one makes it a connection you drew; discarding removes it.",
+  '모두 검토했습니다.': 'All reviewed.',
+  '두드러진 정도': 'Stands out by',
+  남기기: 'Keep',
+  '추천 지우기': 'Discard',
+  '추천을 건너뛰었습니다': 'No suggestions made',
+  '추천할 연결이 없습니다': 'Nothing worth suggesting',
+  '지금 임베딩이 뜻이 아니라 겹치는 단어를 재고 있어 추천을 만들지 않았습니다. 관리자 → AI Gateway에서 임베딩 모델을 설정하면 켜집니다.':
+    'The current embedding measures shared words rather than shared meaning, so umm did not guess. Set an embedding model under Admin → AI Gateway to enable this.',
+  '무엇이 유난히 가까운지 판단하기에 생각이 아직 적습니다.':
+    'There are still too few thoughts to say what counts as unusually close.',
+  '{count}개 짝을 살펴봤지만 눈에 띄게 가까운 것이 없었습니다.': 'Scored {count} pairs and none stood out.',
 };

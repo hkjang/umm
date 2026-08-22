@@ -722,6 +722,52 @@ paths:
       tags: [Admin]
       summary: Get product, Dream quality, token and cost metrics
       responses: { '200': { description: Current operational metrics } }
+  /edges/{edgeId}:
+    delete:
+      operationId: delete_edge
+      tags: [Notes]
+      summary: Remove a connection
+      description: Also how an inferred suggestion is dismissed. Requires edit or manage permission on the space.
+      parameters:
+        - { name: edgeId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Connection removed }
+        '404': { $ref: '#/components/responses/Error' }
+  /edges/{edgeId}/accept:
+    post:
+      operationId: accept_edge_suggestion
+      tags: [Notes, AI]
+      summary: Stand behind an inferred connection
+      description: |
+        Turns an edge with origin=auto into origin=manual and clears its
+        confidence: once a person has decided a connection is real, a score
+        describing how far it stood out from the rest of the workspace no longer
+        says anything about it. Only inferred edges can be accepted.
+      parameters:
+        - { name: edgeId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The accepted connection, content: { application/json: { schema: { $ref: '#/components/schemas/Edge' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /spaces/{spaceId}/links/suggest:
+    post:
+      operationId: suggest_links
+      tags: [Notes, AI]
+      summary: Propose connections between thoughts that sit unusually close
+      description: |
+        Scores every pair in the space against the workspace's own distribution
+        and records the ones that stand out as edges with origin=auto and a
+        confidence, which the interface shows as suggestions.
+
+        It refuses to run unless the configured embedding backend has been
+        measured as semantic (see /admin/embedding-quality). The offline default
+        ranks two sentences that share words above two that share meaning, so
+        proposing from it would connect notes that merely reuse vocabulary. The
+        outcome field says which case applied.
+      parameters:
+        - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: What the run produced and why, content: { application/json: { schema: { $ref: '#/components/schemas/SuggestionResult' } } } }
+        '500': { $ref: '#/components/responses/Error' }
   /admin/embedding-quality:
     get:
       operationId: get_admin_embedding_quality
@@ -1107,6 +1153,23 @@ components:
         expectedTerms: { type: array, maxItems: 20, items: { type: string, maxLength: 100 } }
         forbiddenTerms: { type: array, maxItems: 20, items: { type: string, maxLength: 100 } }
         active: { type: boolean }
+    SuggestionResult:
+      type: object
+      required: [outcome, edges, considered]
+      properties:
+        outcome:
+          type: string
+          enum: [suggested, no-candidates, backend-not-semantic, too-few-notes]
+          description: |
+            suggested — at least one connection was proposed. no-candidates — the
+            backend can judge and nothing stood out. backend-not-semantic — the
+            active embedding scores vocabulary above meaning, so umm declined to
+            guess. too-few-notes — not enough notes to say what unusually similar
+            means here.
+        edges:
+          type: array
+          items: { $ref: '#/components/schemas/Edge' }
+        considered: { type: integer, minimum: 0, description: Pairs scored, so a quiet result is distinguishable from no attempt }
     EmbeddingQualityReport:
       type: object
       required: [algorithm, model, classes, discrimination, pairwiseAccuracy, pairs, topicSeparation, neighbourPurity, sentences, semantic, fellBack]

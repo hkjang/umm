@@ -88,6 +88,16 @@ export interface ThoughtEdge {
   confidence?: number;
 }
 
+/** Why a suggestion run produced what it did — including when it produced nothing. */
+export type SuggestionOutcome = 'suggested' | 'no-candidates' | 'backend-not-semantic' | 'too-few-notes';
+
+export interface SuggestionResult {
+  outcome: SuggestionOutcome;
+  edges: ThoughtEdge[];
+  /** Pairs scored, so a quiet result is distinguishable from no attempt. */
+  considered: number;
+}
+
 export interface NoteSearchResult {
   id: string;
   spaceId: string;
