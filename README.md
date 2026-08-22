@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.9.0-success?style=flat-square" alt="v0.9.0" />
+  <img src="https://img.shields.io/badge/Release-v0.10.0-success?style=flat-square" alt="v0.10.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,13 +25,15 @@
 
 ---
 
-## v0.9.0 — 임베딩을 측정하고, 어떤 백엔드에서도 맞게
+## v0.10.0 — 임베딩 품질을 보이게, 그리고 고칠 수 있게
 
-- **측정**: 한/영 22쌍 라벨 데이터셋으로 임베딩이 실제로 무엇을 재는지 CI에서 매번 보고합니다. 기본 로컬 알고리즘의 쌍별 정확도는 **4.2%**, bge-m3는 **83.3%** 입니다.
-- **수정**: 하드코딩된 유사도 임계값 5곳을 **분포 상대 기준**으로 바꿨습니다. 이전에는 제대로 된 임베딩 모델을 붙이는 순간 연관 생각·군집·검색 라벨·Dream 페어 선택이 조용히 무너졌습니다.
-- **검증**: 실제 임베딩 백엔드를 붙인 통합 테스트가 군집 분리와 연관 생각 축소를 확인하며, 로컬로 폴백되면 실패합니다.
+- **보이게**: 관리자 → AI Gateway에 **임베딩 품질 측정** 패널이 생겼습니다. 지금 붙어 있는 백엔드가 의미를 재는지 어휘를 재는지 라벨 문장쌍으로 즉시 확인합니다.
+- **조용한 실패 감지**: 모델을 설정했는데 게이트웨이가 죽었거나 모델 이름이 틀려 로컬로 폴백 중이면 **경고가 뜹니다.** 이전에는 아무 데서도 알 수 없었습니다.
+- **고칠 수 있게**: `--profile embeddings` 하나로 오프라인 임베딩 서버를 umm 옆에 띄웁니다. 정적 단일 바이너리(`CGO_ENABLED=0`)는 그대로입니다.
+- **주제 분리 측정 추가**: 연관 생각·군집이 실제로 하는 일(같은 주제끼리 묶이는가)을 재기 시작했습니다. 내장 알고리즘 **18.8%**, bge-m3 **75.0%**.
+- **권장 모델은 측정으로 골랐습니다**: 라벨 지표 1위 모델이 umm의 종단 군집 테스트에서 실패해 `bge-m3`를 기본으로 정했습니다. [비교표](docs/admin-guide.md)
 
-이전 릴리스의 협업·보안·복구 기능은 그대로 유지됩니다: [v0.8.1](docs/releases/v0.8.1.md) · [v0.8.0](docs/releases/v0.8.0.md)
+이전 릴리스: [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md) · [v0.8.0](docs/releases/v0.8.0.md)
 
 ---
 
@@ -137,7 +139,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.9.0
+  umm:v0.10.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

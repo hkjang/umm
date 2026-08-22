@@ -90,6 +90,20 @@ interface EvalCase {
   };
 }
 
+interface EmbeddingQuality {
+  algorithm: string;
+  model: string;
+  classes: { class: string; mean: number; min: number; max: number; count: number }[];
+  discrimination: number;
+  pairwiseAccuracy: number;
+  pairs: number;
+  topicSeparation: number;
+  neighbourPurity: number;
+  sentences: number;
+  semantic: boolean;
+  fellBack: boolean;
+}
+
 const menu = [
   ['overview', msg('운영 현황'), IconActivity],
   ['general', msg('일반'), IconSettings],
@@ -513,6 +527,7 @@ export default function AdminPage() {
                 value={settings.ai_gateway.embedding_model || ''}
                 onChange={(e) => update('ai_gateway', 'embedding_model', e.currentTarget.value)}
               />
+              <EmbeddingQualityPanel />
               <Switch
                 label={t('원문 Prompt 로그 저장')}
                 description={t('기본 OFF입니다. ON이면 민감 패턴 제거 후 암호화해 보존 기간 동안만 저장합니다.')}
@@ -1028,6 +1043,151 @@ function Overview({ metrics, onRun }: { metrics: Record<string, any>; onRun: () 
     </Stack>
   );
 }
+// A configured embedding model that never took effect looks exactly like a
+// working one: no error, no warning, and features that still say "related".
+// This runs umm's own labelled measurement against whatever backend is live and
+// shows the two numbers that decide whether "similar" means anything.
+function EmbeddingQualityPanel() {
+  const { t } = useTranslation();
+  const [report, setReport] = useState<EmbeddingQuality | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  const measure = useCallback(async (refresh: boolean) => {
+    setBusy(true);
+    setFailed(false);
+    try {
+      setReport(await api<EmbeddingQuality>(`/admin/embedding-quality${refresh ? '?refresh=true' : ''}`));
+    } catch {
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void measure(false);
+  }, [measure]);
+
+  const classLabels: Record<string, string> = {
+    paraphrase: t('같은 뜻, 다른 표현'),
+    related: t('같은 주제, 다른 주장'),
+    'lexical-decoy': t('단어만 겹침 (함정)'),
+    unrelated: t('무관'),
+  };
+
+  return (
+    <Card withBorder radius="md" padding="md" mt="xs">
+      <Group justify="space-between" mb="xs" wrap="nowrap">
+        <div>
+          <Text fw={600} size="sm">
+            {t('임베딩 품질 측정')}
+          </Text>
+          <Text size="xs" c="dimmed">
+            {t('연관 생각·군집·검색·Dream이 실제로 의미를 재고 있는지 라벨링된 문장쌍으로 확인합니다.')}
+          </Text>
+        </div>
+        <Button
+          size="xs"
+          variant="light"
+          leftSection={<IconRefresh size={14} />}
+          loading={busy}
+          onClick={() => void measure(true)}
+        >
+          {t('다시 측정')}
+        </Button>
+      </Group>
+
+      {failed && (
+        <Alert color="red" variant="light">
+          {t('임베딩 백엔드를 측정하지 못했습니다. 게이트웨이 주소와 모델 이름을 확인하세요.')}
+        </Alert>
+      )}
+
+      {report && (
+        <Stack gap="xs">
+          {report.fellBack ? (
+            <Alert color="red" variant="light" title={t('설정한 모델이 쓰이지 않고 있습니다')}>
+              {t(
+                '모델이 설정되어 있지만 벡터는 내장 로컬 알고리즘에서 나왔습니다. 게이트웨이가 응답하지 않거나 모델 이름이 잘못되었을 수 있습니다.',
+              )}
+            </Alert>
+          ) : report.semantic ? (
+            <Alert color="teal" variant="light" title={t('의미 기반으로 동작합니다')}>
+              {t('이 백엔드는 표현이 달라도 같은 뜻을 알아봅니다.')}
+            </Alert>
+          ) : (
+            <Alert color="yellow" variant="light" title={t('지금은 어휘가 겹치는 정도만 재고 있습니다')}>
+              {t(
+                '내장 로컬 임베딩은 단어가 겹치는 문장을 뜻이 같은 문장보다 높게 봅니다. 연관 생각·군집·검색의 "의미상 유사"는 실제로는 어휘 유사입니다. 임베딩 모델을 설정하면 해결됩니다.',
+              )}
+            </Alert>
+          )}
+
+          <Group gap="lg">
+            <div>
+              <Text size="xs" c="dimmed">
+                {t('판별력')}
+              </Text>
+              <Text fw={600} c={report.discrimination > 0 ? 'teal' : 'red'}>
+                {report.discrimination > 0 ? '+' : ''}
+                {report.discrimination.toFixed(3)}
+              </Text>
+            </div>
+            <div>
+              <Text size="xs" c="dimmed">
+                {t('쌍별 정확도')}
+              </Text>
+              <Text fw={600} c={report.pairwiseAccuracy >= 0.65 ? 'teal' : 'red'}>
+                {(report.pairwiseAccuracy * 100).toFixed(1)}%
+              </Text>
+            </div>
+            <div>
+              <Text size="xs" c="dimmed">
+                {t('최근접 동일 주제')}
+              </Text>
+              <Text fw={600} c={report.neighbourPurity >= 0.6 ? 'teal' : 'red'}>
+                {(report.neighbourPurity * 100).toFixed(1)}%
+              </Text>
+            </div>
+            <div>
+              <Text size="xs" c="dimmed">
+                {t('측정된 백엔드')}
+              </Text>
+              <Code>{report.model || report.algorithm}</Code>
+            </div>
+          </Group>
+
+          <Table withTableBorder striped verticalSpacing="xs" fz="xs">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t('문장쌍 종류')}</Table.Th>
+                <Table.Th ta="right">{t('평균 유사도')}</Table.Th>
+                <Table.Th ta="right">{t('개수')}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {report.classes.map((row) => (
+                <Table.Tr key={row.class}>
+                  <Table.Td>{classLabels[row.class] || row.class}</Table.Td>
+                  <Table.Td ta="right">{row.mean.toFixed(3)}</Table.Td>
+                  <Table.Td ta="right">{row.count}</Table.Td>
+                </Table.Tr>
+              ))}
+            </Table.Tbody>
+          </Table>
+
+          <Text size="xs" c="dimmed">
+            {t(
+              '판별력은 "같은 뜻, 다른 표현"의 평균에서 "단어만 겹침"의 평균을 뺀 값입니다. 음수라면 뜻보다 어휘를 높게 보고 있다는 뜻입니다. 최근접 동일 주제는 라벨된 4개 주제 문장들에서 각 문장의 가장 가까운 이웃이 같은 주제인 비율로, 연관 생각과 군집이 실제로 하는 일에 가장 가깝습니다.',
+            )}
+          </Text>
+        </Stack>
+      )}
+    </Card>
+  );
+}
+
 function AIEvals({
   cases,
   dreamTypes,

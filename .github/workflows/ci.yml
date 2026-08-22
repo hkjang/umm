@@ -50,7 +50,7 @@ jobs:
       # Prints the measured behaviour of the active embedding algorithm and
       # fails if its ability to tell meaning from vocabulary regresses.
       - name: Embedding quality report
-        run: go test ./internal/intelligence -run 'Quality|Vocabulary|Threshold' -v
+        run: go test ./internal/intelligence -run 'Quality|Vocabulary|Threshold|Semantic' -v
 
       # --- Database ---------------------------------------------------------
       - name: Migration dry run

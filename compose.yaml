@@ -17,8 +17,8 @@ services:
     build:
       context: .
       args:
-        VERSION: 0.9.0
-    image: umm:v0.9.0
+        VERSION: 0.10.0
+    image: umm:v0.10.0
     environment:
       POSTGRES_DSN: "postgres://umm:local-development-only@postgres:5432/umm?sslmode=disable&pool_max_conns=16"
       BOOTSTRAP_ADMIN: admin
@@ -30,5 +30,37 @@ services:
       postgres:
         condition: service_healthy
 
+  # umm's built-in embedding is a character n-gram fingerprint: it scores
+  # sentences that share words above sentences that share meaning, so related
+  # thoughts, clusters and search are lexical by default. Measured on umm's own
+  # labelled data it ranks a paraphrase above a vocabulary decoy 4.2% of the time,
+  # and only 18.8% of sentences have a same-topic nearest match. bge-m3 reaches
+  # 83.3% and 75.0%.
+  #
+  # Bundling a real model into the umm image would mean linking an inference
+  # runtime, which would end the CGO_ENABLED=0 static build that makes umm a
+  # single portable binary. Running it beside umm keeps that intact and is still
+  # fully offline: pull the model once, and the volume is all it needs after that.
+  #
+  #   docker compose --profile embeddings up -d
+  #   docker compose exec embeddings ollama pull bge-m3
+  #
+  # Then set the AI Gateway to http://embeddings:11434 with embedding model
+  # bge-m3, and confirm it took effect on Admin -> AI Gateway -> Embedding
+  # quality. Candidates measured on the same data, including one that scores
+  # higher on the labelled sets but fails umm's end-to-end clustering test, are
+  # compared in docs/admin-guide.md.
+  embeddings:
+    profiles: [embeddings]
+    image: ollama/ollama:latest
+    volumes:
+      - umm-embeddings:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
 volumes:
   umm-postgres:
+  umm-embeddings:

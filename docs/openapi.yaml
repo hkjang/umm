@@ -722,6 +722,29 @@ paths:
       tags: [Admin]
       summary: Get product, Dream quality, token and cost metrics
       responses: { '200': { description: Current operational metrics } }
+  /admin/embedding-quality:
+    get:
+      operationId: get_admin_embedding_quality
+      tags: [Admin, AI]
+      summary: Measure what the configured embedding backend actually captures
+      description: |
+        Scores a hand-labelled set of Korean and English sentence pairs with the
+        configured embedding backend and reports whether it separates meaning
+        from shared vocabulary. discrimination is mean(paraphrase) - mean(lexical-decoy)
+        and pairwiseAccuracy is the fraction of paraphrase-versus-decoy comparisons
+        ranked the right way round. neighbourPurity measures the separate question
+        related thoughts and clustering actually ask: across labelled topic groups,
+        how often is a sentence's nearest match from its own topic. A lexical
+        backend scores near zero on the first pair and near chance on the second,
+        and every feature that reports related thoughts, clusters or Dream pairs is
+        lexical with it. fellBack is true when a model is configured but the vectors
+        came from the offline algorithm anyway. Cached for ten minutes per backend;
+        refresh=true forces a new measurement.
+      parameters:
+        - { name: refresh, in: query, required: false, schema: { type: boolean }, description: Re-measure instead of serving the cached report }
+      responses:
+        '200': { description: Embedding quality report, content: { application/json: { schema: { $ref: '#/components/schemas/EmbeddingQualityReport' } } } }
+        '502': { $ref: '#/components/responses/Error' }
   /admin/security/encryption:
     get:
       operationId: get_admin_security_encryption
@@ -1054,6 +1077,31 @@ components:
         expectedTerms: { type: array, maxItems: 20, items: { type: string, maxLength: 100 } }
         forbiddenTerms: { type: array, maxItems: 20, items: { type: string, maxLength: 100 } }
         active: { type: boolean }
+    EmbeddingQualityReport:
+      type: object
+      required: [algorithm, model, classes, discrimination, pairwiseAccuracy, pairs, topicSeparation, neighbourPurity, sentences, semantic, fellBack]
+      properties:
+        algorithm: { type: string, description: Identifier of the algorithm that produced the vectors }
+        model: { type: string, description: Configured model name; empty when no gateway model is set }
+        classes:
+          type: array
+          items:
+            type: object
+            required: [class, mean, min, max, count]
+            properties:
+              class: { type: string, enum: [paraphrase, related, lexical-decoy, unrelated] }
+              mean: { type: number }
+              min: { type: number }
+              max: { type: number }
+              count: { type: integer, minimum: 1 }
+        discrimination: { type: number, description: mean(paraphrase) - mean(lexical-decoy); negative means vocabulary outranks meaning }
+        pairwiseAccuracy: { type: number, minimum: 0, maximum: 1 }
+        pairs: { type: integer, minimum: 1 }
+        topicSeparation: { type: number, description: mean(same-topic similarity) - mean(different-topic similarity) }
+        neighbourPurity: { type: number, minimum: 0, maximum: 1, description: Fraction of sentences whose nearest match shares its topic; this is the question related thoughts and clustering ask }
+        sentences: { type: integer, minimum: 1 }
+        semantic: { type: boolean, description: Whether the backend is usable as a semantic layer }
+        fellBack: { type: boolean, description: A model is configured but these vectors came from the offline algorithm }
     EncryptionKeyStatus:
       type: object
       required: [keyId, fallbackKeys, encryptedValues, pendingRotation, unreadable]
