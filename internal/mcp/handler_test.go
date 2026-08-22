@@ -10,6 +10,7 @@ import (
 // accident fails as loudly as one added.
 func TestToolDefinitionsAreStable(t *testing.T) {
 	want := []string{
+		"capture_thought",
 		"connect_notes",
 		"create_note",
 		"get_connections",

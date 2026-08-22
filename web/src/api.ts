@@ -33,6 +33,8 @@ export interface Space {
   name: string;
   color: string;
   aiExcluded: boolean;
+  /** Where unfiled captures land. An ordinary space in every other respect. */
+  isInbox: boolean;
 }
 
 export interface ThoughtNote {
@@ -96,6 +98,14 @@ export interface SuggestionResult {
   edges: ThoughtEdge[];
   /** Pairs scored, so a quiet result is distinguishable from no attempt. */
   considered: number;
+}
+
+/** Where a captured thought might belong, and what the ranking rests on. */
+export interface SpaceSuggestion {
+  space: Space;
+  score: number;
+  /** 'meaning' when umm can judge closeness; 'recent' when it cannot and says so. */
+  basis: 'meaning' | 'recent';
 }
 
 export interface NoteSearchResult {
