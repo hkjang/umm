@@ -341,3 +341,36 @@ func parseOptionalUUID(value string) (*uuid.UUID, bool) {
 func noteIDFromPath(r *http.Request) string { return chi.URLParam(r, "noteID") }
 
 var _ = store.Comment{}
+
+// morningBrief reports what accumulated while the person was away.
+//
+// The window defaults to a day, which is the cadence Dream runs on. It is a
+// parameter because "since I last looked" is not always yesterday — someone
+// returning from a week away wants the week.
+func (s *Server) morningBrief(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	hours := 24
+	if raw := r.URL.Query().Get("hours"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 24*90 {
+			writeError(w, http.StatusBadRequest, "기간은 1시간에서 90일 사이여야 합니다.")
+			return
+		}
+		hours = parsed
+	}
+	p := principal(r)
+	brief, err := s.Store.MorningBrief(r.Context(), p.User.ID, time.Now().Add(-time.Duration(hours)*time.Hour))
+	if err != nil {
+		slog.Warn("morning brief failed", "user_id", p.User.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "간밤의 요약을 준비하지 못했습니다.")
+		return
+	}
+	// Dreams are a separate capability, so a key without that scope sees the
+	// rest of the brief rather than nothing.
+	if !hasScope(r, "dreams:read") {
+		brief.Dreams = []store.BriefGroup{}
+	}
+	writeJSON(w, http.StatusOK, brief)
+}

@@ -26,7 +26,8 @@ import {
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, json, type Space } from '../api';
+import MorningBriefCard from '../components/MorningBriefCard';
+import { api, json, type MorningBrief, type Space } from '../api';
 import { useTranslation } from '../i18n';
 import { showSuccess } from '../ui-notifications';
 
@@ -81,6 +82,7 @@ export default function TodayPage() {
   const { t } = useTranslation();
   const [data, setData] = useState<TodayData>();
   const [spaces, setSpaces] = useState<Space[]>([]);
+  const [brief, setBrief] = useState<MorningBrief>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const load = useCallback(async () => {
@@ -89,6 +91,11 @@ export default function TodayPage() {
       const [today, spaceData] = await Promise.all([api<TodayData>('/today'), api<{ spaces: Space[] }>('/spaces')]);
       setData(today);
       setSpaces(spaceData.spaces);
+      // The brief is supplementary, so a failure here must not take the review
+      // down with it.
+      api<MorningBrief>('/morning-brief', { silent: true })
+        .then(setBrief)
+        .catch(() => setBrief(undefined));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t('오늘의 리뷰를 불러오지 못했습니다.'));
     }
@@ -162,6 +169,7 @@ export default function TodayPage() {
             </Button>
           </Alert>
         )}
+        {brief && !brief.quiet && <MorningBriefCard brief={brief} onOpen={openCanvas} />}
         {data && (
           <>
             {!data.onboarding.completedAt && (

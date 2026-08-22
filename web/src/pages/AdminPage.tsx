@@ -668,6 +668,11 @@ export default function AdminPage() {
                   '이 값을 낮추면 뜻보다 겹치는 단어를 높게 보는 백엔드에서도 자동 연결이 실행됩니다. 단, 어휘가 뜻을 앞서는 백엔드는 어떤 값으로도 통과하지 못합니다 — 그건 설정이 아니라 바닥입니다.',
                 )}
               </Alert>
+              <Text size="xs" c="dimmed">
+                {t(
+                  '중복 판정만 표준편차가 아니라 코사인 절대값을 씁니다. 거의 같은 글은 어떤 임베딩에서도 맨 위에 오고 두 모델이 같은 지점에 두기 때문입니다 — 측정값으로 bge-m3는 0.943 이상, paraphrase-multilingual은 0.954 이상이며 그다음 등급은 0.681에서 끝납니다.',
+                )}
+              </Text>
               <SimpleGrid cols={{ base: 1, sm: 3 }}>
                 <NumberInput
                   label={t('쌍별 정확도 하한')}
@@ -688,6 +693,16 @@ export default function AdminPage() {
                   decimalScale={2}
                   value={settings.intelligence.semantic_purity_bar}
                   onChange={(v) => update('intelligence', 'semantic_purity_bar', v)}
+                />
+                <NumberInput
+                  label={t('중복 판정 기준')}
+                  description={t('기본 0.92 · 이 값만 코사인 절대값입니다')}
+                  min={0.7}
+                  max={1}
+                  step={0.01}
+                  decimalScale={2}
+                  value={settings.intelligence.duplicate_similarity}
+                  onChange={(v) => update('intelligence', 'duplicate_similarity', v)}
                 />
                 <NumberInput
                   label={t('측정 결과 보관(분)')}

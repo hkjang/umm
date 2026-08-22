@@ -768,6 +768,30 @@ paths:
       responses:
         '200': { description: What the run produced and why, content: { application/json: { schema: { $ref: '#/components/schemas/SuggestionResult' } } } }
         '500': { $ref: '#/components/responses/Error' }
+  /morning-brief:
+    get:
+      operationId: get_morning_brief
+      tags: [Notes, AI]
+      summary: What accumulated while you were away
+      description: |
+        Counts only what umm actually produced. There is no row for
+        contradictions or for thoughts whose importance rose, because umm detects
+        neither, and a zero beside a category it never examined would read as
+        "there are none" rather than "nobody looked".
+
+        For the same reason the response carries `skipped`: an empty duplicates
+        list means something different depending on whether the embedding backend
+        was fit to find them. `quiet` is true only when there is nothing to report
+        *and* nothing was skipped — the one case where "nothing happened" is the
+        whole story.
+
+        Dreams are omitted for a key without the dreams:read scope; the rest of
+        the brief is still returned.
+      parameters:
+        - { name: hours, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 2160, default: 24 }, description: How far back to look. Defaults to a day, the cadence Dream runs on. }
+      responses:
+        '200': { description: The brief, content: { application/json: { schema: { $ref: '#/components/schemas/MorningBrief' } } } }
+        '400': { $ref: '#/components/responses/Error' }
   /capture:
     post:
       operationId: post_capture
@@ -1282,6 +1306,40 @@ components:
         expectedTerms: { type: array, maxItems: 20, items: { type: string, maxLength: 100 } }
         forbiddenTerms: { type: array, maxItems: 20, items: { type: string, maxLength: 100 } }
         active: { type: boolean }
+    MorningBrief:
+      type: object
+      required: [since, dreams, suggestions, unfiled, duplicates, skipped, quiet]
+      properties:
+        since: { type: string, format: date-time }
+        dreams:
+          type: array
+          items:
+            type: object
+            required: [kind, count]
+            properties: { kind: { type: string }, count: { type: integer, minimum: 1 } }
+        suggestions: { type: integer, minimum: 0, description: Connections umm proposed that nobody has answered }
+        unfiled: { type: integer, minimum: 0, description: Captured thoughts still sitting in the inbox }
+        duplicates:
+          type: array
+          items:
+            type: object
+            required: [spaceId, space, first, second, score]
+            properties:
+              spaceId: { type: string, format: uuid }
+              space: { type: string }
+              first: { $ref: '#/components/schemas/Note' }
+              second: { $ref: '#/components/schemas/Note' }
+              score: { type: number }
+        skipped:
+          type: array
+          description: What umm did not examine, so an empty list above is not read as an all-clear.
+          items:
+            type: object
+            required: [kind, reason]
+            properties:
+              kind: { type: string }
+              reason: { type: string, enum: [backend-not-semantic, disabled] }
+        quiet: { type: boolean, description: Nothing to report and nothing skipped }
     SuggestionResult:
       type: object
       required: [outcome, edges, considered]
