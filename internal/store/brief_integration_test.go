@@ -197,8 +197,14 @@ func mustInbox(t *testing.T, db *Store, userID uuid.UUID) uuid.UUID {
 func useOfflineEmbedding(t *testing.T, db *Store) func() {
 	t.Helper()
 	ctx := context.Background()
-	var previous map[string]any
-	hadPrevious := db.GetSetting(ctx, "ai_gateway", &previous) == nil
+	// Snapshot the row verbatim, including updated_by. Restoring through
+	// PutSetting would need an actor, and a nil one violates the foreign key —
+	// the write fails, the row stays deleted, and every later test and smoke run
+	// on this database sees no gateway configured at all.
+	var value []byte
+	var updatedBy *uuid.UUID
+	hadPrevious := db.Pool.QueryRow(ctx,
+		`SELECT value,updated_by FROM app_settings WHERE key='ai_gateway'`).Scan(&value, &updatedBy) == nil
 	if _, err := db.Pool.Exec(ctx, `DELETE FROM app_settings WHERE key='ai_gateway'`); err != nil {
 		t.Fatal(err)
 	}
@@ -210,8 +216,16 @@ func useOfflineEmbedding(t *testing.T, db *Store) func() {
 		t.Fatalf("the offline algorithm reported itself as semantic; this test would prove nothing")
 	}
 	return func() {
-		if hadPrevious {
-			_ = db.PutSetting(context.Background(), "ai_gateway", previous, uuid.Nil)
+		if !hadPrevious {
+			return
+		}
+		if _, err := db.Pool.Exec(context.Background(),
+			`INSERT INTO app_settings(key,value,updated_by,updated_at) VALUES('ai_gateway',$1,$2,now())
+			 ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_by=EXCLUDED.updated_by`,
+			value, updatedBy); err != nil {
+			// Leaving the row missing breaks every later test and smoke run
+			// against this database, so this must not pass quietly.
+			t.Errorf("failed to restore the ai_gateway setting: %v", err)
 		}
 	}
 }
