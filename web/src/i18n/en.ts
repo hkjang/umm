@@ -840,4 +840,16 @@ export const en: Dictionary = {
   '연결을 따라 도달': 'reached through a connection',
   'AI 제외로 표시된 생각 {count}개는 답에 쓰이지 않았습니다.':
     '{count} thoughts marked as excluded from AI were left out of this answer.',
+  '한 번에 답하기': 'Answer in one pass',
+  '살펴보고 답하기': 'Look around, then answer',
+  살펴보기: 'Look around',
+  '예: 최근에 미뤄 둔 결정이 뭐가 있는지 살펴봐 줘': 'e.g. look for decisions I have been putting off',
+  '여러 번 찾아본 뒤 답합니다. 읽기만 하며, 아무것도 만들거나 고치지 않습니다.':
+    'Looks several times before answering. It only reads — it cannot create or change anything.',
+  '살펴본 과정': 'Where it looked',
+  '살펴볼 수 있는 횟수를 다 써서 도중에 멈췄습니다. 결론이 아니라 지금까지 확인한 범위입니다.':
+    'It ran out of lookups and stopped partway. This is as far as it got, not a conclusion.',
+  '생각을 검색함': 'searched thoughts',
+  '열린 질문을 확인함': 'checked open questions',
+  '상충 표시를 확인함': 'checked marked contradictions',
 };
