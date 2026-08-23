@@ -1874,6 +1874,18 @@ components:
               first: { $ref: '#/components/schemas/Note' }
               second: { $ref: '#/components/schemas/Note' }
               score: { type: number }
+              setAside:
+                description: >
+                  Present when exactly one of the two sits in a line that was decided
+                  against. The pair then means work is being redone that someone
+                  already chose not to do, and the reason comes with it. Absent when
+                  both are in the same set-aside line, since the decision covers both.
+                allOf:
+                  - $ref: '#/components/schemas/Branch'
+              setAsideNoteId:
+                type: string
+                format: uuid
+                description: Which of the two is the one in that line.
         skipped:
           type: array
           description: What umm did not examine, so an empty list above is not read as an all-clear.

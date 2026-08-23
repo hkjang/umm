@@ -25,14 +25,14 @@
 
 ---
 
-## v0.26.0 — 결정 기록
+## v0.27.0 — 접어 둔 걸 다시 쓰고 있을 때
 
-- **"이거 어떻게 하기로 했더라, 왜?"**: 여섯 달 뒤에 하는 질문은 그것이고, 가장 먼저 사라지는 건 **왜**입니다. 이유를 결정 바로 옆에 둡니다.
-- **표시한 것만 남습니다**: 갈래 채택·접어 둠, 질문에 답 표시, 상충 표시. 활동이 많았다는 이유로 전환점을 지어내지 않습니다.
-- **결정과 추측이 섞인 기록은 기록이 없는 것보다 나쁩니다**: 정작 필요할 때 어느 쪽이 어느 쪽인지 구분할 수 없기 때문입니다.
-- **진행 중인 갈래는 없습니다**: 정해진 게 없으니까요. 넣으면 결정 기록이 할 일 목록이 됩니다.
+- **기록은 찾아봐야 보입니다**: 정작 필요한 순간은 다시 쓰고 있을 때입니다. 거의 같은 두 생각 중 한쪽이 접어 둔 갈래에 있으면 오늘의 리뷰가 이유와 함께 알려 줍니다.
+- **여기서는 "하나로 합치기"를 빼습니다**: 합치면 먼저 적은 쪽이 남고, 그건 접어 둔 쪽입니다. 한 번 누르면 지금 쓰는 생각이 이미 거절한 갈래로 조용히 접혀 들어갑니다.
+- **양쪽 다 접어 둔 갈래면 표시하지 않습니다**: 그건 그냥 중복 두 개입니다. 결정이 둘 다를 덮고 있습니다.
+- **측정된 절대 임계값 하나에만 기댑니다**: 근접 중복(0.92)은 umm에서 유일하게 절대값인 기준이고, 의미를 재는 백엔드에서만 동작합니다.
 
-이전 릴리스: [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -31,6 +32,18 @@ type DuplicatePair struct {
 	First   Note      `json:"first"`
 	Second  Note      `json:"second"`
 	Score   float64   `json:"score"`
+	// SetAside names the line one of the two belongs to, when that line was
+	// decided against and the other thought is not in it.
+	//
+	// The pair then means something other than "written twice": it means work is
+	// being redone that someone already chose not to do. Recording the decision
+	// only helps if it comes back at the moment it is being repeated, and the
+	// reason travels with it because "we rejected that" without "because" invites
+	// rejecting it again for a different reason, or not at all.
+	SetAside *BranchRef `json:"setAside,omitempty"`
+	// SetAsideNoteID says which of the two is the one in that line, so the other
+	// can be read as the thought being written now.
+	SetAsideNoteID *uuid.UUID `json:"setAsideNoteId,omitempty"`
 }
 
 // BriefSkip records something umm did not look for, and why.
@@ -204,5 +217,46 @@ func (s *Store) duplicateThoughts(ctx context.Context, userID uuid.UUID) ([]Dupl
 	if len(pairs) > maxDuplicatePairs {
 		pairs = pairs[:maxDuplicatePairs]
 	}
+	if err := s.markSetAsideDuplicates(ctx, pairs); err != nil {
+		// The pairs are still worth showing without the label. Losing the whole
+		// section because one lookup failed would be a worse trade.
+		slog.Warn("could not label duplicate pairs with their line", "error", err)
+	}
 	return pairs, nil, nil
+}
+
+// markSetAsideDuplicates labels pairs where exactly one side sits in a line that
+// was decided against.
+//
+// Exactly one, deliberately. Two duplicates inside the same set-aside line are
+// just two duplicates — nothing is being repeated against a decision, because
+// the decision covers both of them.
+func (s *Store) markSetAsideDuplicates(ctx context.Context, pairs []DuplicatePair) error {
+	if len(pairs) == 0 {
+		return nil
+	}
+	ids := make([]uuid.UUID, 0, len(pairs)*2)
+	for _, pair := range pairs {
+		ids = append(ids, pair.First.ID, pair.Second.ID)
+	}
+	refs, err := s.branchRefsForNotes(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for index := range pairs {
+		first, firstIn := refs[pairs[index].First.ID]
+		second, secondIn := refs[pairs[index].Second.ID]
+		firstAside := firstIn && first.Status == BranchAbandoned
+		secondAside := secondIn && second.Status == BranchAbandoned
+		if firstAside == secondAside {
+			continue
+		}
+		ref, noteID := first, pairs[index].First.ID
+		if secondAside {
+			ref, noteID = second, pairs[index].Second.ID
+		}
+		pairs[index].SetAside = &ref
+		pairs[index].SetAsideNoteID = &noteID
+	}
+	return nil
 }

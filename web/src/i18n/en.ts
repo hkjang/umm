@@ -891,4 +891,6 @@ export const en: Dictionary = {
   이유: 'Reason',
   답: 'Answer',
   반대편: 'The other side',
+  '접어 둔 갈래를 다시 쓰고 있습니다 · {line}': 'Rewriting a line you set aside · {line}',
+  '접어 둔 이유: {reason}': 'Set aside because: {reason}',
 };
