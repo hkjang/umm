@@ -58,6 +58,13 @@ const (
 	SkipBackendNotSemantic = "backend-not-semantic"
 	// SkipDisabled: an administrator turned the underlying feature off.
 	SkipDisabled = "disabled"
+	// SkipSpaceTooLarge: a space held more thoughts than one brief compares.
+	// Finding duplicates means comparing every pair, so the work grows with the
+	// square of the space: measured at 1024 dimensions, 1,000 thoughts take
+	// 229ms, 2,000 take 916ms and 10,000 would take about 23 seconds — per space,
+	// every morning. A brief that times out silently is worse than one that says
+	// what it skipped.
+	SkipSpaceTooLarge = "space-too-large"
 )
 
 // MorningBrief summarises what is waiting for a person.
@@ -87,6 +94,32 @@ type MorningBrief struct {
 	// Quiet is true when there is genuinely nothing to report and nothing was
 	// skipped — the only case where "nothing happened" is the whole story.
 	Quiet bool `json:"quiet"`
+}
+
+// maxDuplicateScanNotes bounds how many thoughts in one space are compared
+// against each other.
+//
+// Set from measurement rather than taste: the pairwise pass costs 229ms at 1,000
+// thoughts and grows quadratically, so this keeps the worst case per space near a
+// third of a second. Above it the newest thoughts are compared and the rest are
+// left, because a duplicate almost always involves something written recently —
+// and the brief says the space was too large rather than reporting a clean bill
+// of health it did not earn.
+const maxDuplicateScanNotes = 1000
+
+// recentForDuplicateScan trims a space to the newest thoughts the brief will
+// compare, and says whether it had to.
+//
+// Separate from the loop so the part that can be wrong is testable on its own.
+// ListNotes orders by created_at ascending, so the newest are at the end and the
+// tail is what to keep; taking the head would have kept the oldest thousand and
+// quietly examined the least likely part of the space. That was the first
+// version of this, and nothing about the result would have looked wrong.
+func recentForDuplicateScan(notes []Note) ([]Note, bool) {
+	if len(notes) <= maxDuplicateScanNotes {
+		return notes, false
+	}
+	return notes[len(notes)-maxDuplicateScanNotes:], true
 }
 
 // maxDuplicatePairs bounds what one brief will show. A workspace that has been
@@ -195,11 +228,15 @@ func (s *Store) duplicateThoughts(ctx context.Context, userID uuid.UUID) ([]Dupl
 		return nil, nil, err
 	}
 	pairs := []DuplicatePair{}
+	var skippedLarge bool
 	for _, space := range spaces {
 		notes, _, listErr := s.ListNotes(ctx, userID, space.ID, "")
 		if listErr != nil || len(notes) < 2 {
 			continue
 		}
+		var trimmed bool
+		notes, trimmed = recentForDuplicateScan(notes)
+		skippedLarge = skippedLarge || trimmed
 		vectors := s.loadEmbeddings(ctx, notes)
 		for i := 0; i < len(notes); i++ {
 			for j := i + 1; j < len(notes); j++ {
@@ -221,6 +258,12 @@ func (s *Store) duplicateThoughts(ctx context.Context, userID uuid.UUID) ([]Dupl
 		// The pairs are still worth showing without the label. Losing the whole
 		// section because one lookup failed would be a worse trade.
 		slog.Warn("could not label duplicate pairs with their line", "error", err)
+	}
+	if skippedLarge {
+		// Labelling still runs above: the pairs that were found are as good as any
+		// others, and a large workspace is exactly where a repeated decision is
+		// most likely. Only the coverage is partial, and the brief says so.
+		return pairs, &BriefSkip{Kind: "duplicates", Reason: SkipSpaceTooLarge}, nil
 	}
 	return pairs, nil, nil
 }

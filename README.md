@@ -25,13 +25,14 @@
 
 ---
 
-## v0.29.1 — 마지막 문: 검색
+## v0.30.0 — 커진 공간에서 조용히 멈추지 않도록
 
-- **세 번 놓쳤습니다**: 조회(v0.24.0) · 내보내기(v0.28.1) · MCP(v0.29.0). 남은 문을 세어 보니 **검색**이 있었습니다.
-- **생각을 가장 자주 만나는 자리**: 같은 검색어에 접어 둔 둘과 지금 쓴 하나가 똑같이 생겨 있었습니다. 이제 어느 쪽이 거절된 버전인지 보입니다.
-- **같은 규칙을 네 번 따로 구현하지 않도록** `BranchRefsForNotes`를 공개했습니다. 문마다 조회를 새로 짜면 다음 문에서 또 빠뜨립니다.
+- **재 보지 않고 뜨거운 경로에 조회를 계속 더하고 있었습니다**: 2,000개 공간에서 검색 21ms, 결정 기록 3ms — 문제없습니다. 중복 검사만 빼고요.
+- **중복 검사는 제곱으로 자랍니다**: 1,000개 229ms, 2,000개 916ms, 10,000개면 **약 23초**. 공간마다, 매일 아침입니다.
+- **1,000개까지만 비교하고, 그렇다고 말합니다**: "공간이 커서 최근 생각까지만 비교했습니다."
+- **처음엔 반대로 잘랐습니다**: `ListNotes`가 최신순이라 가정했는데 `ORDER BY created_at` — 오래된 것부터였습니다. 가장 오래된 1,000개를 볼 뻔했고, **결과만 봐서는 아무것도 이상해 보이지 않습니다.**
 
-이전 릴리스: [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 

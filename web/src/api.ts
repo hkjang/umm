@@ -132,7 +132,7 @@ export interface MorningBrief {
     setAsideNoteId?: string;
   }[];
   /** What umm did not examine — so an empty list above is not read as an all-clear. */
-  skipped: { kind: string; reason: 'backend-not-semantic' | 'disabled' }[];
+  skipped: { kind: string; reason: 'backend-not-semantic' | 'disabled' | 'space-too-large' }[];
   /**
    * Disagreements someone recorded. umm does not detect these, so an empty list
    * means nobody has marked any — not that the workspace has none. The interface
