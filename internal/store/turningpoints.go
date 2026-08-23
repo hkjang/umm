@@ -57,7 +57,11 @@ const maxTurningPoints = 120
 // Go, so the limit applies to the merged order. Taking the newest 120 of each
 // kind and then sorting would drop older entries of a rare kind in favour of
 // newer entries of a common one, which reads as "nothing was decided that year".
-func (s *Store) TurningPoints(ctx context.Context, userID uuid.UUID, spaceID *uuid.UUID) ([]TurningPoint, error) {
+// TurningPoints also reports whether there were more than one read returns.
+// Everywhere else umm says what it left out — the morning review names what it
+// did not examine, retrieval counts what it held back — and a record that
+// silently stops at the newest hundred and twenty reads as the whole story.
+func (s *Store) TurningPoints(ctx context.Context, userID uuid.UUID, spaceID *uuid.UUID) ([]TurningPoint, bool, error) {
 	rows, err := s.Pool.Query(ctx, `
 		WITH visible AS (
 			SELECT sp.id, sp.name
@@ -88,9 +92,10 @@ func (s *Store) TurningPoints(ctx context.Context, userID uuid.UUID, spaceID *uu
 		WHERE e.relation='contradicts'
 
 		ORDER BY 2 DESC
-		LIMIT $3`, userID, spaceID, maxTurningPoints)
+		-- One past the cap, so "there were more" comes from the read itself.
+		LIMIT $3`, userID, spaceID, maxTurningPoints+1)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	out := []TurningPoint{}
@@ -98,9 +103,16 @@ func (s *Store) TurningPoints(ctx context.Context, userID uuid.UUID, spaceID *uu
 		var point TurningPoint
 		if err := rows.Scan(&point.Kind, &point.At, &point.SpaceID, &point.Space,
 			&point.Subject, &point.Detail, &point.NoteID); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, point)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(out) > maxTurningPoints
+	if more {
+		out = out[:maxTurningPoints]
+	}
+	return out, more, nil
 }

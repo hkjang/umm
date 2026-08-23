@@ -47,7 +47,7 @@ func TestTurningPointsAreOnlyWhatWasMarkedIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	points, err := db.TurningPoints(ctx, userID, &spaceID)
+	points, _, err := db.TurningPoints(ctx, userID, &spaceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestTurningPointsAreOrderedNewestFirstIntegration(t *testing.T) {
 		}
 	}
 
-	points, err := db.TurningPoints(ctx, userID, &spaceID)
+	points, _, err := db.TurningPoints(ctx, userID, &spaceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestTurningPointsStayInsideVisibleSpacesIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	points, err := db.TurningPoints(ctx, userID, nil)
+	points, _, err := db.TurningPoints(ctx, userID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,4 +165,41 @@ func TestTurningPointsStayInsideVisibleSpacesIntegration(t *testing.T) {
 		}
 	}
 	_ = spaceID
+}
+
+// A record that stops at the newest hundred and twenty without saying so reads
+// as the whole story. Everywhere else umm names what it left out.
+func TestTurningPointsSayWhenThereAreMoreIntegration(t *testing.T) {
+	db, userID, spaceID := retrievalSpace(t)
+	ctx := context.Background()
+
+	for index := 0; index < maxTurningPoints+5; index++ {
+		branch, err := db.CreateBranch(ctx, userID, spaceID, "갈래 "+uuid.New().String()[:8], nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = db.ResolveBranch(ctx, userID, branch.ID, BranchAdopted, "이유"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	points, more, err := db.TurningPoints(ctx, userID, &spaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != maxTurningPoints {
+		t.Fatalf("returned %d points, want the cap of %d", len(points), maxTurningPoints)
+	}
+	if !more {
+		t.Error("the record was cut off and did not say so")
+	}
+
+	fewer, alsoMore, err := db.TurningPoints(ctx, userID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = fewer
+	if !alsoMore {
+		t.Error("the cross-space read did not report the cut either")
+	}
 }

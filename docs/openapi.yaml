@@ -1013,8 +1013,13 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [points]
+                required: [points, hasMore]
                 properties:
+                  hasMore:
+                    type: boolean
+                    description: >
+                      True when there are marked decisions older than the newest 120 returned.
+                      A record that stops without saying so reads as the whole story.
                   points:
                     type: array
                     items:

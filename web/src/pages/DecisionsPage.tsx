@@ -30,11 +30,18 @@ export default function DecisionsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [points, setPoints] = useState<TurningPoint[]>();
+  // Whether the record stops short of everything marked. Saying so matters for
+  // the same reason the morning review names what it did not examine: a list
+  // that quietly ends reads as the whole story.
+  const [hasMore, setHasMore] = useState(false);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    api<{ points: TurningPoint[] }>('/turning-points')
-      .then((result) => setPoints(result.points))
+    api<{ points: TurningPoint[]; hasMore?: boolean }>('/turning-points')
+      .then((result) => {
+        setPoints(result.points);
+        setHasMore(!!result.hasMore);
+      })
       .catch(() => setFailed(true));
   }, []);
 
@@ -88,17 +95,18 @@ export default function DecisionsPage() {
                 {new Date(point.at).toLocaleDateString()} · {point.space}
               </Text>
             </Group>
-            {point.noteId ? (
-              <UnstyledButton onClick={() => navigate(`/space/${point.spaceId}?note=${point.noteId}`)}>
-                <Text fw={600} lineClamp={2} ta="left">
-                  {point.subject}
-                </Text>
-              </UnstyledButton>
-            ) : (
-              <Text fw={600} lineClamp={2}>
+            {/* A line resolved without a root thought has no note to open, and
+                used to render as plain text — a decision you could read and not
+                get back to. The space is always somewhere to land. */}
+            <UnstyledButton
+              onClick={() =>
+                navigate(point.noteId ? `/space/${point.spaceId}?note=${point.noteId}` : `/space/${point.spaceId}`)
+              }
+            >
+              <Text fw={600} lineClamp={2} ta="left">
                 {point.subject}
               </Text>
-            )}
+            </UnstyledButton>
             {point.detail && (
               <Text size="sm" c="dimmed" mt={4}>
                 {detailLead(point.kind)}: {point.detail}
@@ -107,6 +115,14 @@ export default function DecisionsPage() {
           </Card>
         ))}
       </Stack>
+
+      {hasMore && (
+        <Text size="xs" c="dimmed">
+          {t('가장 최근 {count}개만 보여 주고 있습니다. 그 앞에도 표시한 결정이 더 있습니다.', {
+            count: points?.length ?? 0,
+          })}
+        </Text>
+      )}
     </Stack>
   );
 }
