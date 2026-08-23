@@ -662,18 +662,29 @@ func (s *Store) ListNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 	// The cutoff is derived from this space's own score distribution rather than
 	// fixed, so the count means the same thing whether the vectors came from the
 	// offline algorithm or a configured embedding model. See intelligence.SimilarityScale.
-	pairScores := make([]float64, 0, len(notes)*len(notes))
+	pairScores := make([]float64, 0, len(notes)*(len(notes)-1)/2)
 	for i := range notes {
 		for j := i + 1; j < len(notes); j++ {
 			pairScores = append(pairScores, intelligence.Cosine(vectors[notes[i].ID], vectors[notes[j].ID]))
 		}
 	}
 	relatedCutoff := intelligence.NewSimilarityScale(pairScores).ThresholdOr(intelligence.Band(s.IntelligenceSettings(ctx).ClusterBand), legacyClusterCutoff)
+	// Count from the scores already computed rather than computing them again.
+	//
+	// This used to walk the full square and call Cosine a second time for every
+	// pair — three times the vector work of the pass above it, on the path that
+	// runs whenever anyone opens a canvas. The scores are in i<j order, so one
+	// walk in the same order lands on the same pair and credits both sides.
+	// Similarity is symmetric, which is why counting each pair once and
+	// incrementing both notes is the same answer the square gave.
+	scoreIndex := 0
 	for i := range notes {
-		for j := range notes {
-			if i != j && intelligence.Cosine(vectors[notes[i].ID], vectors[notes[j].ID]) >= relatedCutoff {
+		for j := i + 1; j < len(notes); j++ {
+			if pairScores[scoreIndex] >= relatedCutoff {
 				notes[i].RelatedCount++
+				notes[j].RelatedCount++
 			}
+			scoreIndex++
 		}
 	}
 	edgeRows, err := s.Pool.Query(ctx, `
