@@ -64,7 +64,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) router() chi.Router {
 	s.limiterOnce.Do(func() { s.limiter = newRateLimiter() })
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, s.trustedProxyHeaders, middleware.Recoverer, middleware.RequestSize(1<<20), s.securityHeaders, s.accessLog, s.Auth.Middleware)
+	r.Use(middleware.RequestID, s.trustedProxyHeaders, middleware.Recoverer, middleware.RequestSize(1<<20), s.securityHeaders, s.compressResponses, s.accessLog, s.Auth.Middleware)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "ok", "version": s.Version})
 	})
