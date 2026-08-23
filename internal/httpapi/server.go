@@ -119,6 +119,7 @@ func (s *Server) router() chi.Router {
 			protected.Delete("/notes/{noteID}", s.deleteNote)
 			protected.Post("/capture", s.captureThought)
 			protected.Post("/notes/{noteID}/move", s.moveNote)
+			protected.Post("/notes/{noteID}/merge", s.mergeNotes)
 			protected.Get("/notes/{noteID}/space-suggestions", s.spaceSuggestions)
 			protected.Post("/spaces/{spaceID}/edges", s.createEdge)
 			protected.Delete("/edges/{edgeID}", s.deleteEdge)

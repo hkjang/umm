@@ -679,3 +679,38 @@ func (s *Server) deleteEdge(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// mergeNotes folds one thought into another.
+//
+// The surviving content comes from the request because umm can tell that two
+// notes say nearly the same thing but not which words the person wants to keep.
+func (s *Server) mergeNotes(w http.ResponseWriter, r *http.Request) {
+	noteID, ok := parseID(w, r, "noteID")
+	if !ok {
+		return
+	}
+	var body struct {
+		MergeID uuid.UUID `json:"mergeId"`
+		Content string    `json:"content"`
+	}
+	if decodeJSON(w, r, &body) != nil || body.MergeID == uuid.Nil {
+		writeError(w, 400, "합칠 생각을 지정해 주세요.")
+		return
+	}
+	p := principal(r)
+	result, err := s.Store.MergeNotes(r.Context(), p.User.ID, noteID, body.MergeID, body.Content)
+	if err != nil {
+		if errors.Is(err, store.ErrMergeSameNote) {
+			writeError(w, 400, "같은 생각끼리는 합칠 수 없습니다.")
+			return
+		}
+		if notFound(err) {
+			writeError(w, 404, "생각을 찾을 수 없습니다.")
+			return
+		}
+		slog.Warn("merge failed", "note_id", noteID, "user_id", p.User.ID, "error", err)
+		writeError(w, 400, "생각을 합칠 수 없습니다.")
+		return
+	}
+	writeJSON(w, 200, result)
+}

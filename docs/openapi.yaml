@@ -811,6 +811,59 @@ paths:
       responses:
         '201': { description: The captured thought, content: { application/json: { schema: { $ref: '#/components/schemas/Note' } } } }
         '400': { $ref: '#/components/responses/Error' }
+  /notes/{noteId}/merge:
+    post:
+      operationId: post_note_merge
+      tags: [Notes]
+      summary: Fold one thought into another
+      description: |
+        The path note survives; mergeId is soft-deleted.
+
+        content is required and is not derived: umm can tell that two notes say
+        nearly the same thing, but not which words the person wants to keep, and
+        concatenating them produces a note that says everything twice.
+
+        Eight tables hang off a note, and each is handled deliberately rather
+        than left to a cascade. Connections and comments follow the thought;
+        connections that would become a note linked to itself, or a duplicate of
+        one the survivor already had, are dropped and counted. Dream citations
+        follow. Review schedules and revisions stay behind, because a schedule is
+        one person's recall timing for a card they saw and a revision is the
+        history of a row that is going away — carrying either across would
+        describe the surviving thought with events that did not happen to it.
+        The survivor's stored vector is discarded, since it describes text that
+        no longer exists.
+
+        Both notes must be in the same space and writable. A connection needs
+        both endpoints in one space, so merging across spaces would either strand
+        the connections or move a thought somewhere its author did not put it.
+      parameters:
+        - { name: noteId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mergeId, content]
+              properties:
+                mergeId: { type: string, format: uuid }
+                content: { type: string, description: What the surviving thought says }
+      responses:
+        '200':
+          description: The surviving thought and what moved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [note, movedEdges, droppedEdges, movedComments]
+                properties:
+                  note: { $ref: '#/components/schemas/Note' }
+                  movedEdges: { type: integer, minimum: 0 }
+                  droppedEdges: { type: integer, minimum: 0, description: Self-links and duplicates the survivor already had }
+                  movedComments: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /notes/{noteId}/move:
     post:
       operationId: post_note_move

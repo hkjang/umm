@@ -1,7 +1,9 @@
-import { Alert, Badge, Card, Group, Stack, Text, Title, UnstyledButton } from '@mantine/core';
-import { IconMoon } from '@tabler/icons-react';
-import type { MorningBrief } from '../api';
+import { useState } from 'react';
+import { Alert, Badge, Button, Card, Group, Stack, Text, Title, UnstyledButton } from '@mantine/core';
+import { IconArrowsJoin, IconMoon } from '@tabler/icons-react';
+import { api, json, type MergeResult, type MorningBrief } from '../api';
 import { msg, useTranslation } from '../i18n';
+import { showSuccess } from '../ui-notifications';
 
 const dreamKindLabels: Record<string, string> = {
   connection: msg('연결'),
@@ -34,6 +36,31 @@ export default function MorningBriefCard({
 }) {
   const { t } = useTranslation();
   const dreamTotal = brief.dreams.reduce((sum, group) => sum + group.count, 0);
+  // Pairs already dealt with, so the list shrinks as it is worked through
+  // instead of asking again about something just answered.
+  const [handled, setHandled] = useState<string[]>([]);
+  const [merging, setMerging] = useState('');
+
+  // Reporting duplicates without a way to act on them leaves a list of problems
+  // and no button. The older note survives — it is the original thought, and
+  // whatever already points at it keeps pointing somewhere real.
+  const merge = async (pairKey: string, keepID: string, mergeID: string, content: string) => {
+    setMerging(pairKey);
+    try {
+      const result = await api<MergeResult>(`/notes/${keepID}/merge`, json('POST', { mergeId: mergeID, content }));
+      setHandled((all) => [...all, pairKey]);
+      showSuccess(
+        result.movedEdges > 0
+          ? t('하나로 합쳤습니다. 연결 {count}개도 함께 옮겼습니다.', { count: result.movedEdges })
+          : t('하나로 합쳤습니다.'),
+        t('생각 정리'),
+      );
+    } finally {
+      setMerging('');
+    }
+  };
+
+  const pending = brief.duplicates.filter((pair) => !handled.includes(`${pair.first.id}-${pair.second.id}`));
 
   return (
     <Card className="brief-card" radius="xl" p={{ base: 'lg', sm: 'xl' }} withBorder>
@@ -82,10 +109,10 @@ export default function MorningBriefCard({
             </Text>
           </div>
         )}
-        {brief.duplicates.length > 0 && (
+        {pending.length > 0 && (
           <div>
             <Text fz="xl" fw={700}>
-              {brief.duplicates.length}
+              {pending.length}
             </Text>
             <Text size="xs" c="dimmed">
               {t('겹쳐 보이는 생각')}
@@ -94,25 +121,46 @@ export default function MorningBriefCard({
         )}
       </Group>
 
-      {brief.duplicates.length > 0 && (
+      {pending.length > 0 && (
         <Stack gap={6} mt="md">
-          {brief.duplicates.slice(0, 3).map((pair) => (
-            <UnstyledButton
-              key={`${pair.first.id}-${pair.second.id}`}
-              className="brief-duplicate"
-              onClick={() => onOpen(pair.spaceId, pair.first.id)}
-            >
-              <Text size="xs" c="dimmed">
-                {pair.space} · {Math.round(pair.score * 100)}%
-              </Text>
-              <Text size="sm" lineClamp={1}>
-                {pair.first.title || pair.first.content}
-              </Text>
-              <Text size="sm" lineClamp={1} c="dimmed">
-                {pair.second.title || pair.second.content}
-              </Text>
-            </UnstyledButton>
-          ))}
+          {pending.slice(0, 3).map((pair) => {
+            const pairKey = `${pair.first.id}-${pair.second.id}`;
+            // The older thought survives. Which of the two that is comes from
+            // creation order, not from which one umm happened to list first.
+            const [older, newer] =
+              pair.first.createdAt <= pair.second.createdAt ? [pair.first, pair.second] : [pair.second, pair.first];
+            return (
+              <Group key={pairKey} gap="sm" wrap="nowrap" align="flex-start">
+                <UnstyledButton
+                  className="brief-duplicate"
+                  style={{ flex: 1, minWidth: 0 }}
+                  onClick={() => onOpen(pair.spaceId, older.id)}
+                >
+                  <Text size="xs" c="dimmed">
+                    {pair.space} · {Math.round(pair.score * 100)}%
+                  </Text>
+                  <Text size="sm" lineClamp={1}>
+                    {older.title || older.content}
+                  </Text>
+                  <Text size="sm" lineClamp={1} c="dimmed">
+                    {newer.title || newer.content}
+                  </Text>
+                </UnstyledButton>
+                <Button
+                  size="compact-xs"
+                  variant="light"
+                  leftSection={<IconArrowsJoin size={13} />}
+                  loading={merging === pairKey}
+                  onClick={() => void merge(pairKey, older.id, newer.id, older.content)}
+                >
+                  {t('하나로 합치기')}
+                </Button>
+              </Group>
+            );
+          })}
+          <Text size="xs" c="dimmed">
+            {t('먼저 적은 쪽이 남고, 연결과 댓글은 따라옵니다. 문구를 고르려면 생각을 열어 직접 정리하세요.')}
+          </Text>
         </Stack>
       )}
 

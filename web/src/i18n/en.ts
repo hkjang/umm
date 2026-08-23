@@ -816,4 +816,10 @@ export const en: Dictionary = {
     'Models whose names suggest they embed are shown first. The connection test is what confirms it.',
   '내용으로 묶임': 'grouped by content',
   '가까이 둔 것으로 묶임': 'grouped by placement',
+  '하나로 합치기': 'Merge into one',
+  '하나로 합쳤습니다.': 'Merged into one thought.',
+  '하나로 합쳤습니다. 연결 {count}개도 함께 옮겼습니다.':
+    'Merged into one thought, and {count} connections came with it.',
+  '먼저 적은 쪽이 남고, 연결과 댓글은 따라옵니다. 문구를 고르려면 생각을 열어 직접 정리하세요.':
+    'The earlier thought survives; connections and comments come with it. To choose the wording yourself, open the thought and edit it.',
 };
