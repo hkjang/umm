@@ -128,6 +128,7 @@ func toolDefinitions() []map[string]any {
 		{"name": "capture_thought", "title": "Capture a thought", "description": "Write a thought down without deciding where it belongs. It lands in the owner's inbox, ready to be filed later. Use this when you have something worth keeping but no reason to choose a space — create_note is for when you do.", "inputSchema": schema(map[string]any{"content": str("Thought text")}, "content")},
 		{"name": "connect_notes", "title": "Connect thoughts", "description": "Connect two notes in the same space. The connection is recorded as written by an agent, which the owner can see; it cannot be presented as one they drew themselves.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "source_note_id": str("Source note UUID"), "target_note_id": str("Target note UUID"), "relation": str("What the connection asserts: related (default), supports, contradicts, refines, expands or follows. Anything else is rejected.")}, "space_id", "source_note_id", "target_note_id")},
 		{"name": "create_note", "title": "Drop a thought", "description": "Create a post-it in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "content": str("Thought text"), "x": num("Canvas x"), "y": num("Canvas y"), "color": str("Semantic color")}, "space_id", "content")},
+		{"name": "find_contradictions", "title": "Find recorded disagreements", "description": "List thoughts that were recorded as contradicting each other. These are connections a person or an agent drew, not something umm inferred: an empty result means nobody has marked any disagreement, not that the workspace is free of them. Pass space_id to narrow to one space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID; omit for every space you can read")})},
 		{"name": "get_connections", "title": "Walk the memory graph", "description": "List the connections attached to a note: what it points at, what points at it, what each connection asserts, and who made it. get_related_notes finds thoughts that merely resemble each other; this returns the connections that were actually recorded, including ones umm inferred, which are marked as such and carry a confidence.", "inputSchema": schema(map[string]any{"note_id": str("Note UUID")}, "note_id")},
 		{"name": "get_related_notes", "title": "Discover related thoughts", "description": "Find related notes using the offline similarity embedding.", "inputSchema": schema(map[string]any{"note_id": str("Source note UUID")}, "note_id")},
 		{"name": "list_clusters", "title": "List thought clusters", "description": "Discover coherent groups of notes in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
@@ -269,6 +270,34 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 			return nil, err
 		}
 		return success(e)
+	case "find_contradictions":
+		if err := require("notes:read"); err != nil {
+			return nil, err
+		}
+		var scope *uuid.UUID
+		if raw := valueString(args, "space_id", ""); strings.TrimSpace(raw) != "" {
+			parsed, parseErr := uuid.Parse(raw)
+			if parseErr != nil {
+				return nil, errors.New("valid space_id required")
+			}
+			scope = &parsed
+		}
+		items, err := h.Store.Contradictions(ctx, p.User.ID, scope)
+		if err != nil {
+			return nil, err
+		}
+		found := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			found = append(found, map[string]any{
+				"space":           item.Space,
+				"recorded_by":     item.Origin,
+				"claim_note_id":   item.Claim.ID,
+				"claim":           item.Claim.Content,
+				"counter_note_id": item.Counter.ID,
+				"counter":         item.Counter.Content,
+			})
+		}
+		return success(map[string]any{"contradictions": found})
 	case "get_connections":
 		if err := require("notes:read"); err != nil {
 			return nil, err

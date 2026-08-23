@@ -768,6 +768,43 @@ paths:
       responses:
         '200': { description: What the run produced and why, content: { application/json: { schema: { $ref: '#/components/schemas/SuggestionResult' } } } }
         '500': { $ref: '#/components/responses/Error' }
+  /contradictions:
+    get:
+      operationId: get_contradictions
+      tags: [Notes]
+      summary: Disagreements that were recorded between thoughts
+      description: |
+        Recorded, not detected. umm does not read two notes and conclude they
+        conflict; these are connections a person or an agent drew with the
+        contradicts relation.
+
+        That difference decides how the result may be presented: an empty list
+        means nobody has marked any disagreement, not that the workspace is free
+        of them, so a caller must not render a zero beside the word.
+      parameters:
+        - { name: spaceId, in: query, required: false, schema: { type: string, format: uuid }, description: Narrow to one space; omit for every space the caller can read }
+      responses:
+        '200':
+          description: Recorded disagreements, most recent first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [contradictions]
+                properties:
+                  contradictions:
+                    type: array
+                    items:
+                      type: object
+                      required: [edgeId, spaceId, space, claim, counter, origin]
+                      properties:
+                        edgeId: { type: string, format: uuid }
+                        spaceId: { type: string, format: uuid }
+                        space: { type: string }
+                        claim: { $ref: '#/components/schemas/Note' }
+                        counter: { $ref: '#/components/schemas/Note' }
+                        origin: { type: string, description: Who recorded the disagreement }
+        '400': { $ref: '#/components/responses/Error' }
   /morning-brief:
     get:
       operationId: get_morning_brief
@@ -1422,7 +1459,7 @@ components:
         active: { type: boolean }
     MorningBrief:
       type: object
-      required: [since, dreams, suggestions, unfiled, duplicates, skipped, quiet]
+      required: [since, dreams, suggestions, unfiled, duplicates, contradictions, skipped, quiet]
       properties:
         since: { type: string, format: date-time }
         dreams:
@@ -1453,6 +1490,23 @@ components:
             properties:
               kind: { type: string }
               reason: { type: string, enum: [backend-not-semantic, disabled] }
+        contradictions:
+          type: array
+          description: |
+            Disagreements someone recorded, capped for readability. umm does not
+            detect these, so an empty list means nobody has marked any rather
+            than that the workspace has none — the interface shows nothing at all
+            in that case rather than a zero.
+          items:
+            type: object
+            required: [edgeId, spaceId, space, claim, counter, origin]
+            properties:
+              edgeId: { type: string, format: uuid }
+              spaceId: { type: string, format: uuid }
+              space: { type: string }
+              claim: { $ref: '#/components/schemas/Note' }
+              counter: { $ref: '#/components/schemas/Note' }
+              origin: { type: string }
         quiet: { type: boolean, description: Nothing to report and nothing skipped }
     SuggestionResult:
       type: object

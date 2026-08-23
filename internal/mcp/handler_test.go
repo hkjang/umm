@@ -13,6 +13,7 @@ func TestToolDefinitionsAreStable(t *testing.T) {
 		"capture_thought",
 		"connect_notes",
 		"create_note",
+		"find_contradictions",
 		"get_connections",
 		"get_related_notes",
 		"list_clusters",
