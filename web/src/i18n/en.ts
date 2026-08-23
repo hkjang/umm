@@ -899,4 +899,5 @@ export const en: Dictionary = {
     'Then set the AI Gateway above to http://embeddings:11434 with embedding model bge-m3, save, and measure again. Candidate models are compared in docs/admin-guide.md.',
   '공간이 커서 최근 생각까지만 비교했습니다. 겹치는 것이 더 있을 수 있습니다.':
     'The space is large, so only recent thoughts were compared. There may be more duplicates.',
+  '연결과 갈래': 'Connections and lines',
 };

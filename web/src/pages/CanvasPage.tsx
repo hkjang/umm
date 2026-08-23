@@ -462,21 +462,38 @@ function CanvasInner() {
     },
     [flow, rawEdges, persist],
   );
+  /**
+   * Opens the panel that holds a thought's connections and its line of thinking,
+   * and moves nothing.
+   *
+   * This used to exist only inside discoverRelated, which also rearranges the
+   * canvas — and discoverRelated is reachable only from the "related N" chip,
+   * which a thought with no related thoughts does not have. On a fresh canvas
+   * that meant the panel could not be opened at all, so lines of thinking were
+   * unreachable in the interface that was built to use them. Verified in a
+   * browser: write one thought, click it, and there was no way in.
+   */
+  const openNotePanel = useCallback(async (id: string) => {
+    const [result, linked] = await Promise.all([
+      api<{ related: RelatedThought[] }>(`/notes/${id}/related?limit=8`),
+      api<{ backlinks: Backlink[] }>(`/notes/${id}/backlinks`),
+    ]);
+    setRelated({ source: id, items: result.related });
+    api<{ suggestions: SpaceSuggestion[] }>(`/notes/${id}/space-suggestions`, { silent: true })
+      .then((value) => setHomes(value.suggestions))
+      .catch(() => setHomes([]));
+    setBacklinks(linked.backlinks);
+    return result.related;
+  }, []);
   const discoverRelated = useCallback(
     async (id: string) => {
-      const [result, linked] = await Promise.all([
-        api<{ related: RelatedThought[] }>(`/notes/${id}/related?limit=8`),
-        api<{ backlinks: Backlink[] }>(`/notes/${id}/backlinks`),
-      ]);
-      setRelated({ source: id, items: result.related });
-      api<{ suggestions: SpaceSuggestion[] }>(`/notes/${id}/space-suggestions`, { silent: true })
-        .then((value) => setHomes(value.suggestions))
-        .catch(() => setHomes([]));
-      setBacklinks(linked.backlinks);
+      // Gathering is a deliberate act: it pulls the related thoughts around this
+      // one. Opening the panel is not, which is why they are separate now.
+      const related = await openNotePanel(id);
       const source = flow.getNode(id);
       if (source) {
-        result.related.forEach((item, index) => {
-          const angle = (index / Math.max(1, result.related.length)) * Math.PI * 2;
+        related.forEach((item, index) => {
+          const angle = (index / Math.max(1, related.length)) * Math.PI * 2;
           persist(item.note.id, {
             x: source.position.x + Math.cos(angle) * 360,
             y: source.position.y + Math.sin(angle) * 245,
@@ -484,7 +501,7 @@ function CanvasInner() {
         });
       }
     },
-    [flow, persist],
+    [flow, persist, openNotePanel],
   );
   const openComments = useCallback(async (note: ThoughtNote) => {
     setCommentNote(note);
@@ -648,6 +665,7 @@ function CanvasInner() {
           setAsideLine: setAsideLines[note.id],
           relatedCount: note.relatedCount,
           onGather: discoverRelated,
+          onPanel: openNotePanel,
           onPatch: persist,
           onDelete: remove,
           onRestore: restore,

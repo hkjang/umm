@@ -3,6 +3,7 @@ import { ActionIcon, Menu, Tooltip } from '@mantine/core';
 import {
   IconBrain,
   IconDots,
+  IconGitBranch,
   IconHelp,
   IconHistory,
   IconMessageCircle,
@@ -21,6 +22,10 @@ export type PostItData = {
   setAsideLine?: string;
   relatedCount?: number;
   onGather: (id: string) => void;
+  // Opens the panel where a thought's connections and its line of thinking live,
+  // without moving anything. onGather does the same and rearranges the canvas,
+  // which is not something a person should have to accept to file a thought.
+  onPanel: (id: string) => void;
   onPatch: (id: string, patch: Partial<ThoughtNote>) => void;
   onDelete: (id: string) => void;
   onRestore: (id: string) => void;
@@ -175,6 +180,9 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
                 {t(note.aiExcluded ? 'Dream 분석에 포함' : 'Dream 분석에서 제외')}
               </Menu.Item>
             )}
+            <Menu.Item leftSection={<IconGitBranch size={15} />} onClick={() => data.onPanel(note.id)}>
+              {t('연결과 갈래')}
+            </Menu.Item>
             <Menu.Item leftSection={<IconMessageCircle size={15} />} onClick={() => data.onComments(note)}>
               {t('댓글과 멘션')}
             </Menu.Item>
