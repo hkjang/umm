@@ -157,6 +157,7 @@ func (s *Server) router() chi.Router {
 			protected.Group(func(paid chi.Router) {
 				paid.Use(s.aiQuota)
 				paid.Post("/ai/assist", s.aiAssist)
+				paid.Post("/ai/ask", s.askMemory)
 				paid.Post("/dreams/{dreamID}/regenerate", s.regenerateDream)
 				paid.Post("/dreams/{dreamID}/develop", s.developDream)
 			})

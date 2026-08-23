@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.21.0-success?style=flat-square" alt="v0.21.0" />
+  <img src="https://img.shields.io/badge/Release-v0.22.0-success?style=flat-square" alt="v0.22.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,14 +25,14 @@
 
 ---
 
-## v0.21.0 — 질문과 답
+## v0.22.0 — 내 기억에 물어보기
 
-- **질문으로 표시**: 포스트잇 메뉴에서 생각을 질문으로 표시하고, `answers` 연결로 닫습니다. `supports`·`refines`는 질문을 닫지 않습니다 — 논쟁만 한 노트가 해결한 것처럼 보이면 안 되니까요.
-- **`kind`가 검증되지 않고 있었습니다**: 예전 `relation`과 같은 결함으로, 5000자도 저장됐습니다. 이제 `thought·question·idea` 어휘이고 그 밖은 거부합니다.
-- **열린 질문 조회**: 브리핑, `GET /open-questions`, MCP `find_open_questions`. 관련 생각 수(`attempts`)를 함께 보여 줍니다.
-- **양쪽 다 표시입니다**: umm은 노트를 읽고 질문인지 판단하지 않습니다. 빈 결과는 "다 답했다"가 아니라 "표시된 게 없다"입니다.
+- **근거 있는 답**: 직접 적어 둔 생각만으로 답하고 `[번호]`로 인용합니다. 인용 없는 주장은 그렇다는 게 보입니다.
+- **검색 + 한 걸음**: 질문의 답은 그 질문 *옆*에 적혀 있는 경우가 많아 그래프를 한 걸음 따라갑니다. 실측에서 단어를 하나도 공유하지 않는 답 노트에 연결로 도달했습니다.
+- **근거가 없으면 모델을 호출하지 않습니다**: 그때가 근거 없는 답이 가장 그럴듯하고 가장 틀리는 경우입니다.
+- **AI 제외는 연결을 통해서도 새지 않습니다**: 노트·공간·이웃 탐색 세 경로를 모두 테스트로 막았고, 빠진 개수를 보고합니다.
 
-이전 릴리스: [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
@@ -138,7 +138,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.21.0
+  umm:v0.22.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

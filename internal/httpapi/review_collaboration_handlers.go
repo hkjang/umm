@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
 )
@@ -429,4 +430,56 @@ func (s *Server) openQuestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"questions": items})
+}
+
+// askMemory answers a question from the person's own thoughts.
+//
+// The answer is built only from what they already wrote, and the sources come
+// back with it so a claim with no citation is visible as one. When nothing
+// matched, umm says so instead of calling a model that would fill the gap
+// convincingly.
+func (s *Server) askMemory(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "ai:assist") {
+		return
+	}
+	var body struct {
+		Question string `json:"question"`
+	}
+	if decodeJSON(w, r, &body) != nil || strings.TrimSpace(body.Question) == "" {
+		writeError(w, http.StatusBadRequest, "질문을 입력해 주세요.")
+		return
+	}
+	p := principal(r)
+	result, err := s.Dreams.Ask(r.Context(), p.User.ID, body.Question)
+	if err != nil {
+		if errors.Is(err, dream.ErrNothingToAnswerFrom) {
+			// Not an error condition for the person — an answer about their memory.
+			writeJSON(w, http.StatusOK, map[string]any{
+				"answer":   "",
+				"sources":  []any{},
+				"excluded": result.Excluded,
+				"grounded": false,
+			})
+			return
+		}
+		if errors.Is(err, dream.ErrChatModelNotConfigured) {
+			writeProblem(w, r, http.StatusPreconditionFailed, "chat-model-not-configured",
+				"채팅 모델이 설정되지 않았습니다",
+				"관리자 → AI Gateway에서 모델을 설정하면 기억에 질문할 수 있습니다. 임베딩 모델과는 별개입니다.", nil)
+			return
+		}
+		if writeAIQuotaProblem(w, r, err) {
+			return
+		}
+		slog.Warn("ask failed", "user_id", p.User.ID, "error", err)
+		writeError(w, http.StatusBadGateway, "기억에서 답을 찾지 못했습니다.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"answer":   result.Answer,
+		"sources":  result.Sources,
+		"excluded": result.Excluded,
+		"model":    result.Model,
+		"grounded": true,
+	})
 }
