@@ -111,10 +111,13 @@ Dream Layer는 사용자가 밤사이 휴식하는 동안 캔버스에 쌓인 �
 
 ```bash
 docker compose --profile embeddings up -d
-docker compose exec embeddings ollama pull bge-m3
 ```
 
-그다음 AI Gateway를 `http://embeddings:11434`, 임베딩 모델을 `bge-m3`로 저장하고 **임베딩 품질 측정**에서 🟢가 뜨는지 확인하면 끝입니다.
+컨테이너가 뜨면서 모델을 스스로 받습니다(`UMM_EMBEDDING_MODEL`로 변경 가능, 기본 `bge-m3`). 볼륨에 이미 있으면 다시 받지 않고, healthcheck는 서버 응답이 아니라 **모델이 실제로 있는지**를 확인합니다.
+
+그다음 AI Gateway에서 **자동으로 찾기**를 누르면 주소와 모델 목록이 나옵니다. 모델을 고르고 **연결 테스트**로 확인한 뒤 저장하고, **임베딩 품질 측정**에서 🟢가 뜨는지 보면 끝입니다.
+
+> 자동 찾기가 조사하는 주소는 바이너리에 고정되어 있습니다(`embeddings:11434`, `embeddings:8080`, `host.docker.internal:11434`, `127.0.0.1:11434`). 요청에서 주소를 받지 않습니다. 목록의 `*` 표시는 모델 **이름으로 짐작한 것**이며, 실제로 임베딩하는지는 연결 테스트가 확인합니다.
 
 폐쇄망이라면 모델을 받아 둔 볼륨이나 `ollama/ollama` 이미지를 함께 반입하면 됩니다.
 

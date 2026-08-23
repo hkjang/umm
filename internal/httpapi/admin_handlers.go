@@ -524,3 +524,17 @@ func (s *Server) testEmbeddingGateway(w http.ResponseWriter, r *http.Request) {
 		"dimensions": dimensions,
 	})
 }
+
+// discoverEmbeddingGateways looks for an embedding gateway at the addresses umm
+// itself documents, so setting one up does not require knowing what the model is
+// called.
+//
+// The addresses are compiled in and never read from the request: probing a
+// supplied address would make this screen a way of reaching whatever the server
+// can reach, and finding umm's own sidecar needs nothing of the sort.
+func (s *Server) discoverEmbeddingGateways(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := contextWithTimeout(r, 10*time.Second)
+	defer cancel()
+	found := intelligence.DiscoverGateways(ctx, &http.Client{Timeout: 4 * time.Second})
+	writeJSON(w, 200, map[string]any{"gateways": found})
+}

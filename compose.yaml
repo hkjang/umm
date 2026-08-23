@@ -17,8 +17,8 @@ services:
     build:
       context: .
       args:
-        VERSION: 0.16.0
-    image: umm:v0.16.0
+        VERSION: 0.17.0
+    image: umm:v0.17.0
     environment:
       POSTGRES_DSN: "postgres://umm:local-development-only@postgres:5432/umm?sslmode=disable&pool_max_conns=16"
       BOOTSTRAP_ADMIN: admin
@@ -55,11 +55,27 @@ services:
     image: ollama/ollama:latest
     volumes:
       - umm-embeddings:/root/.ollama
+    environment:
+      UMM_EMBEDDING_MODEL: bge-m3
+    # Pulling on start is what makes this one command instead of two. The pull is
+    # a no-op once the volume holds the model, so a restart costs nothing and a
+    # machine with no network still comes up with whatever it already has.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        server=$$!
+        until ollama list >/dev/null 2>&1; do sleep 1; done
+        ollama pull "$$UMM_EMBEDDING_MODEL" || echo "pull failed; using what the volume already holds"
+        wait $$server
     healthcheck:
-      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      # Healthy means the model is actually present, not merely that the server
+      # answers. Otherwise umm gets pointed at a gateway that 404s on first use.
+      test: ["CMD-SHELL", "ollama list | grep -q \"$$UMM_EMBEDDING_MODEL\""]
       interval: 10s
       timeout: 5s
-      retries: 30
+      retries: 60
+      start_period: 60s
 
 volumes:
   umm-postgres:

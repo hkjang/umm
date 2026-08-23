@@ -121,6 +121,16 @@ export interface MorningBrief {
   quiet: boolean;
 }
 
+/** An embedding gateway umm found at one of the addresses it documents. */
+export interface GatewayCandidate {
+  baseUrl: string;
+  models: {
+    name: string;
+    /** A hint from the name, not a finding — the connection test settles it. */
+    likelyEmbedding: boolean;
+  }[];
+}
+
 export interface NoteSearchResult {
   id: string;
   spaceId: string;

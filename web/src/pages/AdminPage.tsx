@@ -38,6 +38,7 @@ import {
   IconPlayerPlay,
   IconPlugConnected,
   IconRefresh,
+  IconSearch,
   IconRobot,
   IconRoute,
   IconSettings,
@@ -46,7 +47,7 @@ import {
   IconUsers,
 } from '@tabler/icons-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { api, json } from '../api';
+import { api, json, type GatewayCandidate } from '../api';
 import { msg, useTranslation } from '../i18n';
 
 type Settings = Record<string, Record<string, any>>;
@@ -199,6 +200,23 @@ export default function AdminPage() {
   }, [dirtySections.length]);
   const update = (name: string, key: string, value: any) =>
     setSettings((all) => ({ ...all, [name]: { ...all[name], [key]: value } }));
+  // Finding a gateway is the last piece of friction: an operator can know the
+  // default is lexical and know a sidecar is running, and still be stuck on what
+  // the model is called.
+  const [found, setFound] = useState<GatewayCandidate[]>([]);
+  const discoverGateways = async () => {
+    setBusy('gateway-discover');
+    try {
+      const result = await api<{ gateways: GatewayCandidate[] }>('/admin/ai-gateway/discover');
+      setFound(result.gateways);
+      if (result.gateways.length === 0) {
+        setMessage(t('알려진 주소에서 임베딩 게이트웨이를 찾지 못했습니다. 주소를 직접 입력해 주세요.'));
+      }
+    } finally {
+      setBusy('');
+    }
+  };
+
   // Probing before saving separates the two failures an administrator can fix
   // here — wrong address, wrong model name — from the third, a working model
   // that is not semantic, which the quality panel answers.
@@ -553,6 +571,15 @@ export default function AdminPage() {
               <Group justify="flex-end">
                 <Button
                   size="xs"
+                  variant="subtle"
+                  leftSection={<IconSearch size={14} />}
+                  loading={busy === 'gateway-discover'}
+                  onClick={() => void discoverGateways()}
+                >
+                  {t('자동으로 찾기')}
+                </Button>
+                <Button
+                  size="xs"
                   variant="light"
                   leftSection={<IconPlugConnected size={14} />}
                   loading={busy === 'gateway-test'}
@@ -561,6 +588,39 @@ export default function AdminPage() {
                   {t('연결 테스트')}
                 </Button>
               </Group>
+              {found.length > 0 && (
+                <Paper withBorder radius="md" p="sm">
+                  <Text size="xs" c="dimmed" mb={6}>
+                    {t(
+                      '이름으로 짐작한 임베딩 모델을 먼저 보여 줍니다. 실제로 임베딩하는지는 연결 테스트가 확인합니다.',
+                    )}
+                  </Text>
+                  <Stack gap={6}>
+                    {found.map((gateway) => (
+                      <div key={gateway.baseUrl}>
+                        <Code>{gateway.baseUrl}</Code>
+                        <Group gap={6} mt={4} wrap="wrap">
+                          {gateway.models.map((model) => (
+                            <Button
+                              key={model.name}
+                              size="compact-xs"
+                              variant={model.likelyEmbedding ? 'light' : 'subtle'}
+                              color={model.likelyEmbedding ? 'grape' : 'gray'}
+                              onClick={() => {
+                                update('ai_gateway', 'base_url', gateway.baseUrl);
+                                update('ai_gateway', 'embedding_model', model.name);
+                                setFound([]);
+                              }}
+                            >
+                              {model.name}
+                            </Button>
+                          ))}
+                        </Group>
+                      </div>
+                    ))}
+                  </Stack>
+                </Paper>
+              )}
               <TextInput
                 label={t('임베딩 모델')}
                 description={t(
