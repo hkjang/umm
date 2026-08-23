@@ -122,10 +122,16 @@ type NoteSearchResult struct {
 	Reason    string    `json:"reason"`
 }
 type ThoughtCluster struct {
-	ID       string      `json:"id"`
-	Label    string      `json:"label"`
-	NoteIDs  []uuid.UUID `json:"noteIds"`
-	Cohesion float64     `json:"cohesion"`
+	ID      string      `json:"id"`
+	Label   string      `json:"label"`
+	NoteIDs []uuid.UUID `json:"noteIds"`
+	// Cohesion is comparable only within one basis: a meaning cluster's number is
+	// an average similarity, a proximity cluster's is a closeness on the canvas.
+	Cohesion float64 `json:"cohesion"`
+	// Basis says what grouped these notes. Zooming out replaces a hundred notes
+	// with a handful of bubbles, and a person deciding whether to trust that
+	// grouping needs to know whether umm read the notes or read the layout.
+	Basis string `json:"basis"`
 }
 type NoteRevision struct {
 	Version   int       `json:"version"`
@@ -891,10 +897,23 @@ func (s *Store) RelatedNotes(ctx context.Context, userID, noteID uuid.UUID, limi
 	return related, nil
 }
 
+// Clusters groups a space into the handful of things it is about.
+//
+// Grouping by meaning requires an embedding that measures meaning. On the
+// offline algorithm it would group by shared vocabulary, and at low zoom — where
+// clusters replace the notes themselves — that produces a picture of the
+// workspace that is confidently wrong.
+//
+// The fallback is not nothing. umm is a spatial tool: where a note sits is
+// something a person decided, so grouping by proximity reports a real structure
+// rather than an invented one. Which of the two ran is on every cluster.
 func (s *Store) Clusters(ctx context.Context, userID, spaceID uuid.UUID) ([]ThoughtCluster, error) {
 	notes, _, err := s.ListNotes(ctx, userID, spaceID, "")
 	if err != nil {
 		return nil, err
+	}
+	if report, qualityErr := s.MeasureEmbeddingQuality(ctx, false); qualityErr != nil || !report.Semantic {
+		return proximityClusters(notes), nil
 	}
 	vectors := s.loadEmbeddings(ctx, notes)
 	// One cutoff for the whole space, taken from every pair in it. Deriving it
@@ -937,7 +956,8 @@ func (s *Store) Clusters(ctx context.Context, userID, spaceID uuid.UUID) ([]Thou
 		if len(keywords) > 0 {
 			label = strings.Join(keywords, " · ")
 		}
-		clusters = append(clusters, ThoughtCluster{ID: "cluster-" + seed.ID.String(), Label: label, NoteIDs: ids, Cohesion: cohesion / float64(len(ids)-1)})
+		clusters = append(clusters, ThoughtCluster{ID: "cluster-" + seed.ID.String(), Label: label,
+			NoteIDs: ids, Cohesion: cohesion / float64(len(ids)-1), Basis: ClusterByMeaning})
 	}
 	sort.Slice(clusters, func(i, j int) bool { return clusters[i].Cohesion > clusters[j].Cohesion })
 	return clusters, nil

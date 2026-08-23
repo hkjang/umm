@@ -131,6 +131,16 @@ export interface GatewayCandidate {
   }[];
 }
 
+/** A group of thoughts, and what grouped them. */
+export interface Cluster {
+  id: string;
+  label: string;
+  noteIds: string[];
+  cohesion: number;
+  /** 'meaning' when umm read the notes; 'proximity' when it read the layout and says so. */
+  basis: 'meaning' | 'proximity';
+}
+
 export interface NoteSearchResult {
   id: string;
   spaceId: string;

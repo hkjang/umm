@@ -140,4 +140,54 @@ test.describe('canvas', () => {
     await page.getByRole('menuitem', { name: /생각 수집함/ }).click();
     await expect(page.getByRole('group', { name: new RegExp(thought) })).toBeVisible({ timeout: 15000 });
   });
+  // Semantic zoom replaces notes with what they add up to once the text is too
+  // small to read. The part worth pinning is the switch itself and the honesty
+  // of the label: umm groups by placement when it cannot judge meaning, and the
+  // shape says so rather than implying it read the notes.
+  test('summarises the canvas when zoomed out past reading distance', async ({ page }) => {
+    const topic = unique('묶음');
+    // Two huddles, and enough notes that summarising is worth doing at all.
+    for (let group = 0; group < 2; group++) {
+      for (let i = 0; i < 14; i++) {
+        await page.evaluate(
+          async ({ text, x, y, space }) => {
+            await fetch(`/api/v1/spaces/${space}/notes`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ content: text, x, y }),
+            });
+          },
+          {
+            text: `${topic}-${group}-${i}`,
+            x: group * 2600 + (i % 4) * 320,
+            y: Math.floor(i / 4) * 230,
+            space: page.url().split('/space/')[1],
+          },
+        );
+      }
+    }
+    await page.reload();
+    await expect(page.getByRole('textbox', { name: '생각 검색' })).toBeVisible();
+    await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+
+    // Fitting a canvas this wide into the viewport already lands below reading
+    // distance, so the summary is what a person sees on arrival — which is the
+    // behaviour worth having and worth pinning.
+    const clusters = page.locator('.react-flow__node-cluster');
+    await expect(clusters.first()).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('.react-flow__node-postit')).toHaveCount(0);
+
+    // The grouping has to say what it rests on. The default embedding cannot
+    // judge meaning, so this must read as placement rather than content.
+    await expect(clusters.first()).toContainText('가까이 둔 것으로 묶임');
+
+    // Zooming back in returns the notes themselves: the summary is a view of the
+    // canvas, not a replacement for it.
+    for (let i = 0; i < 10; i++) {
+      await page.getByRole('button', { name: 'zoom in' }).click();
+      await page.waitForTimeout(120);
+    }
+    await expect(page.locator('.react-flow__node-postit').first()).toBeVisible({ timeout: 15000 });
+    await expect(clusters).toHaveCount(0);
+  });
 });

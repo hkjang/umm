@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.17.0-success?style=flat-square" alt="v0.17.0" />
+  <img src="https://img.shields.io/badge/Release-v0.18.0-success?style=flat-square" alt="v0.18.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,14 +25,14 @@
 
 ---
 
-## v0.17.0 — 좋은 임베딩까지 한 번의 클릭
+## v0.18.0 — 멀리서 보면 무엇이 보이는가
 
-- **자동으로 찾기**: 관리자 화면에서 알려진 주소의 임베딩 게이트웨이와 모델 목록을 찾아 채워 줍니다. 모델 이름을 몰라도 됩니다.
-- **사이드카가 스스로 모델을 받습니다**: `docker compose --profile embeddings up -d` 한 명령. healthcheck도 서버 응답이 아니라 **모델 존재**를 확인합니다.
-- **조사 주소는 바이너리에 고정**: 요청에서 받지 않습니다. 받는다면 이 화면이 서버가 닿는 곳을 조사하는 수단이 됩니다.
-- 실측: `4.2% → 85.4%` (한 명령 + 한 클릭)
+- **의미 줌**: 글자가 읽히지 않는 거리까지 줌아웃하면 노트 대신 **뭉친 것들**이 개수와 이름과 함께 보입니다.
+- **판단할 수 없으면 배치로 묶습니다**: 임베딩이 뜻을 못 재면 어휘로 묶은 군집을 내놓는 대신, 사람이 **가까이 놓은 것**끼리 묶고 그렇다고 표시합니다(점선). 지어낸 구조가 아니라 실재하는 구조입니다.
+- **요약할 것이 없으면 요약하지 않습니다**: 노트 25개 미만이면 전환하지 않습니다.
+- **레이아웃을 재배치하지 않습니다**: 덩어리는 멤버들이 차지한 땅을 그대로 덮고, 어디에도 속하지 않은 노트는 그대로 남습니다.
 
-이전 릴리스: [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
@@ -138,7 +138,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.17.0
+  umm:v0.18.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

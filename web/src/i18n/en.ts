@@ -814,4 +814,6 @@ export const en: Dictionary = {
     'No embedding gateway answered at the addresses umm knows about. Enter one manually.',
   '이름으로 짐작한 임베딩 모델을 먼저 보여 줍니다. 실제로 임베딩하는지는 연결 테스트가 확인합니다.':
     'Models whose names suggest they embed are shown first. The connection test is what confirms it.',
+  '내용으로 묶임': 'grouped by content',
+  '가까이 둔 것으로 묶임': 'grouped by placement',
 };

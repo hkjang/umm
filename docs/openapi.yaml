@@ -322,7 +322,7 @@ paths:
     get:
       operationId: get_spaces_spaceId_clusters
       tags: [Thoughts]
-      summary: Discover coherent semantic clusters without an external AI service
+      summary: Group a space into the handful of things it is about
       x-required-scope: notes:read
       responses:
         '200': { description: Thought clusters, content: { application/json: { schema: { type: object, properties: { clusters: { type: array, items: { $ref: '#/components/schemas/ThoughtCluster' } } } } } } }
@@ -1191,12 +1191,31 @@ components:
         reason: { type: string }
     ThoughtCluster:
       type: object
-      required: [id, label, noteIds, cohesion]
+      required: [id, label, noteIds, cohesion, basis]
       properties:
         id: { type: string }
         label: { type: string }
         noteIds: { type: array, items: { type: string, format: uuid } }
-        cohesion: { type: number, minimum: 0, maximum: 1 }
+        cohesion:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: |
+            Comparable only within one basis. For a meaning cluster it is an
+            average similarity; for a proximity cluster it is a tightness of
+            placement. Ranking across the two says nothing.
+        basis:
+          type: string
+          enum: [meaning, proximity]
+          description: |
+            What grouped these notes. "meaning" when the embedding backend has
+            been measured as semantic. "proximity" when it has not: at low zoom
+            clusters replace the notes themselves, and grouping by shared
+            vocabulary there produces a confidently wrong picture of the
+            workspace. Where a note sits is something a person decided, so
+            grouping by placement reports a real structure rather than an
+            invented one — and a caller must present the two differently because
+            they are different claims.
     NoteRevision:
       type: object
       required: [version, content, title, color, kind, x, y, width, height, rotation, createdAt]

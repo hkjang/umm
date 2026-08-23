@@ -77,6 +77,7 @@ import {
   type Preferences,
   type Space,
   type EdgeRelation,
+  type Cluster,
   type SpaceSuggestion,
   type SuggestionResult,
   type ThoughtEdge,
@@ -90,9 +91,24 @@ import { readLocalStorage, readSessionStorage, writeLocalStorage, writeSessionSt
 import { importLayout, type ImportedThought, type ImportThoughtsResult } from '../lib/markdown-import';
 import { originLabel, relationLabel, relationOptions } from '../lib/edge-vocabulary';
 import { restoreAfterFailedWrite } from '../lib/optimistic-write';
+import ClusterNode, { type ClusterNodeData } from '../components/ClusterNode';
 import { showError, showInfo, showSuccess } from '../ui-notifications';
 
-const nodeTypes = { postit: PostItNode };
+const nodeTypes = { postit: PostItNode, cluster: ClusterNode };
+
+type CanvasNode = Node<PostItData> | Node<ClusterNodeData>;
+
+// Below this zoom the text on a post-it is not readable anyway, so the canvas
+// stops drawing notes and starts drawing what they add up to. Chosen against the
+// existing 0.15 floor and 2.2 ceiling: it is roughly where a note becomes a
+// coloured rectangle.
+const clusterZoom = 0.45;
+
+// Summarising exists to answer information overload, so it does not apply to a
+// canvas that has none. Opening a space with a dozen notes zooms out far enough
+// to cross the threshold, and replacing them with two bubbles there is a worse
+// view of the same thing — the notes were perfectly legible as they were.
+const clusterMinNotes = 25;
 const palette: Record<string, string> = {
   yellow: '#fff0a8',
   blue: '#dbeeff',
@@ -133,12 +149,6 @@ interface Backlink {
   note: ThoughtNote;
   direction: 'incoming' | 'outgoing';
 }
-interface Cluster {
-  id: string;
-  label: string;
-  noteIds: string[];
-  cohesion: number;
-}
 interface SpaceMember {
   id: string;
   username: string;
@@ -177,7 +187,9 @@ function CanvasInner() {
   const [activeSpace, setActiveSpace] = useState('');
   const [notes, setNotes] = useState<ThoughtNote[]>([]);
   const [rawEdges, setRawEdges] = useState<ThoughtEdge[]>([]);
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node<PostItData>>([]);
+  // The canvas holds post-its at working zoom and cluster shapes below it, so
+  // the node type is the union of the two rather than post-its alone.
+  const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [query, setQuery] = useState('');
   const [capture, setCapture] = useState('');
@@ -211,6 +223,11 @@ function CanvasInner() {
   // Suggestions umm wrote into the graph on this run. They already exist as
   // inferred edges, so this list is only the review queue for them.
   const [suggestions, setSuggestions] = useState<ThoughtEdge[]>([]);
+  // Semantic zoom. Only the side of the threshold matters, so this is a boolean
+  // rather than the zoom value: storing the number would rerender the canvas on
+  // every wheel tick to no purpose.
+  const [zoomedOut, setZoomedOut] = useState(false);
+  const [clusters, setClusters] = useState<Cluster[]>([]);
   // Where the selected thought could be filed. Loaded with the connection panel,
   // because filing and connecting are the two things you do to a thought you are
   // looking at.
@@ -558,8 +575,8 @@ function CanvasInner() {
       .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
   }, [spaces, spaceQuery]);
   useEffect(() => {
-    setNodes(
-      searchMatches.map((note) => ({
+    const noteNodes = (visible: ThoughtNote[]) =>
+      visible.map((note) => ({
         id: note.id,
         type: 'postit',
         position: { x: note.x, y: note.y },
@@ -574,9 +591,42 @@ function CanvasInner() {
           onRestore: restore,
           onComments: openComments,
         },
-      })),
-    );
-  }, [searchMatches, persist, remove, restore, discoverRelated, openComments]);
+      }));
+
+    if (!zoomedOut || clusters.length === 0 || searchMatches.length < clusterMinNotes) {
+      setNodes(noteNodes(searchMatches));
+      return;
+    }
+
+    // Zoomed out: draw what the notes add up to. A group becomes one shape
+    // covering the ground its members occupy, so the canvas keeps the layout the
+    // person built rather than rearranging itself when they zoom.
+    const byID = new Map(searchMatches.map((note) => [note.id, note]));
+    const grouped = new Set<string>();
+    const clusterNodes = clusters
+      .map((cluster) => {
+        const members = cluster.noteIds.map((id) => byID.get(id)).filter((note): note is ThoughtNote => !!note);
+        if (members.length < 2) return undefined;
+        members.forEach((note) => grouped.add(note.id));
+        const left = Math.min(...members.map((note) => note.x));
+        const top = Math.min(...members.map((note) => note.y));
+        const right = Math.max(...members.map((note) => note.x + note.width));
+        const bottom = Math.max(...members.map((note) => note.y + note.height));
+        return {
+          id: cluster.id,
+          type: 'cluster',
+          position: { x: left, y: top },
+          style: { width: right - left, height: bottom - top },
+          draggable: false,
+          data: { label: cluster.label, count: members.length, basis: cluster.basis } satisfies ClusterNodeData,
+        };
+      })
+      .filter((node): node is NonNullable<typeof node> => !!node);
+
+    // Notes in no group stay themselves. They are the outliers, and hiding them
+    // would make the zoomed-out view claim the workspace is tidier than it is.
+    setNodes([...clusterNodes, ...noteNodes(searchMatches.filter((note) => !grouped.has(note.id)))]);
+  }, [searchMatches, persist, remove, restore, discoverRelated, openComments, zoomedOut, clusters]);
   useEffect(() => {
     const visible = new Set(searchMatches.map((note) => note.id));
     setEdges(
@@ -800,10 +850,30 @@ function CanvasInner() {
     [t],
   );
 
-  const onDragStart: OnNodeDrag<Node<PostItData>> = (_, node) => {
+  // Clusters are fetched when the canvas crosses into the zoomed-out view and
+  // then reused, because the grouping does not change as the person keeps
+  // zooming and refetching on every wheel tick would be a request storm.
+  useEffect(() => {
+    if (!zoomedOut || !activeSpace) return;
+    let cancelled = false;
+    api<{ clusters: Cluster[] }>(`/spaces/${activeSpace}/clusters`, { silent: true })
+      .then((result) => {
+        if (!cancelled) setClusters(result.clusters);
+      })
+      .catch(() => {
+        if (!cancelled) setClusters([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [zoomedOut, activeSpace, notes.length]);
+
+  // Cluster shapes are not draggable, so only post-its reach these — but the
+  // handler types follow the node union the canvas is declared with.
+  const onDragStart: OnNodeDrag<CanvasNode> = (_, node) => {
     dragStart.current[node.id] = { ...node.position };
   };
-  const onDragStop: OnNodeDrag<Node<PostItData>> = (_, node) => {
+  const onDragStop: OnNodeDrag<CanvasNode> = (_, node) => {
     const before = dragStart.current[node.id];
     const after = { ...node.position };
     if (before && (before.x !== after.x || before.y !== after.y)) {
@@ -1253,6 +1323,12 @@ function CanvasInner() {
           onNodeDragStop={onDragStop}
           onPaneClick={(event) => {
             if (event.detail === 2) onPaneDoubleClick(event);
+          }}
+          onMove={(_, viewport) => {
+            // Only the crossing matters, so state changes once per crossing
+            // rather than on every wheel tick.
+            const out = viewport.zoom < clusterZoom;
+            setZoomedOut((current) => (current === out ? current : out));
           }}
           fitView
           fitViewOptions={{ padding: 0.3 }}
