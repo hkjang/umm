@@ -367,11 +367,59 @@ func (s *Store) TodayReview(ctx context.Context, userID uuid.UUID) (TodayReview,
 		}
 	}
 	out.Onboarding = OnboardingProgress{CompletedAt: completedAt, Percent: done * 100 / len(steps), Steps: steps}
-	out.Counts["review"] = len(out.Review)
-	out.Counts["orphans"] = len(out.Orphans)
-	out.Counts["dreams"] = len(out.Dreams)
-	out.Counts["activity"] = len(out.Activity)
+
+	// The tiles are counts, so they have to count.
+	//
+	// They used to report len() of lists the queries capped at five to eight, so
+	// a workspace with two thousand unconnected thoughts said six. That is not a
+	// sample size on the page — it is a number beside the words "waiting to be
+	// connected", and reading it as the total is the only way to read it. The
+	// lists below stay capped; they are a preview and look like one.
+	if err := s.countTodayTotals(ctx, userID, &out); err != nil {
+		return out, err
+	}
 	return out, nil
+}
+
+// countTodayTotals fills the summary numbers with totals rather than the length
+// of the previewed lists. One round trip, because four counts on the landing
+// page should not be four round trips.
+func (s *Store) countTodayTotals(ctx context.Context, userID uuid.UUID, out *TodayReview) error {
+	// Each count repeats its list's WHERE clause exactly. A count that filters
+	// differently from the list beneath it is worse than the cap it replaces: the
+	// number and the rows would disagree and neither would be wrong-looking.
+	var review, orphans, dreams, activity int
+	err := s.Pool.QueryRow(ctx, `
+		SELECT
+		 (SELECT count(*) FROM notes n JOIN spaces sp ON sp.id=n.space_id
+		    LEFT JOIN note_reviews nr ON nr.note_id=n.id AND nr.user_id=$1
+		    WHERE n.deleted_at IS NULL AND n.archived=false
+		      AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
+		      AND (COALESCE(nr.pinned,false) OR (nr.review_at IS NOT NULL AND nr.review_at<=now()) OR
+		           (nr.review_at IS NULL AND COALESCE(nr.reviewed_at,n.updated_at)<now()-interval '14 days'))),
+		 (SELECT count(*) FROM notes n JOIN spaces sp ON sp.id=n.space_id
+		    WHERE n.deleted_at IS NULL AND n.archived=false
+		      AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
+		      AND NOT EXISTS(
+		        SELECT 1 FROM note_edges e
+		        JOIN notes linked ON linked.id=CASE WHEN e.source_note_id=n.id THEN e.target_note_id ELSE e.source_note_id END
+		        WHERE (e.source_note_id=n.id OR e.target_note_id=n.id) AND linked.deleted_at IS NULL)),
+		 (SELECT count(*) FROM dream_notes d JOIN spaces sp ON sp.id=d.space_id
+		    WHERE d.user_id=$1 AND d.status IN ('created','exposed')
+		      AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))),
+		 (SELECT count(*) FROM note_comments c JOIN notes n ON n.id=c.note_id JOIN spaces sp ON sp.id=n.space_id
+		    WHERE c.deleted_at IS NULL AND n.deleted_at IS NULL AND c.author_id<>$1
+		      AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
+		      AND COALESCE((SELECT review_digest FROM user_preferences WHERE user_id=$1),true))
+		`, userID).Scan(&review, &orphans, &dreams, &activity)
+	if err != nil {
+		return err
+	}
+	out.Counts["review"] = review
+	out.Counts["orphans"] = orphans
+	out.Counts["dreams"] = dreams
+	out.Counts["activity"] = activity
+	return nil
 }
 
 func (s *Store) UpdateReview(ctx context.Context, userID, noteID uuid.UUID, snoozeDays *int, pinned *bool, complete bool) (ReviewItem, error) {
