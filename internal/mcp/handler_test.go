@@ -19,6 +19,7 @@ func TestToolDefinitionsAreStable(t *testing.T) {
 		"get_related_notes",
 		"list_clusters",
 		"list_dreams",
+		"list_lines",
 		"list_notes",
 		"list_spaces",
 		"search_notes",

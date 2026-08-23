@@ -20,8 +20,9 @@ Mcp-Method: tools/list
 | 도구 | 필요한 scope | 용도 |
 | --- | --- | --- |
 | `list_spaces` | `spaces:read` | 접근 가능한 공간 목록 |
-| `list_notes` | `notes:read` | 공간의 메모와 연결 목록 |
-| `search_notes` | `notes:read` | 공간 안의 생각 검색 |
+| `list_notes` | `notes:read` | 공간의 메모와 연결 목록. `note_lines`로 각 생각이 어느 갈래에 속하는지 함께 옵니다 |
+| `search_notes` | `notes:read` | 공간 안의 생각 검색. `note_lines` 동일 |
+| `list_lines` | `notes:read` | 생각의 갈래 목록과 각 갈래의 상태·이유 |
 | `create_note` | `notes:write` | 캔버스에 생각 붙이기 |
 | `connect_notes` | `notes:write` | 두 생각 연결 |
 | `get_related_notes` | `notes:read` | 로컬 의미 벡터로 연관 생각 발견 |
@@ -29,6 +30,16 @@ Mcp-Method: tools/list
 | `list_dreams` | `dreams:read` | 개인 Dream 기록 조회 |
 
 도구는 캐시 안정성을 위해 이름순으로 고정되어 있습니다. 쓰기 도구 호출은 감사 로그에 기록됩니다.
+
+### 접어 둔 갈래
+
+`note_lines[note_id].status`가 `abandoned`이면 그 생각은 **사람이 검토한 뒤 채택하지 않기로 한
+갈래**에 속합니다. `resolution`에 그 이유가 함께 옵니다. 현재 방침처럼 다루면 안 됩니다 — 사람이
+이미 거절한 선택지를 에이전트가 다시 집어드는 것이 이 표시가 막으려는 일입니다.
+
+갈래는 **사람이 표시합니다.** umm은 조용한 갈래를 접힌 것으로 추론하지 않으므로, 빈 결과는 표시된
+것이 없다는 뜻이지 아무것도 결정되지 않았다는 뜻이 아닙니다. `find_contradictions`·
+`find_open_questions`와 같은 규칙입니다.
 
 ## 예제
 
