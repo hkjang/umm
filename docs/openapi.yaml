@@ -1921,7 +1921,14 @@ components:
             rejected with 400 and an allowedKinds list rather than rewritten,
             which would file a thought as something the person did not say it was.
             "idea" is written when a Dream is materialised.
-              reason: { type: string, enum: [backend-not-semantic, disabled] }
+              reason:
+                type: string
+                enum: [backend-not-semantic, disabled, space-too-large]
+                description: >
+                  space-too-large: finding duplicates compares every pair, so the work grows
+                  with the square of the space. Past the bound only the most recent thoughts
+                  were compared and the rest were left, which is reported rather than passed
+                  over — a partial pass must not read as a clean bill of health.
         questions:
           type: array
           description: |
