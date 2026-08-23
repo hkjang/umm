@@ -1,9 +1,9 @@
 package store
 
 import (
+	"context"
 	"strconv"
 	"testing"
-	"time"
 )
 
 // Finding duplicates means comparing every pair, so the work grows with the
@@ -11,45 +11,72 @@ import (
 // 2,000 take 916ms and 10,000 would take about 23 seconds — per space, every
 // morning. A brief that times out silently is worse than one that says what it
 // left out.
-func TestDuplicateScanKeepsTheRecentEnd(t *testing.T) {
-	notes := make([]Note, maxDuplicateScanNotes+50)
-	base := time.Now().Add(-time.Duration(len(notes)) * time.Minute)
-	for index := range notes {
-		// ListNotes orders by created_at ascending, so the fixture does too.
-		notes[index] = Note{Content: strconv.Itoa(index), CreatedAt: base.Add(time.Duration(index) * time.Minute)}
+// Finding duplicates means comparing every pair, so the work grows with the
+// square of the space. Measured at 1024 dimensions: 1,000 thoughts take 229ms,
+// 2,000 take 916ms and 10,000 would take about 23 seconds — per space, every
+// morning. A brief that times out silently is worse than one that says what it
+// left out.
+//
+// Which end is kept is the part that can be wrong: a duplicate is almost always
+// recent, so keeping the oldest thousand would examine the least likely part of
+// the space and nothing about the result would look wrong.
+func TestDuplicateScanReadsTheRecentEndIntegration(t *testing.T) {
+	db, userID, spaceID := retrievalSpace(t)
+	ctx := context.Background()
+
+	total := maxDuplicateScanNotes + 50
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO notes(space_id,author_id,content,created_at)
+		SELECT $1,$2,'순서 확인 ' || g, now() - make_interval(secs => $3 - g)
+		FROM generate_series(1,$3) g`, spaceID, userID, total); err != nil {
+		t.Fatal(err)
 	}
 
-	kept, trimmed := recentForDuplicateScan(notes)
+	notes, trimmed, err := db.recentNotesForDuplicateScan(ctx, userID, spaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !trimmed {
-		t.Fatal("a space past the bound was not trimmed")
+		t.Fatal("a space past the bound did not report that there were more")
 	}
-	if len(kept) != maxDuplicateScanNotes {
-		t.Fatalf("kept %d, want %d", len(kept), maxDuplicateScanNotes)
+	if len(notes) != maxDuplicateScanNotes {
+		t.Fatalf("read %d notes, want %d", len(notes), maxDuplicateScanNotes)
 	}
-	// The newest thought must survive. Keeping the head would drop precisely the
-	// recent end, where a duplicate almost always is, and nothing about the
-	// result would look wrong.
-	if kept[len(kept)-1].Content != notes[len(notes)-1].Content {
-		t.Errorf("the newest thought was dropped: kept ends at %q, space ends at %q",
-			kept[len(kept)-1].Content, notes[len(notes)-1].Content)
+	newest := "순서 확인 " + strconv.Itoa(total)
+	found := false
+	for _, note := range notes {
+		if note.Content == newest {
+			found = true
+		}
+		if note.Content == "순서 확인 1" {
+			t.Error("the oldest thought was read; the bound must keep the recent end")
+		}
 	}
-	if kept[0].CreatedAt.Before(notes[0].CreatedAt.Add(time.Minute)) {
-		t.Error("the oldest thoughts were kept rather than the newest")
+	if !found {
+		t.Errorf("the newest thought %q was not read", newest)
 	}
 }
 
 // Under the bound nothing is trimmed, so a small workspace does not read as
 // partly examined.
-func TestDuplicateScanLeavesSmallSpacesWhole(t *testing.T) {
-	for _, size := range []int{0, 1, 2, maxDuplicateScanNotes} {
-		notes := make([]Note, size)
-		kept, trimmed := recentForDuplicateScan(notes)
-		if trimmed {
-			t.Errorf("a space of %d was reported as trimmed", size)
-		}
-		if len(kept) != size {
-			t.Errorf("size %d became %d", size, len(kept))
-		}
+func TestDuplicateScanLeavesSmallSpacesWholeIntegration(t *testing.T) {
+	db, userID, spaceID := retrievalSpace(t)
+	ctx := context.Background()
+
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO notes(space_id,author_id,content)
+		SELECT $1,$2,'작은 공간 ' || g FROM generate_series(1,5) g`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	notes, trimmed, err := db.recentNotesForDuplicateScan(ctx, userID, spaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trimmed {
+		t.Error("a five-thought space was reported as trimmed")
+	}
+	if len(notes) != 5 {
+		t.Errorf("read %d notes, want 5", len(notes))
 	}
 }
 

@@ -107,19 +107,47 @@ type MorningBrief struct {
 // of health it did not earn.
 const maxDuplicateScanNotes = 1000
 
-// recentForDuplicateScan trims a space to the newest thoughts the brief will
-// compare, and says whether it had to.
+// recentNotesForDuplicateScan reads the newest thoughts in a space, and says
+// whether there were more.
 //
-// Separate from the loop so the part that can be wrong is testable on its own.
-// ListNotes orders by created_at ascending, so the newest are at the end and the
-// tail is what to keep; taking the head would have kept the oldest thousand and
-// quietly examined the least likely part of the space. That was the first
-// version of this, and nothing about the result would have looked wrong.
-func recentForDuplicateScan(notes []Note) ([]Note, bool) {
-	if len(notes) <= maxDuplicateScanNotes {
-		return notes, false
+// A dedicated read rather than ListNotes-then-trim. ListNotes returns every
+// thought and every connection in the space, so trimming afterwards meant
+// loading two thousand notes and their edges to compare one thousand and throw
+// the rest away — the cap saved the comparison and not the reading.
+func (s *Store) recentNotesForDuplicateScan(ctx context.Context, userID, spaceID uuid.UUID) ([]Note, bool, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
+		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at
+		FROM notes n
+		JOIN spaces sp ON sp.id=n.space_id
+		LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$1
+		WHERE n.space_id=$2 AND n.deleted_at IS NULL AND (sp.owner_id=$1 OR m.user_id=$1)
+		ORDER BY n.created_at DESC
+		-- One past the bound, so "there were more" is answered by the read itself
+		-- rather than by a second count.
+		LIMIT $3`, userID, spaceID, maxDuplicateScanNotes+1)
+	if err != nil {
+		return nil, false, err
 	}
-	return notes[len(notes)-maxDuplicateScanNotes:], true
+	defer rows.Close()
+	notes := []Note{}
+	for rows.Next() {
+		var note Note
+		if err := rows.Scan(&note.ID, &note.SpaceID, &note.AuthorID, &note.Content, &note.Title,
+			&note.Color, &note.Kind, &note.Source, &note.AIExcluded, &note.X, &note.Y,
+			&note.Width, &note.Height, &note.Rotation, &note.Version, &note.CreatedAt, &note.UpdatedAt); err != nil {
+			return nil, false, err
+		}
+		notes = append(notes, note)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	trimmed := len(notes) > maxDuplicateScanNotes
+	if trimmed {
+		notes = notes[:maxDuplicateScanNotes]
+	}
+	return notes, trimmed, nil
 }
 
 // sortDuplicatesForBrief promotes pairs that repeat a decision above ordinary
@@ -249,12 +277,10 @@ func (s *Store) duplicateThoughts(ctx context.Context, userID uuid.UUID) ([]Dupl
 	pairs := []DuplicatePair{}
 	var skippedLarge bool
 	for _, space := range spaces {
-		notes, _, listErr := s.ListNotes(ctx, userID, space.ID, "")
+		notes, trimmed, listErr := s.recentNotesForDuplicateScan(ctx, userID, space.ID)
 		if listErr != nil || len(notes) < 2 {
 			continue
 		}
-		var trimmed bool
-		notes, trimmed = recentForDuplicateScan(notes)
 		skippedLarge = skippedLarge || trimmed
 		vectors := s.loadEmbeddings(ctx, notes)
 		for i := 0; i < len(notes); i++ {
