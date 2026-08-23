@@ -1357,9 +1357,27 @@ function EmbeddingQualityPanel() {
             </Alert>
           ) : (
             <Alert color="yellow" variant="light" title={t('지금은 어휘가 겹치는 정도만 재고 있습니다')}>
-              {t(
-                '내장 로컬 임베딩은 단어가 겹치는 문장을 뜻이 같은 문장보다 높게 봅니다. 연관 생각·군집·검색의 "의미상 유사"는 실제로는 어휘 유사입니다. 임베딩 모델을 설정하면 해결됩니다.',
-              )}
+              <Text size="sm">
+                {t(
+                  '내장 로컬 임베딩은 단어가 겹치는 문장을 뜻이 같은 문장보다 높게 봅니다. 연관 생각·군집·검색의 "의미상 유사"는 실제로는 어휘 유사입니다. 임베딩 모델을 설정하면 해결됩니다.',
+                )}
+              </Text>
+              {/* Saying what is wrong without saying how to fix it leaves the
+                  person who most needs this — someone self-hosting who does not
+                  know the compose profile exists — exactly where they were. */}
+              <Text size="xs" c="dimmed" mt="xs">
+                {t(
+                  'umm을 docker compose로 실행 중이라면, 모델을 곁에 띄우는 것이 두 줄입니다. 받아 둔 뒤에는 네트워크 없이 동작합니다.',
+                )}
+              </Text>
+              <Code block mt={6} fz="xs">
+                {'docker compose --profile embeddings up -d\ndocker compose exec embeddings ollama pull bge-m3'}
+              </Code>
+              <Text size="xs" c="dimmed" mt={6}>
+                {t(
+                  '그 다음 위의 AI Gateway 주소를 http://embeddings:11434 으로, 임베딩 모델을 bge-m3 으로 저장하고 다시 측정하세요. 후보 모델 비교는 docs/admin-guide.md에 있습니다.',
+                )}
+              </Text>
             </Alert>
           )}
 

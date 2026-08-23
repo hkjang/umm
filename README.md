@@ -25,13 +25,13 @@
 
 ---
 
-## v0.27.1 — 같은 생각을 "연관"으로 잇지 않습니다
+## v0.28.0 — 아무것도 안 하는 설정을 없애고, 중요한 설정은 실행 가능하게
 
-- **빈 DB + 실제 모델(bge-m3)로 전체 흐름을 한 번에 검증**했습니다. 캡처부터 결정 기록까지 정상 동작했고, 한 가지만 어긋났습니다.
-- **연결 추천 1순위가 "같은 문장 두 개"였습니다**: 근접 중복은 어떤 임베딩에서도 최상위라 항상 1순위로 추천되고, `연관`은 진실을 약하게 말합니다. 한 상황에 할 일이 두 개 생깁니다.
-- **테스트 픽스처가 다른 데이터셋의 기하를 빌려 쓰고 있었습니다**: 작업공간 문장이 품질 데이터셋 문장과 같아 스텁이 주제 분기에 걸렸고, 모든 "연관" 쌍이 코사인 0.999 — 실측으로는 중복만 도달하는 값 — 로 놓여 있었습니다.
+- **설정 61개를 대조해 읽히지 않는 하나를 찾았습니다**: `embedding_dimensions`는 007부터 있었고 아무 코드도 읽지 않았습니다. 실행 중인 인스턴스에서 256으로 바꿔도 벡터는 1024 그대로였습니다.
+- **보이면서 아무 일도 안 하는 손잡이는 없는 것보다 나쁩니다**: 배포를 손보던 사람이 지렛대로 읽고, 돌려 보고, 자기가 바꾸려던 게 원래 중요하지 않다고 결론 내립니다.
+- **경고가 명령을 함께 줍니다**: "임베딩 모델을 설정하면 해결됩니다"만으로는, 정작 그 경고를 볼 자체 호스팅 사용자를 있던 자리에 그대로 둡니다. 이제 두 줄짜리 compose 명령이 함께 나옵니다.
 
-이전 릴리스: [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
