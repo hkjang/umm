@@ -25,13 +25,13 @@
 
 ---
 
-## v0.28.0 — 아무것도 안 하는 설정을 없애고, 중요한 설정은 실행 가능하게
+## v0.28.1 — 갈래가 내보내기에서 사라지고 있었습니다
 
-- **설정 61개를 대조해 읽히지 않는 하나를 찾았습니다**: `embedding_dimensions`는 007부터 있었고 아무 코드도 읽지 않았습니다. 실행 중인 인스턴스에서 256으로 바꿔도 벡터는 1024 그대로였습니다.
-- **보이면서 아무 일도 안 하는 손잡이는 없는 것보다 나쁩니다**: 배포를 손보던 사람이 지렛대로 읽고, 돌려 보고, 자기가 바꾸려던 게 원래 중요하지 않다고 결론 내립니다.
-- **경고가 명령을 함께 줍니다**: "임베딩 모델을 설정하면 해결됩니다"만으로는, 정작 그 경고를 볼 자체 호스팅 사용자를 있던 자리에 그대로 둡니다. 이제 두 줄짜리 compose 명령이 함께 나옵니다.
+- **내보내기는 umm이 사라졌을 때 남는 것입니다**: 연결에는 누가 그었는지가 붙어 있는데, 갈래는 붙어 있지 않았습니다.
+- **사라지던 것**: 생각이 어느 갈래였는지, 그 갈래를 접어 뒀다는 사실, 그리고 **왜 접어 뒀는지**.
+- **이유는 사람들이 가장 먼저 잃는 절반**이고, 기록을 다른 곳으로 가져가는 순간은 그걸 잃기에 가장 나쁜 때입니다.
 
-이전 릴리스: [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 

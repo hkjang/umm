@@ -89,6 +89,28 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "내보낼 공간을 확인하지 못했습니다.")
 		return
 	}
+	// Lines of thinking travel with the export for the same reason edge origins
+	// do. A thought that was tried and set aside reads exactly like a current one
+	// once the label is gone, and the reason it was set aside is the half people
+	// lose first — losing it at the moment someone takes their record elsewhere
+	// is the worst possible time.
+	branches, err := s.Store.ListBranches(r.Context(), p.User.ID, spaceID)
+	if err != nil {
+		slog.Warn("export could not read lines of thinking", "space_id", spaceID, "error", err)
+		writeError(w, 500, "내보낼 갈래를 불러오지 못했습니다.")
+		return
+	}
+	assignments, err := s.Store.BranchAssignments(r.Context(), p.User.ID, spaceID)
+	if err != nil {
+		slog.Warn("export could not read line membership", "space_id", spaceID, "error", err)
+		writeError(w, 500, "내보낼 갈래를 불러오지 못했습니다.")
+		return
+	}
+	byID := make(map[uuid.UUID]store.Branch, len(branches))
+	for _, branch := range branches {
+		byID[branch.ID] = branch
+	}
+
 	var out strings.Builder
 	fmt.Fprintf(&out, "# %s\n\nExported from umm at %s.\n\n", spaceName, time.Now().Format(time.RFC3339))
 	for _, n := range notes {
@@ -96,7 +118,11 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 		if title == "" {
 			title = "Thought"
 		}
-		fmt.Fprintf(&out, "## %s\n\n%s\n\n- id: `%s`\n- type: `%s`\n- source: `%s`\n- canvas: `%.0f, %.0f`\n\n", title, n.Content, n.ID, n.Kind, n.Source, n.X, n.Y)
+		fmt.Fprintf(&out, "## %s\n\n%s\n\n- id: `%s`\n- type: `%s`\n- source: `%s`\n- canvas: `%.0f, %.0f`\n", title, n.Content, n.ID, n.Kind, n.Source, n.X, n.Y)
+		if branch, ok := byID[assignments[n.ID]]; ok {
+			fmt.Fprintf(&out, "- line: `%s` (%s)\n", branch.Name, branch.Status)
+		}
+		out.WriteString("\n")
 	}
 	if len(edges) > 0 {
 		out.WriteString("## Connections\n\n")
@@ -110,6 +136,17 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 			}
 			fmt.Fprintf(&out, "- `%s` --%s--> `%s`%s\n", e.SourceID, e.Relation, e.TargetID, origin)
 		}
+	}
+	if len(branches) > 0 {
+		out.WriteString("## Lines of thinking\n\n")
+		for _, branch := range branches {
+			fmt.Fprintf(&out, "- **%s** — %s", branch.Name, branch.Status)
+			if strings.TrimSpace(branch.Resolution) != "" {
+				fmt.Fprintf(&out, ": %s", branch.Resolution)
+			}
+			out.WriteString("\n")
+		}
+		out.WriteString("\n")
 	}
 	filename := strings.Map(func(r rune) rune {
 		if r == '/' || r == '\\' || r == '\n' || r == '\r' {
