@@ -321,6 +321,9 @@ test.describe('canvas', () => {
     // The mark is on the canvas, not only in what the assistant says about it.
     const insideCard = page.locator(`.react-flow__node[data-id="${made.inside}"]`);
     await expect(insideCard.locator('.postit-set-aside')).toBeVisible({ timeout: 15000 });
+    // And in the card's name, because a badge is a span whose tooltip needs a
+    // hover: read aloud, the thought would otherwise sound current.
+    await expect(insideCard.getByRole('group')).toHaveAccessibleName(new RegExp(made.branch));
     await expect(page.locator(`.react-flow__node[data-id="${made.outside}"] .postit-set-aside`)).toHaveCount(0);
 
     await page.getByLabel('한 갈래만 보기').click();
