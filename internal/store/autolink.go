@@ -125,6 +125,19 @@ func (s *Store) SuggestLinks(ctx context.Context, userID, spaceID uuid.UUID) (Su
 
 	kept := candidates[:0]
 	for _, item := range candidates {
+		// A near-duplicate is not a connection. Two copies of the same thought sit
+		// at the very top of any similarity ranking, so they were always the first
+		// thing suggested — and "related" understates them: the honest reading is
+		// that one thought was written twice, which the morning review already
+		// handles. Proposing a link as well makes one situation cost two chores,
+		// and accepting it records a weaker claim than the truth.
+		//
+		// The duplicate bar is the one absolute threshold umm keeps, and this path
+		// is already gated on a semantic backend — the same condition that makes
+		// that bar meaningful.
+		if item.score >= settings.DuplicateSimilarity {
+			continue
+		}
 		if item.score >= cutoff {
 			kept = append(kept, item)
 		}
