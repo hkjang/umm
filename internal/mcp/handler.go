@@ -129,6 +129,7 @@ func toolDefinitions() []map[string]any {
 		{"name": "connect_notes", "title": "Connect thoughts", "description": "Connect two notes in the same space. The connection is recorded as written by an agent, which the owner can see; it cannot be presented as one they drew themselves.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "source_note_id": str("Source note UUID"), "target_note_id": str("Target note UUID"), "relation": str("What the connection asserts: related (default), supports, contradicts, refines, expands or follows. Anything else is rejected.")}, "space_id", "source_note_id", "target_note_id")},
 		{"name": "create_note", "title": "Drop a thought", "description": "Create a post-it in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "content": str("Thought text"), "x": num("Canvas x"), "y": num("Canvas y"), "color": str("Semantic color")}, "space_id", "content")},
 		{"name": "find_contradictions", "title": "Find recorded disagreements", "description": "List thoughts that were recorded as contradicting each other. These are connections a person or an agent drew, not something umm inferred: an empty result means nobody has marked any disagreement, not that the workspace is free of them. Pass space_id to narrow to one space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID; omit for every space you can read")})},
+		{"name": "find_open_questions", "title": "Find unanswered questions", "description": "List thoughts marked as questions that nothing has been recorded as answering. Both halves are marked by a person or an agent, not inferred: umm does not read a note and decide it is asking something. An empty result means nothing is marked open, not that everything has been answered. Pass space_id to narrow to one space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID; omit for every space you can read")})},
 		{"name": "get_connections", "title": "Walk the memory graph", "description": "List the connections attached to a note: what it points at, what points at it, what each connection asserts, and who made it. get_related_notes finds thoughts that merely resemble each other; this returns the connections that were actually recorded, including ones umm inferred, which are marked as such and carry a confidence.", "inputSchema": schema(map[string]any{"note_id": str("Note UUID")}, "note_id")},
 		{"name": "get_related_notes", "title": "Discover related thoughts", "description": "Find related notes using the offline similarity embedding.", "inputSchema": schema(map[string]any{"note_id": str("Source note UUID")}, "note_id")},
 		{"name": "list_clusters", "title": "List thought clusters", "description": "Discover coherent groups of notes in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
@@ -298,6 +299,33 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 			})
 		}
 		return success(map[string]any{"contradictions": found})
+	case "find_open_questions":
+		if err := require("notes:read"); err != nil {
+			return nil, err
+		}
+		var scope *uuid.UUID
+		if raw := valueString(args, "space_id", ""); strings.TrimSpace(raw) != "" {
+			parsed, parseErr := uuid.Parse(raw)
+			if parseErr != nil {
+				return nil, errors.New("valid space_id required")
+			}
+			scope = &parsed
+		}
+		questions, err := h.Store.OpenQuestions(ctx, p.User.ID, scope)
+		if err != nil {
+			return nil, err
+		}
+		open := make([]map[string]any, 0, len(questions))
+		for _, item := range questions {
+			open = append(open, map[string]any{
+				"note_id":  item.Note.ID,
+				"question": item.Note.Content,
+				"space":    item.Space,
+				// Connections that circle the question without settling it.
+				"attempts": item.Attempts,
+			})
+		}
+		return success(map[string]any{"open_questions": open})
 	case "get_connections":
 		if err := require("notes:read"); err != nil {
 			return nil, err

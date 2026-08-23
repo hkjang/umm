@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.20.0-success?style=flat-square" alt="v0.20.0" />
+  <img src="https://img.shields.io/badge/Release-v0.21.0-success?style=flat-square" alt="v0.21.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,13 +25,14 @@
 
 ---
 
-## v0.20.0 — 기록해 둔 상충을 읽어 오기
+## v0.21.0 — 질문과 답
 
-- **상충 조회**: v0.11.0부터 기록할 수 있었지만 아무것도 읽어 오지 않던 `contradicts` 연결을 이제 볼 수 있습니다 — 브리핑, API, MCP `find_contradictions`.
-- **탐지가 아니라 기록입니다**: umm은 여전히 두 노트를 읽고 모순이라고 판단하지 않습니다. 사람이나 에이전트가 표시해 둔 것입니다.
-- **0일 때는 표시하지 않습니다**: "상충 0"은 "없다"로 읽히지만 실제 뜻은 "아무도 표시하지 않았다"입니다.
+- **질문으로 표시**: 포스트잇 메뉴에서 생각을 질문으로 표시하고, `answers` 연결로 닫습니다. `supports`·`refines`는 질문을 닫지 않습니다 — 논쟁만 한 노트가 해결한 것처럼 보이면 안 되니까요.
+- **`kind`가 검증되지 않고 있었습니다**: 예전 `relation`과 같은 결함으로, 5000자도 저장됐습니다. 이제 `thought·question·idea` 어휘이고 그 밖은 거부합니다.
+- **열린 질문 조회**: 브리핑, `GET /open-questions`, MCP `find_open_questions`. 관련 생각 수(`attempts`)를 함께 보여 줍니다.
+- **양쪽 다 표시입니다**: umm은 노트를 읽고 질문인지 판단하지 않습니다. 빈 결과는 "다 답했다"가 아니라 "표시된 게 없다"입니다.
 
-이전 릴리스: [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
@@ -137,7 +138,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.20.0
+  umm:v0.21.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

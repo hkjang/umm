@@ -768,6 +768,46 @@ paths:
       responses:
         '200': { description: What the run produced and why, content: { application/json: { schema: { $ref: '#/components/schemas/SuggestionResult' } } } }
         '500': { $ref: '#/components/responses/Error' }
+  /open-questions:
+    get:
+      operationId: get_open_questions
+      tags: [Notes]
+      summary: Questions nothing has been recorded as answering
+      description: |
+        Both halves are marked, not inferred. umm does not read a note and decide
+        it is asking something — a sentence ending in a question mark often is
+        not a question, and a real question is often written without one — and it
+        does not decide that another note answers it.
+
+        Open therefore means nobody has drawn an answer, not that umm searched
+        for one. An empty result is not "everything is answered", and a caller
+        must not present it as such.
+
+        attempts counts connections pointing at the question that are not
+        answers: the difference between a question nobody has touched and one
+        that has been argued over without settling.
+      parameters:
+        - { name: spaceId, in: query, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Open questions, most recent first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questions]
+                properties:
+                  questions:
+                    type: array
+                    items:
+                      type: object
+                      required: [note, spaceId, space, attempts]
+                      properties:
+                        note: { $ref: '#/components/schemas/Note' }
+                        spaceId: { type: string, format: uuid }
+                        space: { type: string }
+                        attempts: { type: integer, minimum: 0 }
+        '400': { $ref: '#/components/responses/Error' }
   /contradictions:
     get:
       operationId: get_contradictions
@@ -1231,7 +1271,16 @@ components:
         content: { type: string }
         title: { type: string }
         color: { type: string, enum: [yellow, blue, purple, green, red, gray, lavender] }
-        kind: { type: string }
+        kind:
+          type: string
+          enum: [thought, question, idea]
+          default: thought
+          description: |
+            What the thought is. Marked, never inferred: umm does not read a note
+            and decide it is a question. A value outside the vocabulary is
+            rejected with 400 and an allowedKinds list rather than rewritten,
+            which would file a thought as something the person did not say it was.
+            "idea" is written when a Dream is materialised.
         aiExcluded: { type: boolean, description: Exclude this note from AI processing and remote embedding gateways }
         x: { type: number }
         y: { type: number }
@@ -1261,7 +1310,16 @@ components:
         spaceName: { type: string }
         title: { type: string }
         content: { type: string }
-        kind: { type: string }
+        kind:
+          type: string
+          enum: [thought, question, idea]
+          default: thought
+          description: |
+            What the thought is. Marked, never inferred: umm does not read a note
+            and decide it is a question. A value outside the vocabulary is
+            rejected with 400 and an allowedKinds list rather than rewritten,
+            which would file a thought as something the person did not say it was.
+            "idea" is written when a Dream is materialised.
         updatedAt: { type: string, format: date-time }
         score: { type: number, minimum: 0, maximum: 1 }
         reason: { type: string }
@@ -1314,7 +1372,16 @@ components:
         content: { type: string }
         title: { type: string }
         color: { type: string }
-        kind: { type: string }
+        kind:
+          type: string
+          enum: [thought, question, idea]
+          default: thought
+          description: |
+            What the thought is. Marked, never inferred: umm does not read a note
+            and decide it is a question. A value outside the vocabulary is
+            rejected with 400 and an allowedKinds list rather than rewritten,
+            which would file a thought as something the person did not say it was.
+            "idea" is written when a Dream is materialised.
         x: { type: number }
         y: { type: number }
         width: { type: number }
@@ -1459,7 +1526,7 @@ components:
         active: { type: boolean }
     MorningBrief:
       type: object
-      required: [since, dreams, suggestions, unfiled, duplicates, contradictions, skipped, quiet]
+      required: [since, dreams, suggestions, unfiled, duplicates, contradictions, questions, skipped, quiet]
       properties:
         since: { type: string, format: date-time }
         dreams:
@@ -1488,8 +1555,31 @@ components:
             type: object
             required: [kind, reason]
             properties:
-              kind: { type: string }
+              kind:
+          type: string
+          enum: [thought, question, idea]
+          default: thought
+          description: |
+            What the thought is. Marked, never inferred: umm does not read a note
+            and decide it is a question. A value outside the vocabulary is
+            rejected with 400 and an allowedKinds list rather than rewritten,
+            which would file a thought as something the person did not say it was.
+            "idea" is written when a Dream is materialised.
               reason: { type: string, enum: [backend-not-semantic, disabled] }
+        questions:
+          type: array
+          description: |
+            Questions marked open with nothing recorded as answering them. Both
+            halves are marked rather than inferred, so an empty list means nothing
+            is marked open — not that everything has been answered.
+          items:
+            type: object
+            required: [note, spaceId, space, attempts]
+            properties:
+              note: { $ref: '#/components/schemas/Note' }
+              spaceId: { type: string, format: uuid }
+              space: { type: string }
+              attempts: { type: integer, minimum: 0 }
         contradictions:
           type: array
           description: |
@@ -1573,7 +1663,16 @@ components:
       required: [id, kind, title, body, resourceType, resourceId, resourceSpaceId, metadata, readAt, createdAt]
       properties:
         id: { type: string, format: uuid }
-        kind: { type: string }
+        kind:
+          type: string
+          enum: [thought, question, idea]
+          default: thought
+          description: |
+            What the thought is. Marked, never inferred: umm does not read a note
+            and decide it is a question. A value outside the vocabulary is
+            rejected with 400 and an allowedKinds list rather than rewritten,
+            which would file a thought as something the person did not say it was.
+            "idea" is written when a Dream is materialised.
         title: { type: string }
         body: { type: string }
         resourceType: { type: string, enum: [dream, space, note] }

@@ -109,6 +109,42 @@ export default function MorningBriefCard({
             </Text>
           </div>
         )}
+        {brief.questions.length > 0 && (
+          <div>
+            <Text fz="xl" fw={700}>
+              {brief.questions.length}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {t('답을 못 찾은 질문')}
+            </Text>
+          </div>
+        )}
+        {brief.questions.length > 0 && (
+          <Stack gap={6} mt="md">
+            <Text size="xs" fw={700} c="blue.7">
+              {t('질문으로 표시해 둔 것')}
+            </Text>
+            {brief.questions.slice(0, 3).map((item) => (
+              <UnstyledButton
+                key={item.note.id}
+                className="brief-duplicate"
+                onClick={() => onOpen(item.spaceId, item.note.id)}
+              >
+                <Text size="xs" c="dimmed">
+                  {item.space}
+                  {/* A question nobody has touched and one argued over at length
+                    are different situations, so the count is shown when there is
+                    one rather than left implicit. */}
+                  {item.attempts > 0 && ` · ${t('관련 생각 {count}개', { count: item.attempts })}`}
+                </Text>
+                <Text size="sm" lineClamp={2}>
+                  {item.note.title || item.note.content}
+                </Text>
+              </UnstyledButton>
+            ))}
+          </Stack>
+        )}
+
         {brief.contradictions.length > 0 && (
           <div>
             <Text fz="xl" fw={700}>

@@ -359,6 +359,9 @@ func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	created, err := s.Store.CreateNote(r.Context(), p.User.ID, n)
 	if err != nil {
+		if noteKindProblem(w, r, err) {
+			return
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, 404, "편집할 수 없는 공간입니다.")
 			return
@@ -388,6 +391,9 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	updated, err := s.Store.UpdateNote(r.Context(), p.User.ID, n, body.AIExcluded)
 	if err != nil {
+		if noteKindProblem(w, r, err) {
+			return
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			latest, canEdit, latestErr := s.Store.NoteByIDWithEditAccess(r.Context(), p.User.ID, noteID)
 			if latestErr == nil {
@@ -500,6 +506,18 @@ func updateNoteLookupFailureStatus(err error) int {
 		return http.StatusNotFound
 	}
 	return http.StatusInternalServerError
+}
+
+// noteKindProblem answers an unknown kind with the list that exists, rather than
+// filing the thought as something the person did not say it was.
+func noteKindProblem(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !errors.Is(err, store.ErrUnknownKind) {
+		return false
+	}
+	writeProblem(w, r, http.StatusBadRequest, "unknown-note-kind", "생각 종류가 올바르지 않습니다",
+		"umm이 아는 생각 종류가 아닙니다. allowedKinds 중에서 선택해 주세요.",
+		map[string]any{"allowedKinds": store.Kinds()})
+	return true
 }
 
 func createEdgeErrorStatus(err error) int {

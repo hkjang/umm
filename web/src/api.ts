@@ -37,6 +37,9 @@ export interface Space {
   isInbox: boolean;
 }
 
+/** What a thought is. The server rejects anything outside this. */
+export type NoteKind = 'thought' | 'question' | 'idea';
+
 export interface ThoughtNote {
   id: string;
   spaceId: string;
@@ -44,7 +47,7 @@ export interface ThoughtNote {
   content: string;
   title: string;
   color: string;
-  kind: string;
+  kind: NoteKind;
   source: 'user' | 'dream' | 'api' | 'mcp';
   aiExcluded: boolean;
   x: number;
@@ -130,6 +133,12 @@ export interface MorningBrief {
     counter: ThoughtNote;
     origin: string;
   }[];
+  /**
+   * Questions marked open with nothing recorded as answering them. Both halves
+   * are marked rather than inferred, so an empty list means nothing is marked
+   * open — not that everything has been answered.
+   */
+  questions: { note: ThoughtNote; spaceId: string; space: string; attempts: number }[];
   /** Nothing to report *and* nothing skipped. */
   quiet: boolean;
 }

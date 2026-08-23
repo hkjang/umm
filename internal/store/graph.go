@@ -35,6 +35,10 @@ const (
 	RelationExpands Relation = "expands"
 	// RelationFollows: the target comes after the source, in time or in sequence.
 	RelationFollows Relation = "follows"
+	// RelationAnswers: the source answers the target, which is a question. It is
+	// what closes one — supports and refines sit near it, but neither says the
+	// question has been settled.
+	RelationAnswers Relation = "answers"
 )
 
 // Origin records who made the connection. It is not a request field.
@@ -70,6 +74,7 @@ var knownRelations = map[Relation]bool{
 	RelationRefines:     true,
 	RelationExpands:     true,
 	RelationFollows:     true,
+	RelationAnswers:     true,
 }
 
 // Relations lists the vocabulary in a stable order, for the API to advertise and
@@ -78,7 +83,7 @@ var knownRelations = map[Relation]bool{
 func Relations() []Relation {
 	return []Relation{
 		RelationRelated, RelationSupports, RelationContradicts,
-		RelationRefines, RelationExpands, RelationFollows,
+		RelationRefines, RelationExpands, RelationFollows, RelationAnswers,
 	}
 }
 

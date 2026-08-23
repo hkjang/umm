@@ -170,7 +170,7 @@ tools="$(curl -fsS "http://127.0.0.1:${smoke_port}/mcp" \
 # Name the surface rather than count it: a count only says something changed,
 # and a tool removed by accident would pass by adding another.
 test "$(printf '%s' "$tools" | jq -r '[.result.tools[].name] | join(",")')" \
-  = "capture_thought,connect_notes,create_note,find_contradictions,get_connections,get_related_notes,list_clusters,list_dreams,list_notes,list_spaces,search_notes"
+  = "capture_thought,connect_notes,create_note,find_contradictions,find_open_questions,get_connections,get_related_notes,list_clusters,list_dreams,list_notes,list_spaces,search_notes"
 
 approval="$(curl -fsS -b "$cookie" -H 'Content-Type: application/json' \
   -d "{\"resourceType\":\"space\",\"resourceId\":\"$space\",\"action\":\"export\",\"comment\":\"CI\"}" \
