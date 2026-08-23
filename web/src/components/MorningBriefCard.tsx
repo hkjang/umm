@@ -175,6 +175,33 @@ export default function MorningBriefCard({
             // creation order, not from which one umm happened to list first.
             const [older, newer] =
               pair.first.createdAt <= pair.second.createdAt ? [pair.first, pair.second] : [pair.second, pair.first];
+            // One side sits in a line that was decided against. Merging is not
+            // offered here: the older thought survives a merge, so one click
+            // would fold what is being written now into a line someone already
+            // rejected — quietly, and with the wrong thought left standing.
+            // What is useful is the decision and the reason for it.
+            if (pair.setAside) {
+              return (
+                <Stack key={pairKey} gap={2}>
+                  <UnstyledButton
+                    className="brief-duplicate"
+                    onClick={() => onOpen(pair.spaceId, pair.setAsideNoteId ?? older.id)}
+                  >
+                    <Text size="xs" fw={700} c="orange.7">
+                      {t('접어 둔 갈래를 다시 쓰고 있습니다 · {line}', { line: pair.setAside.name })}
+                    </Text>
+                    <Text size="sm" lineClamp={1}>
+                      {newer.title || newer.content}
+                    </Text>
+                    {pair.setAside.resolution && (
+                      <Text size="xs" c="dimmed" lineClamp={2}>
+                        {t('접어 둔 이유: {reason}', { reason: pair.setAside.resolution })}
+                      </Text>
+                    )}
+                  </UnstyledButton>
+                </Stack>
+              );
+            }
             return (
               <Group key={pairKey} gap="sm" wrap="nowrap" align="flex-start">
                 <UnstyledButton

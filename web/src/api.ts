@@ -117,7 +117,20 @@ export interface MorningBrief {
   dreams: { kind: string; count: number }[];
   suggestions: number;
   unfiled: number;
-  duplicates: { spaceId: string; space: string; first: ThoughtNote; second: ThoughtNote; score: number }[];
+  duplicates: {
+    spaceId: string;
+    space: string;
+    first: ThoughtNote;
+    second: ThoughtNote;
+    score: number;
+    /**
+     * Present when exactly one of the two sits in a line that was decided
+     * against. The pair then means something other than "written twice": work
+     * is being redone that someone already chose not to do.
+     */
+    setAside?: { id: string; name: string; status: string; resolution?: string };
+    setAsideNoteId?: string;
+  }[];
   /** What umm did not examine — so an empty list above is not read as an all-clear. */
   skipped: { kind: string; reason: 'backend-not-semantic' | 'disabled' }[];
   /**
