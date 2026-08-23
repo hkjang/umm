@@ -56,13 +56,17 @@ func autoLinkSpace(t *testing.T) (*Store, uuid.UUID, uuid.UUID) {
 	return db, ownerID, spaceID
 }
 
+// Deliberately not sentences from the quality dataset. They used to be, which
+// meant the stub matched them on its topic branch and the workspace geometry
+// below never applied — the fixture was silently borrowing the shape of a
+// different dataset, and any change here did nothing.
 var autoLinkNotes = []string{
-	"인증 토큰 만료 시간을 24시간으로 정했다",
-	"세션 쿠키는 HttpOnly와 SameSite를 함께 설정한다",
-	"로그인 실패가 반복되면 계정을 일시적으로 잠근다",
-	"주말에 자전거를 타고 한강을 따라 달렸다",
-	"자전거 체인에 기름을 새로 발랐다",
-	"라이딩이 끝나면 스트레칭을 꼭 한다",
+	"배포 승인은 당번을 정해 돌아가며 맡는다",
+	"배포 창구를 하나로 좁히면 대기가 길어진다",
+	"긴급 배포는 사후 검토를 반드시 남긴다",
+	"화분에 물 주는 요일을 정해 두었다",
+	"베란다 채광이 오후에만 들어온다",
+	"흙이 마르는 속도가 계절마다 다르다",
 }
 
 // The gate that matters most. umm's own measurement says the offline algorithm
@@ -411,8 +415,16 @@ func semanticStubVector(text string) []float64 {
 			}
 		}
 	}
-	// The workspace notes: one direction per subject, a small wobble per note so
-	// members of a subject are close without being identical.
+	// The workspace notes: one direction per subject, spread within it so members
+	// of a subject are close without being the same thought.
+	//
+	// The spread used to be 0.08 radians, which put same-subject pairs at cosine
+	// 0.987 and above. Measured on real backends nothing legitimate lands there:
+	// bge-m3 puts genuine duplicates at 0.943-0.986 and the next class down tops
+	// out at 0.681. These six notes are three distinct thoughts about auth and
+	// three about cycling — a real embedding separates them far more than that,
+	// and a fixture that does not was quietly modelling every related pair as a
+	// duplicate.
 	for index, content := range autoLinkNotes {
 		if content != text {
 			continue
@@ -421,7 +433,7 @@ func semanticStubVector(text string) []float64 {
 		if index >= 3 {
 			subject = math.Pi / 2
 		}
-		angle := subject + float64(index%3)*0.08
+		angle := subject + float64(index%3)*0.45
 		return []float64{0, 0, 0, 0, 0, math.Cos(angle), math.Sin(angle)}
 	}
 	return []float64{0, 0, 0, 0, 0, 1, 0}

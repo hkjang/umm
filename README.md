@@ -25,14 +25,13 @@
 
 ---
 
-## v0.27.0 — 접어 둔 걸 다시 쓰고 있을 때
+## v0.27.1 — 같은 생각을 "연관"으로 잇지 않습니다
 
-- **기록은 찾아봐야 보입니다**: 정작 필요한 순간은 다시 쓰고 있을 때입니다. 거의 같은 두 생각 중 한쪽이 접어 둔 갈래에 있으면 오늘의 리뷰가 이유와 함께 알려 줍니다.
-- **여기서는 "하나로 합치기"를 빼습니다**: 합치면 먼저 적은 쪽이 남고, 그건 접어 둔 쪽입니다. 한 번 누르면 지금 쓰는 생각이 이미 거절한 갈래로 조용히 접혀 들어갑니다.
-- **양쪽 다 접어 둔 갈래면 표시하지 않습니다**: 그건 그냥 중복 두 개입니다. 결정이 둘 다를 덮고 있습니다.
-- **측정된 절대 임계값 하나에만 기댑니다**: 근접 중복(0.92)은 umm에서 유일하게 절대값인 기준이고, 의미를 재는 백엔드에서만 동작합니다.
+- **빈 DB + 실제 모델(bge-m3)로 전체 흐름을 한 번에 검증**했습니다. 캡처부터 결정 기록까지 정상 동작했고, 한 가지만 어긋났습니다.
+- **연결 추천 1순위가 "같은 문장 두 개"였습니다**: 근접 중복은 어떤 임베딩에서도 최상위라 항상 1순위로 추천되고, `연관`은 진실을 약하게 말합니다. 한 상황에 할 일이 두 개 생깁니다.
+- **테스트 픽스처가 다른 데이터셋의 기하를 빌려 쓰고 있었습니다**: 작업공간 문장이 품질 데이터셋 문장과 같아 스텁이 주제 분기에 걸렸고, 모든 "연관" 쌍이 코사인 0.999 — 실측으로는 중복만 도달하는 값 — 로 놓여 있었습니다.
 
-이전 릴리스: [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
