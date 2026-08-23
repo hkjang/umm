@@ -900,4 +900,6 @@ export const en: Dictionary = {
   '공간이 커서 최근 생각까지만 비교했습니다. 겹치는 것이 더 있을 수 있습니다.':
     'The space is large, so only recent thoughts were compared. There may be more duplicates.',
   '연결과 갈래': 'Connections and lines',
+  '가장 최근 {count}개만 보여 주고 있습니다. 그 앞에도 표시한 결정이 더 있습니다.':
+    'Showing the {count} most recent. There are more marked decisions before these.',
 };

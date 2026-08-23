@@ -201,11 +201,11 @@ func (s *Server) turningPoints(w http.ResponseWriter, r *http.Request) {
 		spaceID = &parsed
 	}
 	p := principal(r)
-	points, err := s.Store.TurningPoints(r.Context(), p.User.ID, spaceID)
+	points, more, err := s.Store.TurningPoints(r.Context(), p.User.ID, spaceID)
 	if err != nil {
 		slog.Warn("turning points failed", "user_id", p.User.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "기록을 불러오지 못했습니다.")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"points": points})
+	writeJSON(w, http.StatusOK, map[string]any{"points": points, "hasMore": more})
 }
