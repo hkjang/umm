@@ -140,7 +140,25 @@ paths:
         - { $ref: '#/components/parameters/Cursor' }
         - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
       responses:
-        '200': { description: Ranked note shortcuts, content: { application/json: { schema: { type: object, required: [notes, nextCursor], properties: { notes: { type: array, items: { $ref: '#/components/schemas/NoteSearchResult' } }, nextCursor: { type: string } } } } } }
+        '200':
+          description: Ranked note shortcuts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notes, nextCursor]
+                properties:
+                  notes: { type: array, items: { $ref: '#/components/schemas/NoteSearchResult' } }
+                  nextCursor: { type: string }
+                  noteLines:
+                    type: object
+                    description: >
+                      Maps a result to the line of thinking it belongs to, when it belongs to
+                      one. A result whose line is 'abandoned' was considered and set aside,
+                      with the reason recorded, and must not be presented as current. Search
+                      is where a thought is met most often, and an unlabelled result reads
+                      exactly like a live one.
+                    additionalProperties: { $ref: '#/components/schemas/Branch' }
   /spaces/{spaceId}/notes:
     parameters:
       - { $ref: '#/components/parameters/SpaceID' }

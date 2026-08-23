@@ -274,6 +274,17 @@ func (s *Store) DeleteBranch(ctx context.Context, userID, branchID uuid.UUID) er
 	return nil
 }
 
+// BranchRefsForNotes labels a set of thoughts with the line each belongs to.
+//
+// Exported for the paths outside this package that surface a thought — search is
+// one — because everywhere a thought appears has to be able to say that its line
+// was decided against. umm has now found three such doors after the fact
+// (retrieval, the export, MCP); the fourth should not need a fourth lookup of
+// its own.
+func (s *Store) BranchRefsForNotes(ctx context.Context, noteIDs []uuid.UUID) (map[uuid.UUID]BranchRef, error) {
+	return s.branchRefsForNotes(ctx, noteIDs)
+}
+
 // branchRefsForNotes labels a set of thoughts with the line each belongs to.
 //
 // Separate from reading the notes themselves rather than a column on Note: every

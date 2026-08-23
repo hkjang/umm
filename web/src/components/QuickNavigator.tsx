@@ -53,6 +53,10 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
   const [query, setQuery] = useState('');
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [notes, setNotes] = useState<NoteSearchResult[]>([]);
+  // Which line of thinking each result belongs to. A thought from a line that
+  // was decided against reads exactly like a current one in a list of matches,
+  // and search is where a thought is met most often.
+  const [noteLines, setNoteLines] = useState<Record<string, { name: string; status: string }>>({});
   const [searchingNotes, setSearchingNotes] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -84,9 +88,15 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
     let active = true;
     setSearchingNotes(true);
     const timer = window.setTimeout(() => {
-      void api<{ notes: NoteSearchResult[] }>(`/search?q=${encodeURIComponent(term)}&limit=12`, { silent: true })
+      void api<{ notes: NoteSearchResult[]; noteLines?: Record<string, { name: string; status: string }> }>(
+        `/search?q=${encodeURIComponent(term)}&limit=12`,
+        { silent: true },
+      )
         .then((value) => {
-          if (active) setNotes(value.notes);
+          if (active) {
+            setNotes(value.notes);
+            setNoteLines(value.noteLines ?? {});
+          }
         })
         .catch(() => {
           if (active) {
@@ -172,17 +182,24 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
     const noteMatches: QuickItem[] = notes.map((note) => {
       const content = note.content.replace(/\s+/g, ' ').trim();
       const title = note.title.trim() || content.slice(0, 52) || t('내용 없는 메모');
+      // Only a line that was set aside is called out. An open or adopted one is
+      // the ordinary state of a thought, and marking every result would be
+      // wallpaper rather than a warning.
+      const line = noteLines[note.id];
+      const setAside = line?.status === 'abandoned' ? line.name : '';
       return {
         id: `note:${note.id}`,
         label: title,
-        description: `${note.spaceName} · ${note.reason || content.slice(0, 90)}`,
+        description: setAside
+          ? `${note.spaceName} · ${t('접어 둔 갈래: {line}', { line: setAside })}`
+          : `${note.spaceName} · ${note.reason || content.slice(0, 90)}`,
         to: `/space/${note.spaceId}?note=${note.id}`,
         icon: IconFileText,
-        badge: `${Math.round((note.score || 0) * 100)}%`,
+        badge: setAside ? t('접어 둠') : `${Math.round((note.score || 0) * 100)}%`,
       };
     });
     return [...localMatches, ...noteMatches];
-  }, [destinations, locale, notes, query, spaces, t]);
+  }, [destinations, locale, noteLines, notes, query, spaces, t]);
 
   useEffect(() => setActiveIndex(0), [query, opened]);
 
