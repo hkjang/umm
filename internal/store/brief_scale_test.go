@@ -52,3 +52,33 @@ func TestDuplicateScanLeavesSmallSpacesWhole(t *testing.T) {
 		}
 	}
 }
+
+// A pair where one side sits in a line that was decided against is not the same
+// news as a pair someone simply wrote twice, and only the first carries a reason
+// the person needs. Sorting by similarity alone let a workspace full of
+// near-identical thoughts fill every slot and drown it out — seen on real data.
+func TestSetAsidePairsOutrankOrdinaryDuplicates(t *testing.T) {
+	ordinary := func(score float64) DuplicatePair { return DuplicatePair{Score: score} }
+	repeated := func(score float64) DuplicatePair {
+		return DuplicatePair{Score: score, SetAside: &BranchRef{Name: "젠킨스로 이전", Status: BranchAbandoned}}
+	}
+
+	// Highest similarity last, so score alone would leave it out of the top three.
+	pairs := []DuplicatePair{ordinary(0.99), ordinary(0.98), ordinary(0.97), repeated(0.93)}
+	sortDuplicatesForBrief(pairs)
+
+	if pairs[0].SetAside == nil {
+		t.Fatalf("the repeated decision did not come first: %+v", pairs[0])
+	}
+	// Everything else keeps its similarity order; the label promotes, it does not
+	// reshuffle.
+	for index := 1; index < len(pairs); index++ {
+		if pairs[index].SetAside != nil {
+			t.Errorf("more pairs were promoted than were labelled: %d", index)
+		}
+	}
+	if pairs[1].Score < pairs[2].Score || pairs[2].Score < pairs[3].Score {
+		t.Errorf("the remaining pairs lost their similarity order: %v %v %v",
+			pairs[1].Score, pairs[2].Score, pairs[3].Score)
+	}
+}

@@ -25,13 +25,14 @@
 
 ---
 
-## v0.30.1 — 갈래를 만들 방법이 없었습니다
+## v0.31.0 — 되짚기가 큰 공간에서 조용히 꺼져 있었습니다
 
-- **일곱 릴리스가 닿을 수 없는 기능 위에 있었습니다**: 갈래를 만드는 자리가 "관련 N" 칩 뒤에만 있었고, 그 칩은 관련된 생각이 있을 때만 그려집니다. 새 캔버스의 첫 생각에는 없습니다.
-- **왜 못 봤나**: 만드는 내내 API로 확인했습니다. `POST /branches`는 처음부터 잘 됩니다. **사람이 지나는 길만 지나지 않았습니다.**
-- **메모 메뉴에 "연결과 갈래"를 넣었습니다**: 그리고 패널 여는 일과 "관련 생각 모으기"(캔버스 재배치)를 분리했습니다.
+- **v0.30.1의 교훈을 나머지에 적용했습니다**: API로만 확인한 것을 브라우저로 다시 봤습니다. 조력자는 정상, 되짚기는 아니었습니다.
+- **흔한 중복이 중요한 것을 밀어냈습니다**: "두 번 적었어요"와 "이미 하지 않기로 한 걸 다시 쓰고 있어요"는 같은 소식이 아닙니다. 뒤의 것에만 이유가 붙습니다.
+- **v0.30.0이 되짚기에 구멍을 냈습니다**: 최근 1,000개만 비교하게 막았는데, 되짚기는 *오늘 쓴 것*과 *오래전에 접어 둔 것*을 짝짓습니다. 오래된 쪽이 창 밖이면 쌍이 안 만들어집니다.
+- **가장 필요한 곳에서 꺼져 있었습니다**: v0.30.0 노트에 "큰 공간이야말로 다시 쓸 가능성이 높은 곳"이라고 써 놓고서요.
 
-이전 릴리스: [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 

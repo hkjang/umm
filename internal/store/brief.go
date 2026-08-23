@@ -122,6 +122,25 @@ func recentForDuplicateScan(notes []Note) ([]Note, bool) {
 	return notes[len(notes)-maxDuplicateScanNotes:], true
 }
 
+// sortDuplicatesForBrief promotes pairs that repeat a decision above ordinary
+// duplicates, leaving the rest in similarity order.
+//
+// Stable on purpose: the label decides who rises, and everything else keeps the
+// order similarity gave it.
+func sortDuplicatesForBrief(pairs []DuplicatePair) {
+	sort.SliceStable(pairs, func(i, j int) bool {
+		return pairs[i].SetAside != nil && pairs[j].SetAside == nil
+	})
+}
+
+// maxDuplicateLabelBand is how many of the highest-scoring pairs are looked up
+// before the list is trimmed to what a brief shows.
+//
+// Wider than what is shown so a pair repeating a decision can rise past ordinary
+// duplicates, and bounded because each label costs a lookup and a workspace full
+// of near-identical thoughts produces thousands of pairs.
+const maxDuplicateLabelBand = 100
+
 // maxDuplicatePairs bounds what one brief will show. A workspace that has been
 // duplicating for months should produce a readable list, not a wall.
 const maxDuplicatePairs = 10
@@ -249,15 +268,74 @@ func (s *Store) duplicateThoughts(ctx context.Context, userID uuid.UUID) ([]Dupl
 				}
 			}
 		}
+
+		// A repeated decision does not look like an ordinary duplicate. It pairs
+		// something written recently with something rejected long ago, so the old
+		// half sits outside the recency window above and the pair is never formed.
+		// Trimming the space introduced exactly that hole, in the long-lived
+		// workspaces this guard exists for. These thoughts are therefore carried in
+		// and compared against the recent window — a cross-product, not another
+		// full pass, because the question is only ever "is something new a repeat
+		// of something set aside".
+		if !trimmed {
+			continue
+		}
+		setAside, asideErr := s.NotesInSetAsideLines(ctx, userID, space.ID)
+		if asideErr != nil {
+			slog.Warn("could not read set-aside thoughts for the duplicate pass",
+				"space_id", space.ID, "error", asideErr)
+			continue
+		}
+		inWindow := make(map[uuid.UUID]bool, len(notes))
+		for _, note := range notes {
+			inWindow[note.ID] = true
+		}
+		outside := setAside[:0]
+		for _, note := range setAside {
+			if !inWindow[note.ID] {
+				outside = append(outside, note)
+			}
+		}
+		if len(outside) == 0 {
+			continue
+		}
+		asideVectors := s.loadEmbeddings(ctx, outside)
+		for _, old := range outside {
+			for _, recent := range notes {
+				score := float64(intelligence.Cosine(asideVectors[old.ID], vectors[recent.ID]))
+				if score >= settings.DuplicateSimilarity {
+					pairs = append(pairs, DuplicatePair{
+						SpaceID: space.ID, Space: space.Name,
+						First: old, Second: recent, Score: score,
+					})
+				}
+			}
+		}
 	}
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Score > pairs[j].Score })
-	if len(pairs) > maxDuplicatePairs {
-		pairs = pairs[:maxDuplicatePairs]
+
+	// Label a wider band than will be shown, then let the labels decide who stays.
+	//
+	// Sorting by score alone loses the pair that matters most. A workspace with
+	// many near-identical thoughts fills all ten slots with ordinary duplicates
+	// and drowns out the one where a decision is being repeated — observed on
+	// real data, not imagined. "You wrote this twice" and "you are redoing what
+	// you already rejected" are not the same news, and only the second has a
+	// reason attached that the person needs.
+	//
+	// The band is bounded because labelling costs a lookup per pair and a
+	// workspace can produce thousands.
+	if len(pairs) > maxDuplicateLabelBand {
+		pairs = pairs[:maxDuplicateLabelBand]
 	}
 	if err := s.markSetAsideDuplicates(ctx, pairs); err != nil {
 		// The pairs are still worth showing without the label. Losing the whole
 		// section because one lookup failed would be a worse trade.
 		slog.Warn("could not label duplicate pairs with their line", "error", err)
+	}
+	sortDuplicatesForBrief(pairs)
+	if len(pairs) > maxDuplicatePairs {
+		pairs = pairs[:maxDuplicatePairs]
 	}
 	if skippedLarge {
 		// Labelling still runs above: the pairs that were found are as good as any
