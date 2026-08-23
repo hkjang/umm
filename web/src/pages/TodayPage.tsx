@@ -26,6 +26,7 @@ import {
 } from '@tabler/icons-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import AskMemory from '../components/AskMemory';
 import MorningBriefCard from '../components/MorningBriefCard';
 import { api, json, type MorningBrief, type Space } from '../api';
 import { useTranslation } from '../i18n';
@@ -170,6 +171,7 @@ export default function TodayPage() {
           </Alert>
         )}
         {brief && !brief.quiet && <MorningBriefCard brief={brief} onOpen={openCanvas} />}
+        <AskMemory onOpen={openCanvas} />
         {data && (
           <>
             {!data.onboarding.completedAt && (

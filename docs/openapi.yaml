@@ -768,6 +768,64 @@ paths:
       responses:
         '200': { description: What the run produced and why, content: { application/json: { schema: { $ref: '#/components/schemas/SuggestionResult' } } } }
         '500': { $ref: '#/components/responses/Error' }
+  /ai/ask:
+    post:
+      operationId: post_ai_ask
+      tags: [AI, Notes]
+      summary: Answer a question from the person's own thoughts
+      description: |
+        Retrieves what the person already wrote and answers only from that. The
+        sources are returned in the order the model was given them, so a citation
+        like [2] resolves and a claim with no citation is visible as one.
+
+        Retrieval searches and then follows one step along the graph, because the
+        answer to a question is often recorded next to the thought that raises it
+        rather than inside it.
+
+        Nothing marked as excluded from AI reaches the gateway — not by search and
+        not through a connection. excluded counts what was left out, so a partial
+        answer does not read as a complete one.
+
+        When nothing matched, grounded is false and no model is called: an answer
+        with no sources is the failure this endpoint exists to avoid, and asking
+        for one anyway invites it. Requires a configured chat model and consumes
+        the AI quota.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [question], properties: { question: { type: string, maxLength: 500 } } }
+      responses:
+        '200':
+          description: The answer and what it stands on
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [answer, sources, excluded, grounded]
+                properties:
+                  answer: { type: string, description: Empty when grounded is false }
+                  grounded: { type: boolean, description: False when nothing matched and no model was called }
+                  excluded: { type: integer, minimum: 0, description: Thoughts that matched but are excluded from AI }
+                  model: { type: string }
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      required: [ref, noteId, spaceId, content, via]
+                      properties:
+                        ref: { type: integer, minimum: 1, description: The number the answer cites }
+                        noteId: { type: string, format: uuid }
+                        spaceId: { type: string, format: uuid }
+                        content: { type: string }
+                        via: { type: string, enum: [match, connection] }
+        # 412 means no chat model is configured. It is separate from 502 because
+        # an administrator can fix it in a minute, and separate from the embedding
+        # model, which this endpoint does not use.
+        '400': { $ref: '#/components/responses/Error' }
+        '412': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
   /open-questions:
     get:
       operationId: get_open_questions

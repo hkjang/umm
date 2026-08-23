@@ -829,4 +829,15 @@ export const en: Dictionary = {
   '관련 생각 {count}개': '{count} related thoughts',
   '질문으로 표시': 'Mark as a question',
   '질문 표시 해제': 'Unmark as a question',
+  '내 기억에 물어보기': 'Ask your memory',
+  '예: 인증 토큰 만료를 얼마로 정했더라': 'e.g. what did we settle on for token expiry',
+  묻기: 'Ask',
+  '기억에서 답을 찾지 못했습니다.': 'Could not answer from your memory.',
+  '이 질문에 답할 만한 생각을 찾지 못했습니다. 지어내지 않고 그대로 말씀드립니다.':
+    'Nothing you have written answers this. Saying so rather than inventing one.',
+  '근거로 삼은 생각': 'Thoughts it drew on',
+  '질문과 일치': 'matched the question',
+  '연결을 따라 도달': 'reached through a connection',
+  'AI 제외로 표시된 생각 {count}개는 답에 쓰이지 않았습니다.':
+    '{count} thoughts marked as excluded from AI were left out of this answer.',
 };
