@@ -50,6 +50,10 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | 메서드 | 경로 | 설명 | 권한 스코프 |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/ai/assist` | 선택한 1~20개 생각을 요약·질문·확장·반대 관점·실행 항목으로 발전 | `ai:assist` |
+| `POST` | `/ai/ask` | 직접 적어 둔 생각만으로 질문에 답하고 근거를 함께 반환. 근거가 없으면 **모델을 부르지 않고** `grounded:false` | `ai:assist` |
+| `POST` | `/ai/agent` | 조회 → 읽기 → 재조회를 거쳐 답하고, 조회 과정(`steps`)을 함께 반환. **읽기 전용**이며 한 번에 6회까지 | `ai:assist` |
+
+`/ai/agent`에 바인딩된 도구는 조회 셋뿐입니다. 만들기·고치기·연결하기·합치기 도구는 **아예 붙어 있지 않아** 모델이 부르고 싶어도 부를 것이 없습니다. 한도에 닿으면 도구 없이 한 번 더 물어 지금까지 확인한 것을 남기고 `truncated:true`로 표시합니다. 채팅 모델이 없으면 `412`(임베딩 모델과 별개), Gateway 실패는 `502`로 구분합니다.
 
 `ai:assist`는 선택한 본문을 외부 Gateway로 보내고 AI 쿼터를 소비하는 기능만 따로 허용하는 최소 권한 scope입니다. `notes:read`만 가진 API key는 일반 생각 조회를 할 수 있어도 AI Assist를 호출할 수 없습니다. 서버는 선택한 모든 생각이 현재 접근 가능하고 AI 제외 상태가 아닌지 외부 호출 직전에 다시 확인합니다. 해당 note·space·membership 행을 Gateway 응답이 끝날 때까지 잠그므로 공유 회수나 AI 제외가 먼저 확정되면 본문을 보내지 않고 미사용 쿼터를 취소하며, AI lease가 먼저 시작되면 정책 변경은 호출 종료까지 기다립니다. 긴 lease는 일반 요청 pool과 분리된 인스턴스당 최대 2개 PostgreSQL 연결만 사용하므로, 추가 AI 호출이 대기해도 readiness·인증·Canvas용 `pool_max_conns`를 점유하지 않습니다.
 
@@ -61,6 +65,20 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | `POST` | `/notes/{id}/review` | 검토 완료, 다시 보기, 고정 | `notes:write` |
 | `GET` | `/onboarding` | 실제 사용 기반 온보딩 진행률 | 로그인 |
 | `POST` | `/onboarding/complete` | 온보딩 완료 표시 | 로그인 |
+
+### 🌿 생각의 갈래와 결정 기록
+
+| 메서드 | 경로 | 설명 | 권한 스코프 |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/spaces/{id}/branches` | 갈래 목록과 생각→갈래 매핑(`assignments`) | `notes:read` |
+| `POST` | `/spaces/{id}/branches` | 갈래 만들기(뿌리 생각은 선택) | `notes:write` |
+| `POST` | `/branches/{id}/resolve` | 채택 또는 접어 둠. **이유 필수** | `notes:write` |
+| `POST` | `/branches/{id}/reopen` | 다시 열기(이유는 지웁니다) | `notes:write` |
+| `DELETE` | `/branches/{id}` | 갈래만 삭제(생각은 남습니다) | `notes:write` |
+| `PUT` | `/notes/{id}/branch` | 생각을 갈래에 넣기/빼기(`null`이면 빼기) | `notes:write` |
+| `GET` | `/turning-points` | 표시한 것만 시간순으로: 채택·접어 둠·답함·상충 | `notes:read` |
+
+`resolve`는 이유가 비어 있으면 `400 branch-resolution-required`로 거부합니다. 결정만 남고 까닭이 사라지는 것이 이 기능이 막으려는 일이기 때문입니다. 접어 둔 갈래에 속한 생각은 `/search`의 `noteLines`, `/ai/ask`의 `sources[].branch`, 마크다운 내보내기, MCP `note_lines`에 모두 표시됩니다.
 
 ### 🌙 Dream 검토함
 | 메서드 | 경로 | 설명 | 권한 스코프 |
@@ -160,6 +178,13 @@ Canvas의 메모·연결·댓글 생성/수정/삭제 요청에 8~128자의 `Ide
 6. `get_related_notes`: 오프라인 유사도 기반 연관 생각 조회
 7. `list_clusters`: 생각 군집 조회
 8. `list_dreams`: 출처와 검토 상태를 포함한 최근 Dream 조회
+9. `list_lines`: 생각의 갈래 목록과 각 갈래의 상태·이유
+10. `find_open_questions`: **열린 것으로 표시된** 질문 (표시된 것이지 추론이 아닙니다)
+11. `find_contradictions`: **상충으로 표시된** 쌍
+12. `get_connections`: 한 생각에 붙은 연결과 그 출처
+13. `capture_thought`: 공간을 정하지 않고 수집함에 담기
+
+`list_notes`·`search_notes`는 `note_lines`를 함께 돌려줍니다. `status`가 `abandoned`이면 그 생각은 **사람이 검토한 뒤 채택하지 않기로 한 갈래**에 속하며 `resolution`에 이유가 옵니다 — 현재 방침처럼 다루면 안 됩니다. 갈래·질문·상충은 모두 **사람이 표시**하므로, 빈 결과는 표시된 것이 없다는 뜻이지 아무것도 없다는 뜻이 아닙니다.
 
 ### 💬 MCP 호출 예시 (JSON-RPC 2.0)
 
