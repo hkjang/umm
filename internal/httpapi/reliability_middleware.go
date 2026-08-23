@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/hkjang/umm/internal/auth"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
@@ -69,6 +70,39 @@ func idempotencyRequestIdentity(r *http.Request, body []byte) string {
 	_, _ = digest.Write([]byte{0})
 	_, _ = digest.Write(body)
 	return r.URL.EscapedPath() + "#sha256:" + hex.EncodeToString(digest.Sum(nil))
+}
+
+// compressResponses gzips responses that are large enough to be worth it.
+//
+// A canvas of two thousand thoughts is about a megabyte of JSON, and the
+// documented install exposes umm directly rather than behind a proxy that would
+// compress for it — so without this, that megabyte crosses the wire every time
+// someone opens the space.
+//
+// Responses that carry a freshly minted secret are left alone. Compressing a
+// response whose length an attacker can watch while varying what it echoes is
+// the shape of BREACH, and umm's CSRF defence is origin-based rather than a
+// token in the body, so these endpoints are the only ones where a secret appears
+// at all. Excluding them costs nothing: they are single small objects.
+func (s *Server) compressResponses(next http.Handler) http.Handler {
+	// Named by what Go's mime table actually returns, not by what the type is
+	// "supposed" to be: a .js file is served as text/javascript, and listing only
+	// application/javascript left the 435 kB bundle uncompressed while the
+	// stylesheet beside it shrank. The list is checked against a real response
+	// rather than assumed.
+	compressor := middleware.Compress(5,
+		"application/json", "application/javascript", "application/manifest+json",
+		"text/javascript", "text/html", "text/css", "text/markdown", "text/plain",
+		"image/svg+xml",
+	)
+	compressed := compressor(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sensitiveCredentialPathPattern.MatchString(r.URL.EscapedPath()) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		compressed.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) verifyWriteOrigin(next http.Handler) http.Handler {
