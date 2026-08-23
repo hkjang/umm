@@ -961,6 +961,64 @@ paths:
       responses:
         '200': { description: Filed, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
         '400': { $ref: '#/components/responses/Error' }
+  /turning-points:
+    get:
+      operationId: get_turning_points
+      tags: [Notes]
+      summary: What changed in someone's thinking, in the order it changed
+      description: |
+        Six months later the question is rarely "what did I write" but "what did
+        we decide about this, and why". The reason is the part that goes missing
+        first, so it travels with the decision.
+
+        Everything here was marked by a person: a line of thinking adopted or set
+        aside, a question marked as answered, two thoughts marked as being in
+        tension. umm does not read a burst of activity and call it a turning
+        point, and it does not decide a line was abandoned because it went quiet.
+        A record that mixes decisions with guesses is worse than no record,
+        because when you need it you cannot tell which is which.
+
+        An open line is not here. Nothing has been decided yet, and listing it
+        would turn a record of decisions into a list of work in progress.
+
+        Newest first, capped at 120. Only spaces the person can read.
+      parameters:
+        - name: spaceId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: Narrow to one space. Omitted, it covers every space they can read.
+      responses:
+        '200':
+          description: What was marked, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [points]
+                properties:
+                  points:
+                    type: array
+                    items:
+                      type: object
+                      required: [kind, at, spaceId, space, subject, detail]
+                      properties:
+                        kind:
+                          type: string
+                          enum: [adopted, abandoned, answered, contradicted]
+                        at: { type: string, format: date-time }
+                        spaceId: { type: string, format: uuid }
+                        space: { type: string }
+                        subject: { type: string, description: The line's name, the question, or the claim }
+                        detail:
+                          type: string
+                          description: >
+                            Why a line was resolved, the thought that answered a question, or
+                            the counter-claim. Empty when there is no second half, rather than
+                            filled with something invented.
+                        noteId: { type: string, format: uuid }
+        '400': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
   /ai/agent:
     post:
       operationId: post_ai_agent

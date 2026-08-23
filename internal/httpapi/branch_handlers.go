@@ -180,3 +180,32 @@ func (s *Server) setNoteBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// turningPoints is the record of what someone decided, in the order they
+// decided it.
+//
+// Only what was marked appears here. umm does not read a burst of activity and
+// call it a turning point: a record that mixes decisions with guesses is worse
+// than no record, because when you need it you cannot tell which is which.
+func (s *Server) turningPoints(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	var spaceID *uuid.UUID
+	if raw := strings.TrimSpace(r.URL.Query().Get("spaceId")); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "공간 ID가 올바르지 않습니다.")
+			return
+		}
+		spaceID = &parsed
+	}
+	p := principal(r)
+	points, err := s.Store.TurningPoints(r.Context(), p.User.ID, spaceID)
+	if err != nil {
+		slog.Warn("turning points failed", "user_id", p.User.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "기록을 불러오지 못했습니다.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"points": points})
+}

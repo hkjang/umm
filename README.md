@@ -25,14 +25,14 @@
 
 ---
 
-## v0.25.0 — 한 갈래만 보기
+## v0.26.0 — 결정 기록
 
-- **캔버스에도 접어 둠을 표시합니다**: v0.24.0은 AI가 답할 때만 표시했고, 정작 사람이 자기 생각을 읽는 곳에서는 여전히 똑같이 생겼습니다.
-- **한 갈래만 선명하게**: 갈래별로, 또는 선택한 생각에서 연결 1~3걸음으로 좁힙니다. 흐리게 둘 뿐 숨기지 않고, 몇 개를 흐리게 뒀는지 항상 말합니다.
-- **의미가 아니라 구조로 좁힙니다**: 갈래와 연결은 사람이 그은 것이라, 임베딩이 약해도 조용히 나빠지지 않습니다.
-- **화면에 그려지지 않는 효과를 통과시킬 뻔했습니다**: DOM에는 `opacity: 0.22`가 있었지만 `.postit`의 애니메이션이 인라인 스타일을 이겨 흐려짐이 한 번도 그려지지 않았습니다. 계산된 스타일을 읽는 e2e 테스트가 잡았습니다.
+- **"이거 어떻게 하기로 했더라, 왜?"**: 여섯 달 뒤에 하는 질문은 그것이고, 가장 먼저 사라지는 건 **왜**입니다. 이유를 결정 바로 옆에 둡니다.
+- **표시한 것만 남습니다**: 갈래 채택·접어 둠, 질문에 답 표시, 상충 표시. 활동이 많았다는 이유로 전환점을 지어내지 않습니다.
+- **결정과 추측이 섞인 기록은 기록이 없는 것보다 나쁩니다**: 정작 필요할 때 어느 쪽이 어느 쪽인지 구분할 수 없기 때문입니다.
+- **진행 중인 갈래는 없습니다**: 정해진 게 없으니까요. 넣으면 결정 기록이 할 일 목록이 됩니다.
 
-이전 릴리스: [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
