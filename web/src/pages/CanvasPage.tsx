@@ -41,6 +41,7 @@ import {
   IconMoonStars,
   IconPhoto,
   IconPlus,
+  IconFocus2,
   IconSearch,
   IconSettings,
   IconShare,
@@ -88,6 +89,8 @@ import { useAuth } from '../auth-context';
 import { msg, useTranslation } from '../i18n';
 import ImportThoughtsModal from '../components/ImportThoughtsModal';
 import BranchPanel from '../components/BranchPanel';
+import { neighbourhood } from '../lens';
+import type { Branch } from '../components/BranchPanel';
 import { readLocalStorage, readSessionStorage, writeLocalStorage, writeSessionStorage } from '../lib/browser-storage';
 import { importLayout, type ImportedThought, type ImportThoughtsResult } from '../lib/markdown-import';
 import { originLabel, relationLabel, relationOptions } from '../lib/edge-vocabulary';
@@ -236,6 +239,17 @@ function CanvasInner() {
   const [filing, setFiling] = useState('');
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestBusy, setSuggestBusy] = useState(false);
+  // Looking at one line of thinking at a time.
+  //
+  // The rest is dimmed, never hidden. A thought that disappears reads as a
+  // thought that was deleted, and a canvas that quietly drops two thirds of
+  // itself is telling the person their workspace is smaller than it is.
+  const [lens, setLens] = useState<{ label: string; ids: Set<string> }>();
+  // Branches are loaded for the whole space, not just the selected thought: a
+  // thought in a line that was set aside has to be marked whether or not anyone
+  // has clicked it.
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [branchAssignments, setBranchAssignments] = useState<Record<string, string>>({});
   const [listView, setListView] = useState(false);
   const [commentNote, setCommentNote] = useState<ThoughtNote>();
   const [comments, setComments] = useState<NoteComment[]>([]);
@@ -302,16 +316,33 @@ function CanvasInner() {
     },
     [activeSpace],
   );
+  const loadBranches = useCallback(async () => {
+    if (!activeSpace) return;
+    try {
+      const result = await api<{ branches: Branch[]; assignments: Record<string, string> }>(
+        `/spaces/${activeSpace}/branches`,
+        { silent: true },
+      );
+      setBranches(result.branches);
+      setBranchAssignments(result.assignments ?? {});
+    } catch {
+      // A space with no branches is the ordinary case, and a failure here must
+      // not take the canvas down with it.
+      setBranches([]);
+      setBranchAssignments({});
+    }
+  }, [activeSpace]);
   useEffect(() => {
     if (!activeSpace) return;
     void loadCanvas().catch(() => undefined);
+    void loadBranches();
     api<{ dreams: DreamHistory[] }>('/dreams', { silent: true })
       .then(({ dreams }) => {
         const fresh = dreams.find((d) => d.spaceId === activeSpace && d.status === 'created');
         if (fresh && !readSessionStorage(`dream:${fresh.dreamId}`).value) setMorningDream(fresh);
       })
       .catch(() => undefined);
-  }, [activeSpace, loadCanvas]);
+  }, [activeSpace, loadCanvas, loadBranches]);
   useEffect(() => {
     if (!activeSpace) return;
     const stream = new EventSource(`/api/v1/spaces/${activeSpace}/events`);
@@ -575,16 +606,46 @@ function CanvasInner() {
       .filter((space) => !term || normalizeSearch(space.name).includes(term))
       .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
   }, [spaces, spaceQuery]);
+  // The one selected thought, when there is exactly one. A lens over connections
+  // needs a place to start, and starting it from an arbitrary member of a
+  // multiple selection would pick for the person without telling them.
+  const selectedNoteID = useMemo(() => {
+    const chosen = nodes.filter((node) => node.selected && node.type === 'postit');
+    return chosen.length === 1 ? chosen[0].id : '';
+  }, [nodes]);
+
+  // Only lines that were set aside are marked. An open or adopted line is the
+  // ordinary state of a thought, and a badge on every note would be wallpaper.
+  const setAsideLines = useMemo(() => {
+    const byID = new Map(branches.filter((branch) => branch.status === 'abandoned').map((b) => [b.id, b.name]));
+    const out: Record<string, string> = {};
+    for (const [noteID, branchID] of Object.entries(branchAssignments)) {
+      const name = byID.get(branchID);
+      if (name) out[noteID] = name;
+    }
+    return out;
+  }, [branches, branchAssignments]);
+
   useEffect(() => {
     const noteNodes = (visible: ThoughtNote[]) =>
       visible.map((note) => ({
         id: note.id,
         type: 'postit',
         position: { x: note.x, y: note.y },
-        style: { width: note.width, height: note.height },
+        // The fade goes on the node wrapper, not on the card inside it. The card
+        // carries `animation: note-land ... both`, and an animation's final
+        // keyframe beats an inline style for good — setting opacity on the card
+        // looks right in the DOM and changes nothing on screen. This was found
+        // by an end-to-end test reading computed style; reading the inline
+        // attribute had confirmed a fade that was never rendered.
+        style: {
+          width: note.width,
+          height: note.height,
+          opacity: lens && !lens.ids.has(note.id) ? 0.22 : 1,
+        },
         data: {
           note,
-          dimmed: false,
+          setAsideLine: setAsideLines[note.id],
           relatedCount: note.relatedCount,
           onGather: discoverRelated,
           onPatch: persist,
@@ -627,7 +688,18 @@ function CanvasInner() {
     // Notes in no group stay themselves. They are the outliers, and hiding them
     // would make the zoomed-out view claim the workspace is tidier than it is.
     setNodes([...clusterNodes, ...noteNodes(searchMatches.filter((note) => !grouped.has(note.id)))]);
-  }, [searchMatches, persist, remove, restore, discoverRelated, openComments, zoomedOut, clusters]);
+  }, [
+    searchMatches,
+    persist,
+    remove,
+    restore,
+    discoverRelated,
+    openComments,
+    zoomedOut,
+    clusters,
+    lens,
+    setAsideLines,
+  ]);
   useEffect(() => {
     const visible = new Set(searchMatches.map((note) => note.id));
     setEdges(
@@ -644,9 +716,25 @@ function CanvasInner() {
           // The generic relation adds nothing to a drawn line, so it stays
           // unlabelled; everything else states what it claims.
           label: e.relation === 'related' ? undefined : relationLabel(e.relation),
+          // A connection is only in focus when both ends are. A line at full
+          // strength running into a faded thought reads as a link to nothing.
+          style: lens && !(lens.ids.has(e.source) && lens.ids.has(e.target)) ? { opacity: 0.15 } : undefined,
         })),
     );
-  }, [edgeStyle, rawEdges, searchMatches]);
+  }, [edgeStyle, rawEdges, searchMatches, lens]);
+
+  /**
+   * A lens over connections: everything within `steps` of one thought.
+   *
+   * The walk itself lives in ../lens so it can be tested on its own; it is the
+   * only part of a lens that can be wrong.
+   */
+  const focusOnConnections = useCallback(
+    (noteID: string, steps: number) => {
+      setLens({ label: t('연결 {steps}걸음', { steps }), ids: neighbourhood(noteID, rawEdges, steps) });
+    },
+    [rawEdges, t],
+  );
 
   const shortcutNoteID = useMemo(() => new URLSearchParams(location.search).get('note') || '', [location.search]);
   useEffect(() => {
@@ -1491,6 +1579,57 @@ function CanvasInner() {
                 <IconSparkles size={19} />
               </ActionIcon>
             </Tooltip>
+            <Menu position="bottom" withinPortal width={230}>
+              <Menu.Target>
+                <Tooltip label={t('한 갈래만 보기')}>
+                  <ActionIcon
+                    className="canvas-action"
+                    variant={lens ? 'filled' : 'subtle'}
+                    color="dark"
+                    aria-label={t('한 갈래만 보기')}
+                    aria-pressed={!!lens}
+                  >
+                    <IconFocus2 size={19} />
+                  </ActionIcon>
+                </Tooltip>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {lens && <Menu.Item onClick={() => setLens(undefined)}>{t('전체 보기')}</Menu.Item>}
+                {branches.length > 0 && <Menu.Label>{t('생각의 갈래')}</Menu.Label>}
+                {branches.map((branch) => (
+                  <Menu.Item
+                    key={branch.id}
+                    onClick={() =>
+                      setLens({
+                        label: branch.name,
+                        ids: new Set(
+                          Object.entries(branchAssignments)
+                            .filter(([, id]) => id === branch.id)
+                            .map(([note]) => note),
+                        ),
+                      })
+                    }
+                  >
+                    {branch.name}
+                  </Menu.Item>
+                ))}
+                {/* A lens over connections needs one thought to start from, so
+                    it appears only when exactly one is selected. Offering it
+                    greyed out would be a menu item that never works. */}
+                {selectedNoteID ? (
+                  <>
+                    <Menu.Label>{t('선택한 생각에서')}</Menu.Label>
+                    {[1, 2, 3].map((steps) => (
+                      <Menu.Item key={steps} onClick={() => focusOnConnections(selectedNoteID, steps)}>
+                        {t('연결 {steps}걸음', { steps })}
+                      </Menu.Item>
+                    ))}
+                  </>
+                ) : (
+                  <Menu.Label>{t('생각을 하나 고르면 연결로도 좁힐 수 있습니다')}</Menu.Label>
+                )}
+              </Menu.Dropdown>
+            </Menu>
             <Tooltip label={listView ? t('공간 캔버스 보기') : t('접근 가능한 선형 목록')}>
               <ActionIcon
                 className="canvas-action"
@@ -1766,6 +1905,27 @@ function CanvasInner() {
           </Paper>
         </div>
       )}
+      {lens && (
+        <Paper className="lens-banner glass" radius="xl" p="xs" px="md">
+          <Group gap="xs" wrap="nowrap">
+            <IconFocus2 size={16} />
+            <Text size="sm" fw={600}>
+              {lens.label}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {/* The count is the honest part. Dimming without it lets a canvas
+                  look emptier than it is and hides how much was set aside. */}
+              {t('{focused}개에 집중 · {dimmed}개는 흐리게 두었습니다', {
+                focused: searchMatches.filter((note) => lens.ids.has(note.id)).length,
+                dimmed: searchMatches.filter((note) => !lens.ids.has(note.id)).length,
+              })}
+            </Text>
+            <Button size="compact-xs" variant="subtle" onClick={() => setLens(undefined)}>
+              {t('전체 보기')}
+            </Button>
+          </Group>
+        </Paper>
+      )}
       {related && (
         <Paper className="related-panel glass" radius="lg" p="md">
           <Group justify="space-between">
@@ -1811,7 +1971,16 @@ function CanvasInner() {
               </Stack>
             </>
           )}
-          {related && activeSpace && <BranchPanel spaceId={activeSpace} noteId={related.source} />}
+          {related && activeSpace && (
+            <BranchPanel
+              spaceId={activeSpace}
+              noteId={related.source}
+              branches={branches}
+              assignments={branchAssignments}
+              onChanged={() => void loadBranches()}
+              onFocus={(label, ids) => setLens({ label, ids: new Set(ids) })}
+            />
+          )}
           {backlinks.length > 0 && (
             <>
               <Text size="xs" fw={700} c="grape.7" mt="md">

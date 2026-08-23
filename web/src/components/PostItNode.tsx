@@ -15,7 +15,10 @@ import { useTranslation } from '../i18n';
 
 export type PostItData = {
   note: ThoughtNote;
-  dimmed?: boolean;
+  // The line this thought belongs to, when it belongs to one that was set
+  // aside. v0.24.0 taught the assistant to say so and left the canvas saying
+  // nothing — which is where a person actually reads their own thoughts.
+  setAsideLine?: string;
   relatedCount?: number;
   onGather: (id: string) => void;
   onPatch: (id: string, patch: Partial<ThoughtNote>) => void;
@@ -52,7 +55,7 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
     <div
       ref={cardRef}
       className={`postit postit-${colorClass} ${note.source === 'dream' ? 'postit-dream' : ''} ${selected ? 'selected' : ''}`}
-      style={{ '--note-rotation': `${note.rotation || 0}deg`, opacity: data.dimmed ? 0.22 : 1 } as CSSProperties}
+      style={{ '--note-rotation': `${note.rotation || 0}deg` } as CSSProperties}
       role="group"
       tabIndex={0}
       aria-label={t('생각 메모: {title}', { title: note.title || note.content.slice(0, 80) || t('내용 없음') })}
@@ -111,6 +114,11 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
         placeholder={t('지금 떠오르는 생각을 적어보세요')}
         autoFocus={note.content === ''}
       />
+      {data.setAsideLine && (
+        <Tooltip label={t('접어 둔 갈래: {line}', { line: data.setAsideLine })} multiline w={220}>
+          <span className="postit-set-aside">{t('접어 둠')}</span>
+        </Tooltip>
+      )}
       {!!data.relatedCount && (
         <button className="related-chip nodrag" type="button" onClick={() => data.onGather(note.id)}>
           {t('관련 {count}', { count: data.relatedCount })}

@@ -872,4 +872,12 @@ export const en: Dictionary = {
   '갈래를 정리할 수 없습니다.': 'Could not resolve the line.',
   '갈래를 바꿀 수 없습니다.': 'Could not change the line.',
   '생각을 갈래에 넣을 수 없습니다.': 'Could not file the thought under that line.',
+  '연결 {steps}걸음': '{steps} step(s) along connections',
+  '이 갈래만 보기': 'Show only this line',
+  '{focused}개에 집중 · {dimmed}개는 흐리게 두었습니다': 'Focused on {focused} · {dimmed} left faded',
+  '전체 보기': 'Show everything',
+  '접어 둔 갈래: {line}': 'Set-aside line: {line}',
+  '한 갈래만 보기': 'Show one line only',
+  '선택한 생각에서': 'From the selected thought',
+  '생각을 하나 고르면 연결로도 좁힐 수 있습니다': 'Select one thought to narrow by connections too',
 };

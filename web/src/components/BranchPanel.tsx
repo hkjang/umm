@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ActionIcon, Badge, Button, Group, Menu, Stack, Text, TextInput, Textarea } from '@mantine/core';
 import { IconDots, IconGitBranch } from '@tabler/icons-react';
 import { api, json } from '../api';
@@ -16,11 +16,6 @@ export interface Branch {
   notes: number;
 }
 
-interface BranchList {
-  branches: Branch[];
-  assignments: Record<string, string>;
-}
-
 /**
  * Lines of thinking, and what became of them.
  *
@@ -32,30 +27,28 @@ interface BranchList {
  * person, and resolving it requires saying why: the decision without the reason
  * is the half people actually lose.
  */
-export default function BranchPanel({ spaceId, noteId }: { spaceId: string; noteId?: string }) {
+export default function BranchPanel({
+  spaceId,
+  noteId,
+  branches,
+  assignments,
+  onChanged,
+  onFocus,
+}: {
+  spaceId: string;
+  noteId?: string;
+  // Loaded by the canvas rather than here, because a thought in a line that was
+  // set aside has to be marked whether or not anyone has selected it.
+  branches: Branch[];
+  assignments: Record<string, string>;
+  onChanged: () => void;
+  onFocus?: (label: string, noteIds: string[]) => void;
+}) {
   const { t } = useTranslation();
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [resolving, setResolving] = useState<{ branch: Branch; status: 'adopted' | 'abandoned' }>();
   const [reason, setReason] = useState('');
-
-  const load = useCallback(async () => {
-    try {
-      const result = await api<BranchList>(`/spaces/${spaceId}/branches`);
-      setBranches(result.branches);
-      setAssignments(result.assignments ?? {});
-    } catch {
-      // A space with no branches is the ordinary case; a failure here should not
-      // take the canvas down with it.
-      setBranches([]);
-    }
-  }, [spaceId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   const create = async () => {
     const trimmed = name.trim();
@@ -64,7 +57,7 @@ export default function BranchPanel({ spaceId, noteId }: { spaceId: string; note
     try {
       await api<Branch>(`/spaces/${spaceId}/branches`, json('POST', { name: trimmed, rootNoteId: noteId ?? null }));
       setName('');
-      await load();
+      onChanged();
     } catch (reason_) {
       showError(reason_ instanceof Error ? reason_.message : t('갈래를 만들 수 없습니다.'));
     } finally {
@@ -76,7 +69,7 @@ export default function BranchPanel({ spaceId, noteId }: { spaceId: string; note
     if (!noteId) return;
     try {
       await api(`/notes/${noteId}/branch`, json('PUT', { branchId }));
-      await load();
+      onChanged();
     } catch (reason_) {
       showError(reason_ instanceof Error ? reason_.message : t('생각을 갈래에 넣을 수 없습니다.'));
     }
@@ -92,7 +85,7 @@ export default function BranchPanel({ spaceId, noteId }: { spaceId: string; note
       );
       setResolving(undefined);
       setReason('');
-      await load();
+      onChanged();
     } catch (reason_) {
       showError(reason_ instanceof Error ? reason_.message : t('갈래를 정리할 수 없습니다.'));
     } finally {
@@ -105,7 +98,7 @@ export default function BranchPanel({ spaceId, noteId }: { spaceId: string; note
       await (action === 'reopen'
         ? api(`/branches/${branch.id}/reopen`, json('POST', {}))
         : api(`/branches/${branch.id}`, { method: 'DELETE' }));
-      await load();
+      onChanged();
     } catch (reason_) {
       showError(reason_ instanceof Error ? reason_.message : t('갈래를 바꿀 수 없습니다.'));
     }
@@ -156,6 +149,20 @@ export default function BranchPanel({ spaceId, noteId }: { spaceId: string; note
                 </ActionIcon>
               </Menu.Target>
               <Menu.Dropdown>
+                {onFocus && (
+                  <Menu.Item
+                    onClick={() =>
+                      onFocus(
+                        branch.name,
+                        Object.entries(assignments)
+                          .filter(([, id]) => id === branch.id)
+                          .map(([note]) => note),
+                      )
+                    }
+                  >
+                    {t('이 갈래만 보기')}
+                  </Menu.Item>
+                )}
                 {branch.status === 'open' ? (
                   <>
                     <Menu.Item onClick={() => setResolving({ branch, status: 'adopted' })}>

@@ -190,4 +190,67 @@ test.describe('canvas', () => {
     await expect(page.locator('.react-flow__node-postit').first()).toBeVisible({ timeout: 15000 });
     await expect(clusters).toHaveCount(0);
   });
+
+  // A line of thinking that was set aside has to look different from a current
+  // one on the canvas, and looking at one line must fade the rest rather than
+  // hide it — a thought that disappears reads as a thought that was deleted.
+  test('marks a set-aside line and fades everything outside the one in focus', async ({ page }) => {
+    const marker = unique('갈래');
+    // Its own space, because the shared one collects notes from every test that
+    // ran before: past twenty-five the canvas summarises instead of showing
+    // cards, and this test would be asserting against a view of clusters.
+    const made = await page.evaluate(
+      async ({ text }) => {
+        const post = async (path: string, body: unknown) => {
+          const response = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          return response.json();
+        };
+        const space = await post('/api/v1/spaces', { name: `${text}-공간` });
+        const spaceID = space.id;
+        const inside = await post(`/api/v1/spaces/${spaceID}/notes`, { content: `${text}-안`, x: 0, y: 0 });
+        const outside = await post(`/api/v1/spaces/${spaceID}/notes`, { content: `${text}-밖`, x: 420, y: 0 });
+        const branch = await post(`/api/v1/spaces/${spaceID}/branches`, { name: `${text}-선` });
+        await fetch(`/api/v1/notes/${inside.id}/branch`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ branchId: branch.id }),
+        });
+        await post(`/api/v1/branches/${branch.id}/resolve`, {
+          status: 'abandoned',
+          resolution: '해 보니 얻는 것보다 드는 품이 컸습니다',
+        });
+        return { space: spaceID, inside: inside.id, outside: outside.id, branch: `${text}-선` };
+      },
+      { text: marker },
+    );
+
+    await page.goto(`/space/${made.space}`);
+    await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+
+    // The mark is on the canvas, not only in what the assistant says about it.
+    const insideCard = page.locator(`.react-flow__node[data-id="${made.inside}"]`);
+    await expect(insideCard.locator('.postit-set-aside')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator(`.react-flow__node[data-id="${made.outside}"] .postit-set-aside`)).toHaveCount(0);
+
+    await page.getByLabel('한 갈래만 보기').click();
+    await page.getByRole('menuitem', { name: made.branch }).click();
+
+    // Faded, not gone — and the banner says how much was set aside, so the
+    // canvas cannot look emptier than it is.
+    await expect(page.getByText('1개에 집중')).toBeVisible();
+    // Computed style, deliberately: the card carries an animation whose final
+    // keyframe outranks an inline opacity, so reading the attribute would pass
+    // on a fade the browser never draws. It did, once.
+    const outsideNode = page.locator(`.react-flow__node[data-id="${made.outside}"]`);
+    await expect(outsideNode).toBeVisible();
+    await expect(outsideNode).toHaveCSS('opacity', '0.22');
+    await expect(insideCard).toHaveCSS('opacity', '1');
+
+    await page.getByRole('button', { name: '전체 보기' }).click();
+    await expect(outsideNode).toHaveCSS('opacity', '1');
+  });
 });
