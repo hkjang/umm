@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.19.0-success?style=flat-square" alt="v0.19.0" />
+  <img src="https://img.shields.io/badge/Release-v0.20.0-success?style=flat-square" alt="v0.20.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,14 +25,13 @@
 
 ---
 
-## v0.19.0 — 찾아 놓은 중복을 실제로 합치기
+## v0.20.0 — 기록해 둔 상충을 읽어 오기
 
-- **합치기**: 아침 브리핑이 v0.16.0부터 겹치는 생각을 보여 줬지만 할 수 있는 일이 없었습니다. 이제 버튼이 있습니다.
-- **여덟 테이블을 명시적으로**: 연결·댓글·Dream 인용은 따라오고, **복습 일정과 리비전은 일부러 남습니다** — 살아남은 생각에게 일어나지 않은 일이기 때문입니다.
-- **문구는 umm이 정하지 않습니다**: 두 노트가 거의 같다는 건 알아도 어느 표현을 남길지는 모릅니다.
-- **거부하는 경우들**: 남의 공간, 다른 공간, 빈 내용, 자기 자신 — 각각 테스트로 고정했습니다.
+- **상충 조회**: v0.11.0부터 기록할 수 있었지만 아무것도 읽어 오지 않던 `contradicts` 연결을 이제 볼 수 있습니다 — 브리핑, API, MCP `find_contradictions`.
+- **탐지가 아니라 기록입니다**: umm은 여전히 두 노트를 읽고 모순이라고 판단하지 않습니다. 사람이나 에이전트가 표시해 둔 것입니다.
+- **0일 때는 표시하지 않습니다**: "상충 0"은 "없다"로 읽히지만 실제 뜻은 "아무도 표시하지 않았다"입니다.
 
-이전 릴리스: [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
@@ -138,7 +137,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.19.0
+  umm:v0.20.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

@@ -59,6 +59,11 @@ type MorningBrief struct {
 	Unfiled int `json:"unfiled"`
 	// Duplicates are pairs that look like the same thought written twice.
 	Duplicates []DuplicatePair `json:"duplicates"`
+	// Contradictions are disagreements someone recorded. umm does not detect
+	// them: these are connections a person or an agent drew. The interface shows
+	// nothing at all when the list is empty, because a zero here would read as
+	// "this workspace has none" when it means "nobody has marked any".
+	Contradictions []Contradiction `json:"contradictions"`
 	// Skipped says what umm did not examine, so an empty list above is not read
 	// as an all-clear.
 	Skipped []BriefSkip `json:"skipped"`
@@ -73,7 +78,8 @@ const maxDuplicatePairs = 10
 
 // MorningBrief gathers everything waiting since the given time.
 func (s *Store) MorningBrief(ctx context.Context, userID uuid.UUID, since time.Time) (MorningBrief, error) {
-	brief := MorningBrief{Since: since, Dreams: []BriefGroup{}, Duplicates: []DuplicatePair{}, Skipped: []BriefSkip{}}
+	brief := MorningBrief{Since: since, Dreams: []BriefGroup{}, Duplicates: []DuplicatePair{},
+		Contradictions: []Contradiction{}, Skipped: []BriefSkip{}}
 
 	rows, err := s.Pool.Query(ctx, `
 		SELECT dream_type, count(*)
@@ -112,6 +118,16 @@ func (s *Store) MorningBrief(ctx context.Context, userID uuid.UUID, since time.T
 		return MorningBrief{}, err
 	}
 
+	// Capped for the same reason as duplicates: a brief is a glance, not a report.
+	recorded, err := s.Contradictions(ctx, userID, nil)
+	if err != nil {
+		return MorningBrief{}, err
+	}
+	if len(recorded) > maxDuplicatePairs {
+		recorded = recorded[:maxDuplicatePairs]
+	}
+	brief.Contradictions = recorded
+
 	duplicates, skip, err := s.duplicateThoughts(ctx, userID)
 	if err != nil {
 		return MorningBrief{}, err
@@ -121,8 +137,8 @@ func (s *Store) MorningBrief(ctx context.Context, userID uuid.UUID, since time.T
 		brief.Skipped = append(brief.Skipped, *skip)
 	}
 
-	brief.Quiet = len(brief.Dreams) == 0 && brief.Suggestions == 0 &&
-		brief.Unfiled == 0 && len(brief.Duplicates) == 0 && len(brief.Skipped) == 0
+	brief.Quiet = len(brief.Dreams) == 0 && brief.Suggestions == 0 && brief.Unfiled == 0 &&
+		len(brief.Duplicates) == 0 && len(brief.Contradictions) == 0 && len(brief.Skipped) == 0
 	return brief, nil
 }
 

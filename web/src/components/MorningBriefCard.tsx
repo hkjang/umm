@@ -109,6 +109,16 @@ export default function MorningBriefCard({
             </Text>
           </div>
         )}
+        {brief.contradictions.length > 0 && (
+          <div>
+            <Text fz="xl" fw={700}>
+              {brief.contradictions.length}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {t('기록해 둔 상충')}
+            </Text>
+          </div>
+        )}
         {pending.length > 0 && (
           <div>
             <Text fz="xl" fw={700}>
@@ -161,6 +171,31 @@ export default function MorningBriefCard({
           <Text size="xs" c="dimmed">
             {t('먼저 적은 쪽이 남고, 연결과 댓글은 따라옵니다. 문구를 고르려면 생각을 열어 직접 정리하세요.')}
           </Text>
+        </Stack>
+      )}
+
+      {brief.contradictions.length > 0 && (
+        <Stack gap={6} mt="md">
+          <Text size="xs" fw={700} c="red.7">
+            {t('서로 안 맞는다고 표시해 둔 것')}
+          </Text>
+          {brief.contradictions.slice(0, 3).map((item) => (
+            <UnstyledButton
+              key={item.edgeId}
+              className="brief-duplicate"
+              onClick={() => onOpen(item.spaceId, item.claim.id)}
+            >
+              <Text size="xs" c="dimmed">
+                {item.space}
+              </Text>
+              <Text size="sm" lineClamp={1}>
+                {item.claim.title || item.claim.content}
+              </Text>
+              <Text size="sm" lineClamp={1} c="dimmed">
+                ↔ {item.counter.title || item.counter.content}
+              </Text>
+            </UnstyledButton>
+          ))}
         </Stack>
       )}
 

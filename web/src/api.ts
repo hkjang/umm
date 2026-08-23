@@ -117,6 +117,19 @@ export interface MorningBrief {
   duplicates: { spaceId: string; space: string; first: ThoughtNote; second: ThoughtNote; score: number }[];
   /** What umm did not examine — so an empty list above is not read as an all-clear. */
   skipped: { kind: string; reason: 'backend-not-semantic' | 'disabled' }[];
+  /**
+   * Disagreements someone recorded. umm does not detect these, so an empty list
+   * means nobody has marked any — not that the workspace has none. The interface
+   * shows nothing at all rather than a zero.
+   */
+  contradictions: {
+    edgeId: string;
+    spaceId: string;
+    space: string;
+    claim: ThoughtNote;
+    counter: ThoughtNote;
+    origin: string;
+  }[];
   /** Nothing to report *and* nothing skipped. */
   quiet: boolean;
 }

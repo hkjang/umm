@@ -374,3 +374,31 @@ func (s *Server) morningBrief(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, brief)
 }
+
+// contradictions lists the disagreements recorded in a person's spaces.
+//
+// Recorded, not detected: umm does not read two notes and conclude they
+// conflict. An empty list means nobody has marked any, which is why the
+// interface shows nothing at all rather than a zero.
+func (s *Server) contradictions(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	var spaceID *uuid.UUID
+	if raw := r.URL.Query().Get("spaceId"); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "공간 ID가 올바르지 않습니다.")
+			return
+		}
+		spaceID = &parsed
+	}
+	p := principal(r)
+	items, err := s.Store.Contradictions(r.Context(), p.User.ID, spaceID)
+	if err != nil {
+		slog.Warn("contradictions failed", "user_id", p.User.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "상충하는 생각을 불러오지 못했습니다.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"contradictions": items})
+}
