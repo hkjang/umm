@@ -191,6 +191,46 @@ test.describe('canvas', () => {
     await expect(clusters).toHaveCount(0);
   });
 
+  // Everything built on lines of thinking depends on being able to make one, and
+  // for three releases you could not. The only way into the panel that holds
+  // them was the "related N" chip, which a thought with no related thoughts does
+  // not have — so on a fresh canvas, with the first thought someone writes,
+  // there was no way in at all.
+  test('reaches lines of thinking from the first thought on a canvas', async ({ page }) => {
+    const marker = unique('첫생각');
+    const space = await page.evaluate(async (name) => {
+      const created = await (
+        await fetch('/api/v1/spaces', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        })
+      ).json();
+      await fetch(`/api/v1/spaces/${created.id}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: name, x: 0, y: 0 }),
+      });
+      return created.id;
+    }, marker);
+
+    await page.goto(`/space/${space}`);
+    await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+
+    // One thought, so nothing is related to it and no chip exists. That is the
+    // state the entry point has to survive.
+    await expect(page.locator('.related-chip')).toHaveCount(0);
+
+    const card = page.getByRole('group', { name: new RegExp(marker) }).first();
+    await card.getByRole('button', { name: '메모 메뉴' }).click();
+    await page.getByRole('menuitem', { name: '연결과 갈래' }).click();
+
+    await expect(page.getByText('생각의 갈래')).toBeVisible();
+    await page.getByLabel('새 갈래 이름').fill(`${marker}-갈래`);
+    await page.getByRole('button', { name: '만들기' }).click();
+    await expect(page.getByText(`${marker}-갈래`)).toBeVisible();
+  });
+
   // A line of thinking that was set aside has to look different from a current
   // one on the canvas, and looking at one line must fade the rest rather than
   // hide it — a thought that disappears reads as a thought that was deleted.
