@@ -63,7 +63,18 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
       style={{ '--note-rotation': `${note.rotation || 0}deg` } as CSSProperties}
       role="group"
       tabIndex={0}
-      aria-label={t('생각 메모: {title}', { title: note.title || note.content.slice(0, 80) || t('내용 없음') })}
+      // The set-aside line belongs in the name, not only in the badge. A badge is
+      // a <span> and its tooltip needs a hover; someone reading this card with a
+      // screen reader would otherwise hear a thought that sounds current, which
+      // is the exact thing lines of thinking exist to prevent.
+      aria-label={
+        data.setAsideLine
+          ? t('생각 메모: {title} · 접어 둔 갈래: {line}', {
+              title: note.title || note.content.slice(0, 80) || t('내용 없음'),
+              line: data.setAsideLine,
+            })
+          : t('생각 메모: {title}', { title: note.title || note.content.slice(0, 80) || t('내용 없음') })
+      }
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return;
         // Enter is the way into a note without a mouse: arrow keys move the

@@ -25,13 +25,13 @@
 
 ---
 
-## v0.33.0 — 첫 화면 숫자가 진짜 개수가 아니었습니다
+## v0.33.1 — 읽어 주는 사람에게는 접어 둔 갈래가 없었습니다
 
-- **연결 대기 6 · 실제 2006**: 타일 숫자가 `LIMIT`으로 잘린 목록의 길이였습니다.
-- **목록이 미리보기인 건 괜찮습니다**: 문제는 타일이 **개수처럼 생겼다**는 것입니다. "연결 대기" 옆 숫자를 총계 말고 다르게 읽을 방법이 없습니다.
-- **네 타일 모두 각자 목록의 WHERE 절을 그대로 반복합니다**: 조건이 다른 개수는 잘린 개수보다 나쁩니다 — 숫자와 목록이 어긋나는데 둘 다 이상해 보이지 않습니다.
+- **배지는 `<span>`, 갈래 이름은 툴팁 안**: 화면 낭독기로 읽으면 접어 둔 생각이 현재 생각과 구별되지 않았습니다.
+- **갈래가 막으려는 일이 정확히 그것입니다**: 이미 거절한 선택지를 현재 방침으로 착각하는 것.
+- **이제 카드 이름에 함께 들어갑니다**: 눈으로 보는 사람에게는 배지가, 읽어 주는 사람에게는 이름이 같은 말을 합니다.
 
-이전 릴리스: [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 

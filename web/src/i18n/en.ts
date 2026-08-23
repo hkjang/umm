@@ -902,4 +902,5 @@ export const en: Dictionary = {
   '연결과 갈래': 'Connections and lines',
   '가장 최근 {count}개만 보여 주고 있습니다. 그 앞에도 표시한 결정이 더 있습니다.':
     'Showing the {count} most recent. There are more marked decisions before these.',
+  '생각 메모: {title} · 접어 둔 갈래: {line}': 'Thought: {title} · set-aside line: {line}',
 };
