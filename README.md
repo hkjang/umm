@@ -25,14 +25,13 @@
 
 ---
 
-## v0.29.0 — 에이전트도 접어 둔 갈래를 압니다
+## v0.29.1 — 마지막 문: 검색
 
-- **같은 문이 또 있었습니다**: 내보내기를 고친 뒤 찾아보니, MCP로 읽는 외부 에이전트에게는 접어 둔 생각과 현재 생각이 여전히 똑같이 생겼습니다.
-- **한 경로에서 막고 다른 경로에서 흘리면 막은 게 아닙니다**: `ai_excluded`가 연결을 통해 새던 것과 같은 종류입니다.
-- **`note_lines`와 `list_lines`**: 생각마다 어느 갈래인지, 갈래마다 상태와 이유가 함께 옵니다. 도구 설명에 "표시된 것이지 추론이 아님"을 적었습니다.
-- **합치기가 갈래를 옮기지 않는 이유를 적었습니다**: 지어내는 쪽이 잃는 쪽보다 나쁩니다.
+- **세 번 놓쳤습니다**: 조회(v0.24.0) · 내보내기(v0.28.1) · MCP(v0.29.0). 남은 문을 세어 보니 **검색**이 있었습니다.
+- **생각을 가장 자주 만나는 자리**: 같은 검색어에 접어 둔 둘과 지금 쓴 하나가 똑같이 생겨 있었습니다. 이제 어느 쪽이 거절된 버전인지 보입니다.
+- **같은 규칙을 네 번 따로 구현하지 않도록** `BranchRefsForNotes`를 공개했습니다. 문마다 조회를 새로 짜면 다음 문에서 또 빠뜨립니다.
 
-이전 릴리스: [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 

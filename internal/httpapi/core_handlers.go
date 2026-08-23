@@ -336,7 +336,24 @@ func (s *Server) searchNotes(w http.ResponseWriter, r *http.Request) {
 	if page.HasMore {
 		next = encodeOffsetCursor(page.NextOffset)
 	}
-	writeJSON(w, 200, map[string]any{"notes": page.Notes, "nextCursor": next})
+	// Search is where a thought is met most often, and a result from a line that
+	// was decided against reads exactly like a current one without this. The same
+	// gap was found in retrieval, the export and MCP; this is the last door a
+	// thought comes through unlabelled.
+	ids := make([]uuid.UUID, 0, len(page.Notes))
+	for _, note := range page.Notes {
+		ids = append(ids, note.ID)
+	}
+	refs, err := s.Store.BranchRefsForNotes(r.Context(), ids)
+	if err != nil {
+		slog.Warn("search could not label lines of thinking", "error", err)
+		refs = nil
+	}
+	lines := map[string]any{}
+	for noteID, ref := range refs {
+		lines[noteID.String()] = ref
+	}
+	writeJSON(w, 200, map[string]any{"notes": page.Notes, "nextCursor": next, "noteLines": lines})
 }
 
 func (s *Server) createNote(w http.ResponseWriter, r *http.Request) {
