@@ -875,6 +875,48 @@ paths:
                         space: { $ref: '#/components/schemas/Space' }
                         score: { type: number }
                         basis: { type: string, enum: [meaning, recent] }
+  /admin/ai-gateway/discover:
+    get:
+      operationId: get_admin_ai_gateway_discover
+      tags: [Admin, AI]
+      summary: Look for an embedding gateway at the addresses umm documents
+      description: |
+        Removes the last piece of friction in configuring a real embedding model:
+        knowing what it is called. Each reachable gateway is asked for its
+        OpenAI-compatible model list.
+
+        The addresses probed are compiled into the binary and are never read from
+        the request — probing a supplied address would make this endpoint a way
+        of reaching whatever the server can reach.
+
+        likelyEmbedding is a hint from the model name, not a finding: a gateway
+        lists every model it serves and nothing in the response says which ones
+        embed. It puts the plausible ones first; /admin/ai-gateway/test and
+        /admin/embedding-quality are what settle it.
+      responses:
+        '200':
+          description: Gateways that answered, in the order umm prefers them
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [gateways]
+                properties:
+                  gateways:
+                    type: array
+                    items:
+                      type: object
+                      required: [baseUrl, models]
+                      properties:
+                        baseUrl: { type: string }
+                        models:
+                          type: array
+                          items:
+                            type: object
+                            required: [name, likelyEmbedding]
+                            properties:
+                              name: { type: string }
+                              likelyEmbedding: { type: boolean }
   /admin/ai-gateway/test:
     post:
       operationId: post_admin_ai_gateway_test

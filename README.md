@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Mantine-9-339AF0?style=flat-square&logo=mantine&logoColor=white" alt="Mantine 9" />
   <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" />
   <img src="https://img.shields.io/badge/MCP-JSON--RPC%202.0-8A2BE2?style=flat-square" alt="MCP" />
-  <img src="https://img.shields.io/badge/Release-v0.16.0-success?style=flat-square" alt="v0.16.0" />
+  <img src="https://img.shields.io/badge/Release-v0.17.0-success?style=flat-square" alt="v0.17.0" />
 </p>
 
 <h3>정리는 나중에. 생각부터 붙인다.</h3>
@@ -25,14 +25,14 @@
 
 ---
 
-## v0.16.0 — 지난밤 요약
+## v0.17.0 — 좋은 임베딩까지 한 번의 클릭
 
-- **아침 브리핑**: 읽지 않은 Dream, 검토 대기 추천 연결, 정리 안 한 생각, 겹쳐 보이는 생각을 한 카드에.
-- **없는 것은 세지 않습니다**: 모순 탐지는 만들지 않았으므로 항목도 없습니다. 세지 않은 항목 옆의 `0`은 "없다"로 읽히기 때문입니다.
-- **확인 못 한 것은 말합니다**: 빈 목록은 백엔드에 따라 뜻이 다릅니다. `skipped`가 어느 쪽인지 알려 줍니다.
-- **중복 탐지**: umm에서 유일하게 **절대 코사인**을 쓰는 판정이고, 그 예외는 측정으로 정당화했습니다.
+- **자동으로 찾기**: 관리자 화면에서 알려진 주소의 임베딩 게이트웨이와 모델 목록을 찾아 채워 줍니다. 모델 이름을 몰라도 됩니다.
+- **사이드카가 스스로 모델을 받습니다**: `docker compose --profile embeddings up -d` 한 명령. healthcheck도 서버 응답이 아니라 **모델 존재**를 확인합니다.
+- **조사 주소는 바이너리에 고정**: 요청에서 받지 않습니다. 받는다면 이 화면이 서버가 닿는 곳을 조사하는 수단이 됩니다.
+- 실측: `4.2% → 85.4%` (한 명령 + 한 클릭)
 
-이전 릴리스: [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
@@ -138,7 +138,7 @@ docker run -d --name umm --restart unless-stopped \
   -e BOOTSTRAP_ADMIN='admin' \
   -e BOOTSTRAP_ADMIN_PASSWORD='your-strong-password' \
   -e ENCRYPTION_KEY='your-32-char-random-encryption-key' \
-  umm:v0.16.0
+  umm:v0.17.0
 ```
 
 - 접속 주소: `http://localhost:8080` (초기 관리자 계정: `admin`)

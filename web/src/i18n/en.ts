@@ -809,4 +809,9 @@ export const en: Dictionary = {
     'Only the duplicate threshold is an absolute cosine rather than a standard deviation. Near-identical text lands at the top of any embedding space and two models agree on where — measured, bge-m3 puts duplicates at 0.943 and above, paraphrase-multilingual at 0.954 and above, while the next class down tops out at 0.681.',
   반론: 'Counterpoint',
   실행: 'Action',
+  '자동으로 찾기': 'Find automatically',
+  '알려진 주소에서 임베딩 게이트웨이를 찾지 못했습니다. 주소를 직접 입력해 주세요.':
+    'No embedding gateway answered at the addresses umm knows about. Enter one manually.',
+  '이름으로 짐작한 임베딩 모델을 먼저 보여 줍니다. 실제로 임베딩하는지는 연결 테스트가 확인합니다.':
+    'Models whose names suggest they embed are shown first. The connection test is what confirms it.',
 };
