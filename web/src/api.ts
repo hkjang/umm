@@ -141,6 +141,15 @@ export interface Cluster {
   basis: 'meaning' | 'proximity';
 }
 
+/** What a merge moved, so a caller can say what happened to the thought. */
+export interface MergeResult {
+  note: ThoughtNote;
+  movedEdges: number;
+  /** Self-links and duplicates the survivor already had. */
+  droppedEdges: number;
+  movedComments: number;
+}
+
 export interface NoteSearchResult {
   id: string;
   spaceId: string;
