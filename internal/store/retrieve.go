@@ -24,6 +24,10 @@ type Retrieved struct {
 	Via string `json:"via"`
 	// Through names the thought it was reached from, when Via is a connection.
 	Through *uuid.UUID `json:"through,omitempty"`
+	// Branch says which line of thinking this thought belongs to, when it belongs
+	// to one. An abandoned line reads exactly like a live one without it, which is
+	// how someone ends up acting on the option they already rejected.
+	Branch *BranchRef `json:"branch,omitempty"`
 }
 
 const (
@@ -120,6 +124,24 @@ func (s *Store) RetrieveForQuestion(ctx context.Context, userID uuid.UUID, quest
 				},
 				Via: ViaConnection, Through: &source,
 			})
+		}
+	}
+
+	// Label every thought with the line it belongs to, once, after both passes.
+	// Doing it here rather than in each query means a thought reached through a
+	// connection cannot arrive unlabelled — the case that would matter most,
+	// since nobody chose to look at it.
+	labelled := make([]uuid.UUID, 0, len(result.Thoughts))
+	for _, thought := range result.Thoughts {
+		labelled = append(labelled, thought.Note.ID)
+	}
+	refs, err := s.branchRefsForNotes(ctx, labelled)
+	if err != nil {
+		return RetrievalResult{}, err
+	}
+	for index := range result.Thoughts {
+		if ref, ok := refs[result.Thoughts[index].Note.ID]; ok {
+			result.Thoughts[index].Branch = &ref
 		}
 	}
 	return result, nil

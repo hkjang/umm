@@ -127,6 +127,12 @@ func (s *Server) router() chi.Router {
 			protected.Delete("/edges/{edgeID}", s.deleteEdge)
 			protected.Post("/edges/{edgeID}/accept", s.acceptSuggestion)
 			protected.Post("/spaces/{spaceID}/links/suggest", s.suggestLinks)
+			protected.Get("/spaces/{spaceID}/branches", s.listBranches)
+			protected.Post("/spaces/{spaceID}/branches", s.createBranch)
+			protected.Post("/branches/{branchID}/resolve", s.resolveBranch)
+			protected.Post("/branches/{branchID}/reopen", s.reopenBranch)
+			protected.Delete("/branches/{branchID}", s.deleteBranch)
+			protected.Put("/notes/{noteID}/branch", s.setNoteBranch)
 			protected.Get("/notifications", s.listNotifications)
 			protected.Post("/notifications/{notificationID}/read", s.readNotification)
 			protected.Group(func(account chi.Router) {
