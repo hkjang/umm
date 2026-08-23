@@ -25,13 +25,14 @@
 
 ---
 
-## v0.31.1 — 사람이 지나는 길을 테스트가 지나갑니다
+## v0.31.2 — 안내서가 제품을 따라잡았습니다
 
-- **v0.30.1에서 깨져 있던 그 상태에서 시작합니다**: 빈 공간, 생각 하나, 관련 칩 없음. 메뉴 → 갈래 만들기 → 접어 두기 → 결정 기록에서 이유 확인까지.
-- **이유 없이는 버튼이 눌리지 않는지**도 확인합니다: 스키마와 API에서 막았지만 화면이 그 선을 지키는지는 본 적이 없었습니다.
-- **기능이 닿을 수 있는지를 말해 주는 것은 브라우저뿐입니다**: 세 릴리스 동안 API는 정확히 답했고 기능은 닿을 수 없었습니다.
+- **열여섯 번 릴리스하는 동안 안내서 네 권에는 한 줄도 없었습니다**: 갈래·결정 기록·조력자·렌즈 전부 0회 언급.
+- **릴리스 노트는 무엇이 바뀌었는지, 안내서는 무엇을 쓸 수 있는지 말합니다**: 새로 들어온 사람이 읽는 건 뒤쪽입니다.
+- **관리자 가이드에 유사도 기준 10개를 표로**: 기본값을 코드와 하나씩 대조했고, `duplicate_similarity`만 절대값인 이유를 적었습니다.
+- **PDF 6종 재생성**: 마크다운만 고치고 두면 두 문서가 갈라집니다.
 
-이전 릴리스: [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
