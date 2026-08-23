@@ -17,6 +17,15 @@ import (
 // three Dream tables — and anything not moved deliberately disappears when the
 // losing note does. Each one is handled explicitly below rather than left to a
 // cascade, and the result says what moved.
+//
+// Branch membership is deliberately not one of them. The surviving thought keeps
+// whichever line it was already in, and does not inherit the other's. Merging
+// says the caller chose which thought stands; moving a line onto it would file
+// their surviving thought under a decision they did not make here — and if the
+// line was one that was set aside, that decision reads as "this was rejected".
+// Inventing that is worse than losing it, and the one place where the pairing
+// matters most is already handled: the morning review refuses to offer a
+// one-click merge when exactly one side sits in a line that was decided against.
 
 // MergeResult reports what the merge did, so a caller can tell someone what
 // happened to their thought rather than just that it worked.

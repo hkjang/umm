@@ -134,9 +134,10 @@ func toolDefinitions() []map[string]any {
 		{"name": "get_related_notes", "title": "Discover related thoughts", "description": "Find related notes using the offline similarity embedding.", "inputSchema": schema(map[string]any{"note_id": str("Source note UUID")}, "note_id")},
 		{"name": "list_clusters", "title": "List thought clusters", "description": "Discover coherent groups of notes in a space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
 		{"name": "list_dreams", "title": "List Dream notes", "description": "List the user's recent Dream notes.", "inputSchema": schema(map[string]any{})},
-		{"name": "list_notes", "title": "List thoughts", "description": "List notes and connections in one space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
+		{"name": "list_lines", "title": "List lines of thinking", "description": "List the lines of thinking in a space: what each was called, whether it is still open, was taken or was set aside, and the reason recorded when it was resolved. Marked by a person, never inferred — umm does not decide a line was abandoned because nothing was added to it, so an empty result means nothing is marked, not that no decisions were made.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
+		{"name": "list_notes", "title": "List thoughts", "description": "List notes and connections in one space. note_lines maps a note to the line of thinking it belongs to; a note whose line is 'abandoned' was considered and set aside, with the reason recorded, and must not be treated as current.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
 		{"name": "list_spaces", "title": "List spaces", "description": "List spaces available to this user.", "inputSchema": schema(map[string]any{})},
-		{"name": "search_notes", "title": "Search thoughts", "description": "Search notes in one space.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "query": str("Search text")}, "space_id", "query")},
+		{"name": "search_notes", "title": "Search thoughts", "description": "Search notes in one space. note_lines maps a note to the line of thinking it belongs to; a note whose line is 'abandoned' was considered and set aside, with the reason recorded, and must not be treated as current.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "query": str("Search text")}, "space_id", "query")},
 	}
 }
 func str(description string) map[string]any {
@@ -189,7 +190,45 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 		if err != nil {
 			return nil, err
 		}
-		return success(map[string]any{"notes": notes, "edges": edges})
+		// A thought in a line that was decided against reads exactly like a
+		// current one without this, and an agent acting on it would be acting on
+		// the option its owner already rejected. The web and the built-in
+		// assistant were taught to say so in v0.24-v0.27; an agent reading over
+		// MCP is the same reader coming through a different door.
+		lines, err := h.Store.ListBranches(ctx, p.User.ID, sid)
+		if err != nil {
+			return nil, err
+		}
+		assignments, err := h.Store.BranchAssignments(ctx, p.User.ID, sid)
+		if err != nil {
+			return nil, err
+		}
+		byID := make(map[uuid.UUID]store.Branch, len(lines))
+		for _, line := range lines {
+			byID[line.ID] = line
+		}
+		noteLines := map[string]any{}
+		for noteID, branchID := range assignments {
+			if line, ok := byID[branchID]; ok {
+				noteLines[noteID.String()] = map[string]any{
+					"name": line.Name, "status": line.Status, "resolution": line.Resolution,
+				}
+			}
+		}
+		return success(map[string]any{"notes": notes, "edges": edges, "note_lines": noteLines})
+	case "list_lines":
+		if err := require("notes:read"); err != nil {
+			return nil, err
+		}
+		sid, err := spaceID()
+		if err != nil {
+			return nil, errors.New("valid space_id required")
+		}
+		lines, err := h.Store.ListBranches(ctx, p.User.ID, sid)
+		if err != nil {
+			return nil, err
+		}
+		return success(map[string]any{"lines": lines})
 	case "get_related_notes":
 		if err := require("notes:read"); err != nil {
 			return nil, err
