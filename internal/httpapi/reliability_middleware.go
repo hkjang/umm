@@ -85,7 +85,16 @@ func idempotencyRequestIdentity(r *http.Request, body []byte) string {
 // token in the body, so these endpoints are the only ones where a secret appears
 // at all. Excluding them costs nothing: they are single small objects.
 func (s *Server) compressResponses(next http.Handler) http.Handler {
-	compressor := middleware.Compress(5, "application/json", "text/markdown", "text/html", "text/css", "application/javascript", "image/svg+xml")
+	// Named by what Go's mime table actually returns, not by what the type is
+	// "supposed" to be: a .js file is served as text/javascript, and listing only
+	// application/javascript left the 435 kB bundle uncompressed while the
+	// stylesheet beside it shrank. The list is checked against a real response
+	// rather than assumed.
+	compressor := middleware.Compress(5,
+		"application/json", "application/javascript", "application/manifest+json",
+		"text/javascript", "text/html", "text/css", "text/markdown", "text/plain",
+		"image/svg+xml",
+	)
 	compressed := compressor(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if sensitiveCredentialPathPattern.MatchString(r.URL.EscapedPath()) {

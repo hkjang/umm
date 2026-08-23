@@ -31,6 +31,36 @@ func TestLargeJSONResponsesAreCompressed(t *testing.T) {
 	}
 }
 
+// The bundle is served as text/javascript, not application/javascript.
+//
+// Listing only the latter left the 435 kB script uncompressed while the
+// stylesheet next to it shrank — the kind of gap that looks fine in the code and
+// only shows up in a response. Each type here is one the running server actually
+// returns.
+func TestTheContentTypesTheServerActuallyReturnsAreCompressed(t *testing.T) {
+	server := &Server{}
+	payload := strings.Repeat("export const thought = '생각';\n", 3000)
+	for _, contentType := range []string{
+		"text/javascript; charset=utf-8",
+		"text/css; charset=utf-8",
+		"application/json; charset=utf-8",
+		"text/html; charset=utf-8",
+		"image/svg+xml",
+	} {
+		handler := server.compressResponses(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", contentType)
+			_, _ = w.Write([]byte(payload))
+		}))
+		request := httptest.NewRequest(http.MethodGet, "/assets/index-abc123.js", nil)
+		request.Header.Set("Accept-Encoding", "gzip")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if got := response.Header().Get("Content-Encoding"); got != "gzip" {
+			t.Errorf("%s was not compressed (encoding=%q, %d bytes)", contentType, got, response.Body.Len())
+		}
+	}
+}
+
 // A client that does not ask for compression must still get a readable answer.
 func TestClientsThatDoNotAskAreNotCompressed(t *testing.T) {
 	server := &Server{}
