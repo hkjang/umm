@@ -713,9 +713,14 @@ func (s *Store) CreateNote(ctx context.Context, userID uuid.UUID, n Note) (Note,
 	if n.Color == "" {
 		n.Color = "yellow"
 	}
-	if n.Kind == "" {
-		n.Kind = "thought"
+	// A kind outside the vocabulary is rejected rather than rewritten: filing a
+	// thought as something the person did not say it was would hide the mistake
+	// from whoever sent it.
+	kind, err := ParseKind(n.Kind)
+	if err != nil {
+		return Note{}, err
 	}
+	n.Kind = string(kind)
 	if n.Source == "" {
 		n.Source = "user"
 	}
@@ -755,6 +760,13 @@ func (s *Store) UpdateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcl
 }
 
 func (s *Store) updateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcluded *bool, eventType string) (Note, error) {
+	// Validating only on create would leave the update path as a way around the
+	// check, which is how an unvalidated field survives being fixed.
+	kind, err := ParseKind(n.Kind)
+	if err != nil {
+		return Note{}, err
+	}
+	n.Kind = string(kind)
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return Note{}, err

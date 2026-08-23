@@ -1,6 +1,14 @@
 import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ActionIcon, Menu, Tooltip } from '@mantine/core';
-import { IconBrain, IconDots, IconHistory, IconMessageCircle, IconPalette, IconTrash } from '@tabler/icons-react';
+import {
+  IconBrain,
+  IconDots,
+  IconHelp,
+  IconHistory,
+  IconMessageCircle,
+  IconPalette,
+  IconTrash,
+} from '@tabler/icons-react';
 import { Handle, NodeResizer, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { ThoughtNote } from '../api';
 import { useTranslation } from '../i18n';
@@ -140,6 +148,16 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
                 </Menu.Sub.Dropdown>
               </Menu.Sub>
             )}
+            {/* Marking, not inferring. umm never decides a note is a question —
+                a sentence ending in a question mark often is not one, and a real
+                question is often written without one. */}
+            <Menu.Item
+              color={note.kind === 'question' ? 'blue' : undefined}
+              leftSection={<IconHelp size={15} />}
+              onClick={() => data.onPatch(note.id, { kind: note.kind === 'question' ? 'thought' : 'question' })}
+            >
+              {t(note.kind === 'question' ? '질문 표시 해제' : '질문으로 표시')}
+            </Menu.Item>
             {note.source !== 'dream' && (
               <Menu.Item
                 color={note.aiExcluded ? 'grape' : undefined}

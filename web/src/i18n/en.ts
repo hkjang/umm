@@ -824,4 +824,9 @@ export const en: Dictionary = {
     'The earlier thought survives; connections and comments come with it. To choose the wording yourself, open the thought and edit it.',
   '기록해 둔 상충': 'Recorded disagreements',
   '서로 안 맞는다고 표시해 둔 것': 'Marked as disagreeing',
+  '답을 못 찾은 질문': 'Questions without answers',
+  '질문으로 표시해 둔 것': 'Marked as questions',
+  '관련 생각 {count}개': '{count} related thoughts',
+  '질문으로 표시': 'Mark as a question',
+  '질문 표시 해제': 'Unmark as a question',
 };

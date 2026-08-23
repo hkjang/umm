@@ -91,6 +91,7 @@ func (s *Server) router() chi.Router {
 			protected.Get("/today", s.todayReview)
 			protected.Get("/morning-brief", s.morningBrief)
 			protected.Get("/contradictions", s.contradictions)
+			protected.Get("/open-questions", s.openQuestions)
 			protected.Get("/onboarding", s.onboardingProgress)
 			protected.Post("/onboarding/complete", s.completeOnboarding)
 			protected.Get("/search", s.searchNotes)

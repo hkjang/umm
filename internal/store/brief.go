@@ -64,6 +64,10 @@ type MorningBrief struct {
 	// nothing at all when the list is empty, because a zero here would read as
 	// "this workspace has none" when it means "nobody has marked any".
 	Contradictions []Contradiction `json:"contradictions"`
+	// Questions marked open with nothing recorded as answering them. Like
+	// contradictions, both halves are marked rather than inferred, so an empty
+	// list means nothing is marked open — not that everything is answered.
+	Questions []OpenQuestion `json:"questions"`
 	// Skipped says what umm did not examine, so an empty list above is not read
 	// as an all-clear.
 	Skipped []BriefSkip `json:"skipped"`
@@ -79,7 +83,7 @@ const maxDuplicatePairs = 10
 // MorningBrief gathers everything waiting since the given time.
 func (s *Store) MorningBrief(ctx context.Context, userID uuid.UUID, since time.Time) (MorningBrief, error) {
 	brief := MorningBrief{Since: since, Dreams: []BriefGroup{}, Duplicates: []DuplicatePair{},
-		Contradictions: []Contradiction{}, Skipped: []BriefSkip{}}
+		Contradictions: []Contradiction{}, Questions: []OpenQuestion{}, Skipped: []BriefSkip{}}
 
 	rows, err := s.Pool.Query(ctx, `
 		SELECT dream_type, count(*)
@@ -128,6 +132,15 @@ func (s *Store) MorningBrief(ctx context.Context, userID uuid.UUID, since time.T
 	}
 	brief.Contradictions = recorded
 
+	questions, err := s.OpenQuestions(ctx, userID, nil)
+	if err != nil {
+		return MorningBrief{}, err
+	}
+	if len(questions) > maxDuplicatePairs {
+		questions = questions[:maxDuplicatePairs]
+	}
+	brief.Questions = questions
+
 	duplicates, skip, err := s.duplicateThoughts(ctx, userID)
 	if err != nil {
 		return MorningBrief{}, err
@@ -138,7 +151,8 @@ func (s *Store) MorningBrief(ctx context.Context, userID uuid.UUID, since time.T
 	}
 
 	brief.Quiet = len(brief.Dreams) == 0 && brief.Suggestions == 0 && brief.Unfiled == 0 &&
-		len(brief.Duplicates) == 0 && len(brief.Contradictions) == 0 && len(brief.Skipped) == 0
+		len(brief.Duplicates) == 0 && len(brief.Contradictions) == 0 &&
+		len(brief.Questions) == 0 && len(brief.Skipped) == 0
 	return brief, nil
 }
 

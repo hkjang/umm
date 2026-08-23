@@ -402,3 +402,31 @@ func (s *Server) contradictions(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"contradictions": items})
 }
+
+// openQuestions lists questions nobody has answered.
+//
+// Open means nobody has drawn an answer, not that umm looked for one. An empty
+// result is not "everything is answered", and the interface shows nothing rather
+// than a zero for the same reason contradictions do.
+func (s *Server) openQuestions(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	var spaceID *uuid.UUID
+	if raw := r.URL.Query().Get("spaceId"); raw != "" {
+		parsed, err := uuid.Parse(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "공간 ID가 올바르지 않습니다.")
+			return
+		}
+		spaceID = &parsed
+	}
+	p := principal(r)
+	items, err := s.Store.OpenQuestions(r.Context(), p.User.ID, spaceID)
+	if err != nil {
+		slog.Warn("open questions failed", "user_id", p.User.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "열린 질문을 불러오지 못했습니다.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"questions": items})
+}

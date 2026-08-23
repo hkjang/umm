@@ -51,8 +51,15 @@ run_sql postgres -c "CREATE DATABASE ${SCRATCH}" >/dev/null
 
 # Everything up to but not including 010, so the seed below is written against
 # the old schema exactly as a real deployment would hold it.
-for file in "$root"/migrations/0*.sql; do
-  [[ "$(basename "$file")" == 010_* ]] && continue
+#
+# This stops at 010 rather than skipping it. Skipping was the same thing only
+# while 010 was the last migration: once a later one narrowed the same relation
+# vocabulary, applying it while 010 was absent made the pre-010 seed below
+# impossible to insert.
+for file in "$root"/migrations/[0-9]*.sql; do
+  number="$(basename "$file")"
+  number="${number%%_*}"
+  (( 10#$number >= 10 )) && break
   run_file "$SCRATCH" "$file"
 done
 
