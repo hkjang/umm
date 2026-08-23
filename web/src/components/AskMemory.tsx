@@ -1,5 +1,16 @@
 import { useState } from 'react';
-import { Alert, Button, Card, Group, Stack, Text, TextInput, Title, UnstyledButton } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Card,
+  Group,
+  SegmentedControl,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+  UnstyledButton,
+} from '@mantine/core';
 import { IconSearch, IconSparkles } from '@tabler/icons-react';
 import { api, json } from '../api';
 import { useTranslation } from '../i18n';
@@ -20,6 +31,33 @@ interface AskAnswer {
   grounded: boolean;
 }
 
+interface AgentStep {
+  tool: string;
+  input: string;
+  summary: string;
+}
+
+interface AgentAnswer {
+  answer: string;
+  steps: AgentStep[];
+  excluded: number;
+  truncated: boolean;
+}
+
+/**
+ * The assistant reads and never writes, so what it did can be listed plainly.
+ * Showing the trail is the point: an answer arrived at by looking is only worth
+ * more than a guess if you can see where it looked.
+ */
+function toolLabel(tool: string, t: (key: string) => string): string {
+  // Written out rather than looked up in a map, because a dynamic key never
+  // reaches the translation extractor and would ship untranslated.
+  if (tool === 'search_thoughts') return t('생각을 검색함');
+  if (tool === 'find_open_questions') return t('열린 질문을 확인함');
+  if (tool === 'find_contradictions') return t('상충 표시를 확인함');
+  return tool;
+}
+
 /**
  * Asking your own memory.
  *
@@ -32,17 +70,24 @@ interface AskAnswer {
 export default function AskMemory({ onOpen }: { onOpen: (spaceId?: string, noteId?: string) => void }) {
   const { t } = useTranslation();
   const [question, setQuestion] = useState('');
+  const [mode, setMode] = useState<'ask' | 'agent'>('ask');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<AskAnswer>();
+  const [agentResult, setAgentResult] = useState<AgentAnswer>();
 
   const ask = async () => {
     const text = question.trim();
     if (!text || busy) return;
     setBusy(true);
+    setResult(undefined);
+    setAgentResult(undefined);
     try {
-      setResult(await api<AskAnswer>('/ai/ask', json('POST', { question: text })));
+      if (mode === 'agent') {
+        setAgentResult(await api<AgentAnswer>('/ai/agent', json('POST', { task: text })));
+      } else {
+        setResult(await api<AskAnswer>('/ai/ask', json('POST', { question: text })));
+      }
     } catch (reason) {
-      setResult(undefined);
       showError(reason instanceof Error ? reason.message : t('기억에서 답을 찾지 못했습니다.'));
     } finally {
       setBusy(false);
@@ -57,10 +102,29 @@ export default function AskMemory({ onOpen }: { onOpen: (spaceId?: string, noteI
           {t('내 기억에 물어보기')}
         </Title>
       </Group>
+      <SegmentedControl
+        fullWidth
+        size="xs"
+        mb="xs"
+        value={mode}
+        onChange={(next) => {
+          setMode(next as 'ask' | 'agent');
+          setResult(undefined);
+          setAgentResult(undefined);
+        }}
+        data={[
+          { value: 'ask', label: t('한 번에 답하기') },
+          { value: 'agent', label: t('살펴보고 답하기') },
+        ]}
+      />
       <Group gap="xs" wrap="nowrap">
         <TextInput
           style={{ flex: 1 }}
-          placeholder={t('예: 인증 토큰 만료를 얼마로 정했더라')}
+          placeholder={
+            mode === 'agent'
+              ? t('예: 최근에 미뤄 둔 결정이 뭐가 있는지 살펴봐 줘')
+              : t('예: 인증 토큰 만료를 얼마로 정했더라')
+          }
           aria-label={t('내 기억에 물어보기')}
           leftSection={<IconSearch size={16} />}
           value={question}
@@ -70,9 +134,39 @@ export default function AskMemory({ onOpen }: { onOpen: (spaceId?: string, noteI
           }}
         />
         <Button loading={busy} disabled={!question.trim()} onClick={() => void ask()}>
-          {t('묻기')}
+          {mode === 'agent' ? t('살펴보기') : t('묻기')}
         </Button>
       </Group>
+
+      {mode === 'agent' && !agentResult && !busy && (
+        <Text size="xs" c="dimmed" mt="xs">
+          {t('여러 번 찾아본 뒤 답합니다. 읽기만 하며, 아무것도 만들거나 고치지 않습니다.')}
+        </Text>
+      )}
+
+      {agentResult && (
+        <Stack gap="xs" mt="md">
+          <Text style={{ whiteSpace: 'pre-wrap' }}>{agentResult.answer}</Text>
+          {agentResult.truncated && (
+            <Alert color="yellow" variant="light">
+              {t('살펴볼 수 있는 횟수를 다 써서 도중에 멈췄습니다. 결론이 아니라 지금까지 확인한 범위입니다.')}
+            </Alert>
+          )}
+          <Text size="xs" fw={700} c="dimmed" mt={4}>
+            {t('살펴본 과정')}
+          </Text>
+          {agentResult.steps.map((step, index) => (
+            <Text key={index} size="xs" c="dimmed">
+              {index + 1}. {toolLabel(step.tool, t)} — {step.summary}
+            </Text>
+          ))}
+          {agentResult.excluded > 0 && (
+            <Text size="xs" c="dimmed">
+              {t('AI 제외로 표시된 생각 {count}개는 답에 쓰이지 않았습니다.', { count: agentResult.excluded })}
+            </Text>
+          )}
+        </Stack>
+      )}
 
       {result && !result.grounded && (
         <Alert color="gray" variant="light" mt="md">

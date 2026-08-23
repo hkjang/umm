@@ -483,3 +483,50 @@ func (s *Server) askMemory(w http.ResponseWriter, r *http.Request) {
 		"grounded": true,
 	})
 }
+
+// runThoughtAgent lets an assistant look around someone's memory before
+// answering, instead of answering from a single retrieval.
+//
+// It reads and never writes: the tools it can call are all lookups, so a
+// proposal comes back as text for the person to act on. The steps come back
+// with the answer for the same reason the sources do on /ai/ask — an answer
+// whose path you cannot see is one you have to take on faith.
+func (s *Server) runThoughtAgent(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "ai:assist") {
+		return
+	}
+	var body struct {
+		Task string `json:"task"`
+	}
+	if decodeJSON(w, r, &body) != nil || strings.TrimSpace(body.Task) == "" {
+		writeError(w, http.StatusBadRequest, "무엇을 살펴볼지 입력해 주세요.")
+		return
+	}
+	p := principal(r)
+	result, err := s.Dreams.RunAgent(r.Context(), p.User.ID, body.Task)
+	if err != nil {
+		if errors.Is(err, dream.ErrAgentTaskInvalid) {
+			writeError(w, http.StatusBadRequest, "요청이 비어 있거나 너무 깁니다. 500자 이내로 적어 주세요.")
+			return
+		}
+		if errors.Is(err, dream.ErrChatModelNotConfigured) {
+			writeProblem(w, r, http.StatusPreconditionFailed, "chat-model-not-configured",
+				"채팅 모델이 설정되지 않았습니다",
+				"관리자 → AI Gateway에서 모델을 설정하면 조력자를 쓸 수 있습니다. 임베딩 모델과는 별개입니다.", nil)
+			return
+		}
+		if writeAIQuotaProblem(w, r, err) {
+			return
+		}
+		slog.Warn("thought agent failed", "user_id", p.User.ID, "error", err)
+		writeError(w, http.StatusBadGateway, "조력자가 답하지 못했습니다.")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"answer":    result.Answer,
+		"steps":     result.Steps,
+		"excluded":  result.Excluded,
+		"model":     result.Model,
+		"truncated": result.Truncated,
+	})
+}

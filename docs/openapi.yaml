@@ -826,6 +826,64 @@ paths:
         '412': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
+  /ai/agent:
+    post:
+      operationId: post_ai_agent
+      tags: [AI, Notes]
+      summary: Let an assistant look around before answering
+      description: |
+        Answers a question the way a person would: it looks, reads what it found,
+        and looks again if it needs to, instead of answering from one retrieval.
+
+        It reads and never writes. The tools bound to the model are all lookups
+        (search, questions marked open, contradictions marked by hand) — nothing
+        that creates, links, merges or deletes is offered at all, so a proposal
+        comes back as text for the person to act on. That boundary is the tool
+        list itself, not a permission flag.
+
+        steps records every lookup it made, so an answer can be checked rather
+        than taken on faith. Nothing marked as excluded from AI is reachable
+        through any tool, and excluded counts what was held back across all of
+        them.
+
+        Each turn is one model call charged to the person's daily quota, and a
+        run is capped at 6 lookups. When the cap is reached the assistant is
+        asked once more without tools so what it learned is not lost, and
+        truncated is true — the answer was cut short, not concluded. Requires a
+        configured chat model.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [task], properties: { task: { type: string, maxLength: 500 } } }
+      responses:
+        '200':
+          description: The answer and every lookup behind it
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [answer, steps, excluded, truncated]
+                properties:
+                  answer: { type: string }
+                  truncated: { type: boolean, description: True when the step cap was reached before the assistant finished }
+                  excluded: { type: integer, minimum: 0, description: Thoughts left out because they are excluded from AI, summed over every lookup }
+                  model: { type: string }
+                  steps:
+                    type: array
+                    description: What the assistant looked at, in order
+                    items:
+                      type: object
+                      required: [tool, input, summary]
+                      properties:
+                        tool: { type: string, enum: [search_thoughts, find_open_questions, find_contradictions] }
+                        input: { type: string, description: The arguments the model chose, as JSON }
+                        summary: { type: string, description: What that lookup returned, in one line }
+        '400': { $ref: '#/components/responses/Error' }
+        # 412 means no chat model is configured, same as /ai/ask.
+        '412': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '502': { $ref: '#/components/responses/Error' }
   /open-questions:
     get:
       operationId: get_open_questions
