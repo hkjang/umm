@@ -21,6 +21,7 @@ import {
   IconLayoutDashboard,
   IconLogout,
   IconMoonStars,
+  IconRoute,
   IconSettings,
   IconSparkles,
   IconUser,
@@ -38,6 +39,7 @@ const links = [
   { to: '/today', label: msg('오늘의 리뷰'), icon: IconCalendarCheck },
   { to: '/canvas', label: 'My Space', icon: IconSparkles },
   { to: '/dreams', label: 'Dreams', icon: IconMoonStars },
+  { to: '/decisions', label: msg('결정 기록'), icon: IconRoute },
   { to: '/approvals', label: msg('검토 · 승인'), icon: IconCheckupList },
   { to: '/settings', label: msg('개인 설정'), icon: IconAdjustments },
 ];

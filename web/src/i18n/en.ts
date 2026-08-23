@@ -880,4 +880,15 @@ export const en: Dictionary = {
   '한 갈래만 보기': 'Show one line only',
   '선택한 생각에서': 'From the selected thought',
   '생각을 하나 고르면 연결로도 좁힐 수 있습니다': 'Select one thought to narrow by connections too',
+  '결정 기록': 'Decisions',
+  '직접 표시한 것만 남습니다. 활동이 많았다는 이유로 전환점을 지어내지 않습니다.':
+    'Only what you marked yourself. A busy week is not invented into a turning point.',
+  '아직 표시한 결정이 없습니다. 표시된 것이 없다는 뜻이지, 아무 일도 없었다는 뜻은 아닙니다.':
+    'Nothing marked as decided yet. That means nothing is marked, not that nothing happened.',
+  '기록을 불러오지 못했습니다.': 'Could not load the record.',
+  '답을 찾음': 'Answered',
+  '상충을 표시함': 'Marked as in tension',
+  이유: 'Reason',
+  답: 'Answer',
+  반대편: 'The other side',
 };

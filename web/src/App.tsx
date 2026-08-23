@@ -11,6 +11,7 @@ const CanvasPage = lazy(() => import('./pages/CanvasPage'));
 const PersonalSettingsPage = lazy(() => import('./pages/PersonalSettingsPage'));
 const DreamsPage = lazy(() => import('./pages/DreamsPage'));
 const ApprovalsPage = lazy(() => import('./pages/ApprovalsPage'));
+const DecisionsPage = lazy(() => import('./pages/DecisionsPage'));
 const AdminPage = lazy(() => import('./pages/AdminPage'));
 
 const PageLoader = () => {
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/canvas" element={<CanvasPage />} />
           <Route path="/space/:spaceId" element={<CanvasPage />} />
           <Route path="/dreams" element={<DreamsPage />} />
+          <Route path="/decisions" element={<DecisionsPage />} />
           <Route path="/settings" element={<PersonalSettingsPage />} />
           <Route path="/approvals" element={<ApprovalsPage />} />
           <Route path="/admin/*" element={user.role === 'admin' ? <AdminPage /> : <Navigate to="/today" replace />} />

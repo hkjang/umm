@@ -133,6 +133,7 @@ func (s *Server) router() chi.Router {
 			protected.Post("/branches/{branchID}/reopen", s.reopenBranch)
 			protected.Delete("/branches/{branchID}", s.deleteBranch)
 			protected.Put("/notes/{noteID}/branch", s.setNoteBranch)
+			protected.Get("/turning-points", s.turningPoints)
 			protected.Get("/notifications", s.listNotifications)
 			protected.Post("/notifications/{notificationID}/read", s.readNotification)
 			protected.Group(func(account chi.Router) {
