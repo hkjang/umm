@@ -107,20 +107,67 @@ type MorningBrief struct {
 // of health it did not earn.
 const maxDuplicateScanNotes = 1000
 
-// recentForDuplicateScan trims a space to the newest thoughts the brief will
-// compare, and says whether it had to.
+// recentNotesForDuplicateScan reads the newest thoughts in a space, and says
+// whether there were more.
 //
-// Separate from the loop so the part that can be wrong is testable on its own.
-// ListNotes orders by created_at ascending, so the newest are at the end and the
-// tail is what to keep; taking the head would have kept the oldest thousand and
-// quietly examined the least likely part of the space. That was the first
-// version of this, and nothing about the result would have looked wrong.
-func recentForDuplicateScan(notes []Note) ([]Note, bool) {
-	if len(notes) <= maxDuplicateScanNotes {
-		return notes, false
+// A dedicated read rather than ListNotes-then-trim. ListNotes returns every
+// thought and every connection in the space, so trimming afterwards meant
+// loading two thousand notes and their edges to compare one thousand and throw
+// the rest away — the cap saved the comparison and not the reading.
+func (s *Store) recentNotesForDuplicateScan(ctx context.Context, userID, spaceID uuid.UUID) ([]Note, bool, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
+		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at
+		FROM notes n
+		JOIN spaces sp ON sp.id=n.space_id
+		LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$1
+		WHERE n.space_id=$2 AND n.deleted_at IS NULL AND (sp.owner_id=$1 OR m.user_id=$1)
+		ORDER BY n.created_at DESC
+		-- One past the bound, so "there were more" is answered by the read itself
+		-- rather than by a second count.
+		LIMIT $3`, userID, spaceID, maxDuplicateScanNotes+1)
+	if err != nil {
+		return nil, false, err
 	}
-	return notes[len(notes)-maxDuplicateScanNotes:], true
+	defer rows.Close()
+	notes := []Note{}
+	for rows.Next() {
+		var note Note
+		if err := rows.Scan(&note.ID, &note.SpaceID, &note.AuthorID, &note.Content, &note.Title,
+			&note.Color, &note.Kind, &note.Source, &note.AIExcluded, &note.X, &note.Y,
+			&note.Width, &note.Height, &note.Rotation, &note.Version, &note.CreatedAt, &note.UpdatedAt); err != nil {
+			return nil, false, err
+		}
+		notes = append(notes, note)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	trimmed := len(notes) > maxDuplicateScanNotes
+	if trimmed {
+		notes = notes[:maxDuplicateScanNotes]
+	}
+	return notes, trimmed, nil
 }
+
+// sortDuplicatesForBrief promotes pairs that repeat a decision above ordinary
+// duplicates, leaving the rest in similarity order.
+//
+// Stable on purpose: the label decides who rises, and everything else keeps the
+// order similarity gave it.
+func sortDuplicatesForBrief(pairs []DuplicatePair) {
+	sort.SliceStable(pairs, func(i, j int) bool {
+		return pairs[i].SetAside != nil && pairs[j].SetAside == nil
+	})
+}
+
+// maxDuplicateLabelBand is how many of the highest-scoring pairs are looked up
+// before the list is trimmed to what a brief shows.
+//
+// Wider than what is shown so a pair repeating a decision can rise past ordinary
+// duplicates, and bounded because each label costs a lookup and a workspace full
+// of near-identical thoughts produces thousands of pairs.
+const maxDuplicateLabelBand = 100
 
 // maxDuplicatePairs bounds what one brief will show. A workspace that has been
 // duplicating for months should produce a readable list, not a wall.
@@ -230,12 +277,10 @@ func (s *Store) duplicateThoughts(ctx context.Context, userID uuid.UUID) ([]Dupl
 	pairs := []DuplicatePair{}
 	var skippedLarge bool
 	for _, space := range spaces {
-		notes, _, listErr := s.ListNotes(ctx, userID, space.ID, "")
+		notes, trimmed, listErr := s.recentNotesForDuplicateScan(ctx, userID, space.ID)
 		if listErr != nil || len(notes) < 2 {
 			continue
 		}
-		var trimmed bool
-		notes, trimmed = recentForDuplicateScan(notes)
 		skippedLarge = skippedLarge || trimmed
 		vectors := s.loadEmbeddings(ctx, notes)
 		for i := 0; i < len(notes); i++ {
@@ -249,15 +294,74 @@ func (s *Store) duplicateThoughts(ctx context.Context, userID uuid.UUID) ([]Dupl
 				}
 			}
 		}
+
+		// A repeated decision does not look like an ordinary duplicate. It pairs
+		// something written recently with something rejected long ago, so the old
+		// half sits outside the recency window above and the pair is never formed.
+		// Trimming the space introduced exactly that hole, in the long-lived
+		// workspaces this guard exists for. These thoughts are therefore carried in
+		// and compared against the recent window — a cross-product, not another
+		// full pass, because the question is only ever "is something new a repeat
+		// of something set aside".
+		if !trimmed {
+			continue
+		}
+		setAside, asideErr := s.NotesInSetAsideLines(ctx, userID, space.ID)
+		if asideErr != nil {
+			slog.Warn("could not read set-aside thoughts for the duplicate pass",
+				"space_id", space.ID, "error", asideErr)
+			continue
+		}
+		inWindow := make(map[uuid.UUID]bool, len(notes))
+		for _, note := range notes {
+			inWindow[note.ID] = true
+		}
+		outside := setAside[:0]
+		for _, note := range setAside {
+			if !inWindow[note.ID] {
+				outside = append(outside, note)
+			}
+		}
+		if len(outside) == 0 {
+			continue
+		}
+		asideVectors := s.loadEmbeddings(ctx, outside)
+		for _, old := range outside {
+			for _, recent := range notes {
+				score := float64(intelligence.Cosine(asideVectors[old.ID], vectors[recent.ID]))
+				if score >= settings.DuplicateSimilarity {
+					pairs = append(pairs, DuplicatePair{
+						SpaceID: space.ID, Space: space.Name,
+						First: old, Second: recent, Score: score,
+					})
+				}
+			}
+		}
 	}
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].Score > pairs[j].Score })
-	if len(pairs) > maxDuplicatePairs {
-		pairs = pairs[:maxDuplicatePairs]
+
+	// Label a wider band than will be shown, then let the labels decide who stays.
+	//
+	// Sorting by score alone loses the pair that matters most. A workspace with
+	// many near-identical thoughts fills all ten slots with ordinary duplicates
+	// and drowns out the one where a decision is being repeated — observed on
+	// real data, not imagined. "You wrote this twice" and "you are redoing what
+	// you already rejected" are not the same news, and only the second has a
+	// reason attached that the person needs.
+	//
+	// The band is bounded because labelling costs a lookup per pair and a
+	// workspace can produce thousands.
+	if len(pairs) > maxDuplicateLabelBand {
+		pairs = pairs[:maxDuplicateLabelBand]
 	}
 	if err := s.markSetAsideDuplicates(ctx, pairs); err != nil {
 		// The pairs are still worth showing without the label. Losing the whole
 		// section because one lookup failed would be a worse trade.
 		slog.Warn("could not label duplicate pairs with their line", "error", err)
+	}
+	sortDuplicatesForBrief(pairs)
+	if len(pairs) > maxDuplicatePairs {
+		pairs = pairs[:maxDuplicatePairs]
 	}
 	if skippedLarge {
 		// Labelling still runs above: the pairs that were found are as good as any

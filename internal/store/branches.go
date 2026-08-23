@@ -274,6 +274,48 @@ func (s *Store) DeleteBranch(ctx context.Context, userID, branchID uuid.UUID) er
 	return nil
 }
 
+// maxSetAsideScanNotes bounds how many thoughts from lines that were decided
+// against are carried into the duplicate pass. Each is compared against the
+// recent window, so the cost is this times that — bounded, and far smaller than
+// comparing the whole space with itself.
+const maxSetAsideScanNotes = 500
+
+// NotesInSetAsideLines returns thoughts belonging to lines that were decided
+// against, newest first.
+//
+// The duplicate pass compares the most recent thoughts in a space with each
+// other, which is where a duplicate almost always is. It is not where a repeated
+// decision is: that pairs something written today with something rejected long
+// ago, and the old half falls outside any recency window. Without these the
+// guard quietly stops working in exactly the long-lived workspaces it exists for.
+func (s *Store) NotesInSetAsideLines(ctx context.Context, userID, spaceID uuid.UUID) ([]Note, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
+		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at
+		FROM notes n
+		JOIN branches b ON b.id=n.branch_id AND b.status=$3
+		JOIN spaces sp ON sp.id=n.space_id
+		LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$1
+		WHERE n.space_id=$2 AND n.deleted_at IS NULL AND (sp.owner_id=$1 OR m.user_id=$1)
+		ORDER BY b.resolved_at DESC NULLS LAST, n.created_at DESC
+		LIMIT $4`, userID, spaceID, BranchAbandoned, maxSetAsideScanNotes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Note{}
+	for rows.Next() {
+		var note Note
+		if err := rows.Scan(&note.ID, &note.SpaceID, &note.AuthorID, &note.Content, &note.Title,
+			&note.Color, &note.Kind, &note.Source, &note.AIExcluded, &note.X, &note.Y,
+			&note.Width, &note.Height, &note.Rotation, &note.Version, &note.CreatedAt, &note.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, note)
+	}
+	return out, rows.Err()
+}
+
 // BranchRefsForNotes labels a set of thoughts with the line each belongs to.
 //
 // Exported for the paths outside this package that surface a thought — search is
