@@ -231,6 +231,53 @@ test.describe('canvas', () => {
     await expect(page.getByText(`${marker}-갈래`)).toBeVisible();
   });
 
+  // Resolving a line is where the reason gets recorded, and the decision record
+  // is where it comes back. Checked in a browser because that is the only thing
+  // that can say a feature is reachable — the API answered correctly for three
+  // releases while the interface had no way in.
+  test('records why a line was set aside and shows it in the decision record', async ({ page }) => {
+    const marker = unique('결정');
+    const made = await page.evaluate(async (name) => {
+      const post = async (path: string, body: unknown) =>
+        (
+          await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          })
+        ).json();
+      const space = await post('/api/v1/spaces', { name: `${name}-공간` });
+      await post(`/api/v1/spaces/${space.id}/notes`, { content: name, x: 0, y: 0 });
+      return { space: space.id };
+    }, marker);
+
+    await page.goto(`/space/${made.space}`);
+    await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+
+    const card = page.getByRole('group', { name: new RegExp(marker) }).first();
+    await card.getByRole('button', { name: '메모 메뉴' }).click();
+    await page.getByRole('menuitem', { name: '연결과 갈래' }).click();
+    await page.getByLabel('새 갈래 이름').fill(`${marker}-갈래`);
+    await page.getByRole('button', { name: '만들기' }).click();
+    await expect(page.getByText(`${marker}-갈래`)).toBeVisible();
+
+    await page.getByRole('button', { name: '갈래 메뉴' }).first().click();
+    await page.getByRole('menuitem', { name: '접어 두기' }).click();
+
+    // The reason is required, and the interface has to hold that line too: with
+    // the field empty there is nothing to press.
+    await expect(page.getByRole('button', { name: '남기기' })).toBeDisabled();
+    const reason = `${marker}-비용이 더 컸습니다`;
+    await page.getByLabel('갈래를 정리하는 이유').fill(reason);
+    await page.getByRole('button', { name: '남기기' }).click();
+    await expect(page.getByText('접어 둠').first()).toBeVisible();
+
+    // And it comes back where someone would look for it months later.
+    await page.goto('/decisions');
+    await expect(page.getByText(`${marker}-갈래`)).toBeVisible();
+    await expect(page.getByText(reason)).toBeVisible();
+  });
+
   // A line of thinking that was set aside has to look different from a current
   // one on the canvas, and looking at one line must fade the rest rather than
   // hide it — a thought that disappears reads as a thought that was deleted.
