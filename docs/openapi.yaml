@@ -826,6 +826,141 @@ paths:
         '412': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
         '502': { $ref: '#/components/responses/Error' }
+  /spaces/{spaceId}/branches:
+    get:
+      operationId: get_space_branches
+      tags: [Notes]
+      summary: List the lines of thinking in a space
+      description: |
+        A branch is a line of thinking that was explored: named by a person, and
+        resolved by a person as adopted or abandoned.
+
+        umm never decides a line was abandoned on its own. A month of silence is
+        not a decision, and treating it as one would quietly bury work that was
+        merely paused.
+
+        assignments maps each thought to the branch it belongs to, so a caller can
+        label a note without walking every branch.
+      parameters:
+        - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The lines and which thoughts are filed under each
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [branches, assignments]
+                properties:
+                  branches: { type: array, items: { $ref: '#/components/schemas/Branch' } }
+                  assignments:
+                    type: object
+                    description: noteId to branchId
+                    additionalProperties: { type: string, format: uuid }
+        '500': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: post_space_branches
+      tags: [Notes]
+      summary: Start a line of thinking
+      description: |
+        The root thought is optional. A line often grows out of something already
+        written, but not always, and requiring one would push people to invent a
+        parent note that says nothing. When given, it must be a thought in the
+        same space.
+      parameters:
+        - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 80 }
+                rootNoteId: { type: string, format: uuid, nullable: true }
+      responses:
+        '201': { description: The line, content: { application/json: { schema: { $ref: '#/components/schemas/Branch' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /branches/{branchId}/resolve:
+    post:
+      operationId: post_branch_resolve
+      tags: [Notes]
+      summary: Record what became of a line, and why
+      description: |
+        The reason is required and the request is refused without one. A branch
+        marked abandoned with no reason is the same forgetting this feature exists
+        to prevent, one step later: you know you rejected it and no longer know
+        what for.
+
+        Once a line is abandoned, every thought in it is labelled as such wherever
+        it surfaces — search, /ai/ask sources, and the assistant's lookups. That
+        labelling is the point: a rejected option that reads as current is how
+        someone acts on it twice.
+      parameters:
+        - { name: branchId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, resolution]
+              properties:
+                status: { type: string, enum: [adopted, abandoned] }
+                resolution: { type: string, minLength: 1, maxLength: 1000 }
+      responses:
+        '200': { description: The resolved line, content: { application/json: { schema: { $ref: '#/components/schemas/Branch' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /branches/{branchId}/reopen:
+    post:
+      operationId: post_branch_reopen
+      tags: [Notes]
+      summary: Put a resolved line back in play
+      description: |
+        Separate from resolving because it is a different thing to say. The reason
+        is cleared, since it described a decision that no longer stands and would
+        read as current if it stayed.
+      parameters:
+        - { name: branchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The reopened line, content: { application/json: { schema: { $ref: '#/components/schemas/Branch' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /branches/{branchId}:
+    delete:
+      operationId: delete_branch
+      tags: [Notes]
+      summary: Stop tracking a line
+      description: |
+        The thoughts stay. Removing a branch means the line is no longer tracked,
+        not that the thinking never happened.
+      parameters:
+        - { name: branchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Removed, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /notes/{noteId}/branch:
+    put:
+      operationId: put_note_branch
+      tags: [Notes]
+      summary: File a thought under a line, or take it out of one
+      description: |
+        A null branchId clears it. The branch must be in the same space as the
+        thought, otherwise the label would refer to something its readers cannot
+        see.
+      parameters:
+        - { name: noteId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branchId: { type: string, format: uuid, nullable: true }
+      responses:
+        '200': { description: Filed, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean } } } } } }
+        '400': { $ref: '#/components/responses/Error' }
   /ai/agent:
     post:
       operationId: post_ai_agent
@@ -1529,6 +1664,23 @@ components:
             and an allowedRelations list rather than being rewritten, so a
             connection is never recorded that the caller did not describe.
             Provenance is not a request field: see Edge.origin.
+    Branch:
+      type: object
+      required: [id, spaceId, name, status, resolution]
+      properties:
+        id: { type: string, format: uuid }
+        spaceId: { type: string, format: uuid }
+        rootNoteId: { type: string, format: uuid, description: The thought the line grew out of, when there is one }
+        name: { type: string }
+        status:
+          type: string
+          enum: [open, adopted, abandoned]
+          description: |
+            open is the ordinary state. adopted and abandoned are recorded by a
+            person and always carry a reason.
+        resolution: { type: string, description: Why it was adopted or set aside. Empty only while open. }
+        resolvedAt: { type: string, format: date-time }
+        notes: { type: integer, minimum: 0, description: Thoughts currently filed under this line }
     Edge:
       allOf:
         - { $ref: '#/components/schemas/EdgeWrite' }

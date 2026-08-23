@@ -87,6 +87,7 @@ import PostItNode, { type PostItData } from '../components/PostItNode';
 import { useAuth } from '../auth-context';
 import { msg, useTranslation } from '../i18n';
 import ImportThoughtsModal from '../components/ImportThoughtsModal';
+import BranchPanel from '../components/BranchPanel';
 import { readLocalStorage, readSessionStorage, writeLocalStorage, writeSessionStorage } from '../lib/browser-storage';
 import { importLayout, type ImportedThought, type ImportThoughtsResult } from '../lib/markdown-import';
 import { originLabel, relationLabel, relationOptions } from '../lib/edge-vocabulary';
@@ -1810,6 +1811,7 @@ function CanvasInner() {
               </Stack>
             </>
           )}
+          {related && activeSpace && <BranchPanel spaceId={activeSpace} noteId={related.source} />}
           {backlinks.length > 0 && (
             <>
               <Text size="xs" fw={700} c="grape.7" mt="md">
