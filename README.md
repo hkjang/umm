@@ -25,6 +25,14 @@
 
 ---
 
+## v0.40.0 — 에이전트도 생각을 발표로 만들 수 있습니다
+
+MCP 도구 세 개가 늘어, `search_notes → get_connections → preview_presentation → make_presentation` 흐름이 umm 안에서 끝납니다.
+
+- **읽을 수 있다고 만들 수 있는 건 아닙니다**: 보는 것은 `notes:read`, 만드는 것은 `notes:write`. 읽기만 되는 키가 주인의 생각을 다른 서비스로 보내 무언가를 만들 수 있으면 안 됩니다. 실제 MCP로 키 두 개를 만들어 확인했습니다.
+- **이게 요약기가 아니라는 걸 도구 설명이 말합니다**: 에이전트는 설명을 읽고 도구를 고릅니다. 그 문구가 사라지면 테스트가 실패합니다.
+- **지난주 버그를 다시 내지 않았습니다**: MCP 인자도 없는 키가 문자열 `"<nil>"`이 되는 같은 함정이 있습니다.
+
 ## v0.39.0 — 발표 자료가 언제 사실이 아니게 되는지 알려 줍니다
 
 생각으로 만든 발표는 그 생각이 바뀌는 순간 사실이 아니게 됩니다. 어느 생각이 어느 슬라이드에 있는지 아는 건 umm뿐입니다.
@@ -59,7 +67,7 @@ umm이 [Ptium](https://github.com/hkjang/ptium)으로 발표 자료를 만듭니
 - **색상 스와치는 멀쩡했습니다**: 전부 회색일 거라 의심했지만 확인해 보니 변수가 실제로 있었습니다 — 멀쩡한 코드를 건드리지 않았습니다.
 - **테스트의 결함 둘을 되돌리기가 잡았습니다**: `textarea[value^=…]`는 React 제어 값을 못 찾아 공허하게 통과하고 있었고, 카드 높이를 화면 픽셀로 비교하니 배율 때문에 `1091px` vs `642px`가 나왔습니다.
 
-이전 릴리스: [v0.38.0](docs/releases/v0.38.0.md) · [v0.37.1](docs/releases/v0.37.1.md) · [v0.37.0](docs/releases/v0.37.0.md) · [v0.36.0](docs/releases/v0.36.0.md) · [v0.35.0](docs/releases/v0.35.0.md) · [v0.34.4](docs/releases/v0.34.4.md) · [v0.34.3](docs/releases/v0.34.3.md) · [v0.34.2](docs/releases/v0.34.2.md) · [v0.34.1](docs/releases/v0.34.1.md) · [v0.34.0](docs/releases/v0.34.0.md) · [v0.33.2](docs/releases/v0.33.2.md) · [v0.33.1](docs/releases/v0.33.1.md) · [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.39.0](docs/releases/v0.39.0.md) · [v0.38.0](docs/releases/v0.38.0.md) · [v0.37.1](docs/releases/v0.37.1.md) · [v0.37.0](docs/releases/v0.37.0.md) · [v0.36.0](docs/releases/v0.36.0.md) · [v0.35.0](docs/releases/v0.35.0.md) · [v0.34.4](docs/releases/v0.34.4.md) · [v0.34.3](docs/releases/v0.34.3.md) · [v0.34.2](docs/releases/v0.34.2.md) · [v0.34.1](docs/releases/v0.34.1.md) · [v0.34.0](docs/releases/v0.34.0.md) · [v0.33.2](docs/releases/v0.33.2.md) · [v0.33.1](docs/releases/v0.33.1.md) · [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
