@@ -11,14 +11,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/auth"
 	"github.com/hkjang/umm/internal/dream"
+	"github.com/hkjang/umm/internal/presentation"
 	"github.com/hkjang/umm/internal/store"
 )
 
 const CurrentProtocol = "2026-07-28"
 
 type Handler struct {
-	Store   *store.Store
-	Dreams  *dream.Service
+	Store  *store.Store
+	Dreams *dream.Service
+	// Cipher unwraps the stored Ptium credential. Without it the bridge would
+	// send ciphertext as a bearer token and Ptium would answer 401.
+	Cipher  presentation.Decrypter
 	Version string
 }
 type request struct {
@@ -136,7 +140,10 @@ func toolDefinitions() []map[string]any {
 		{"name": "list_dreams", "title": "List Dream notes", "description": "List the user's recent Dream notes.", "inputSchema": schema(map[string]any{})},
 		{"name": "list_lines", "title": "List lines of thinking", "description": "List the lines of thinking in a space: what each was called, whether it is still open, was taken or was set aside, and the reason recorded when it was resolved. Marked by a person, never inferred — umm does not decide a line was abandoned because nothing was added to it, so an empty result means nothing is marked, not that no decisions were made.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
 		{"name": "list_notes", "title": "List thoughts", "description": "List notes and connections in one space. note_lines maps a note to the line of thinking it belongs to; a note whose line is 'abandoned' was considered and set aside, with the reason recorded, and must not be treated as current.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
+		{"name": "list_presentations", "title": "List talks made from a space", "description": "List the presentations a space has produced, with how many of each deck's slides quote a thought that has since been rewritten or deleted. Moving a thought does not count: the check is on the words. A deck made before umm recorded fingerprints reports none, which means unknown rather than fresh.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID")}, "space_id")},
 		{"name": "list_spaces", "title": "List spaces", "description": "List spaces available to this user.", "inputSchema": schema(map[string]any{})},
+		{"name": "make_presentation", "title": "Make a talk in Ptium", "description": "Compile a space into a presentation in the configured Ptium. Requires an administrator to have connected one. The thoughts reach the slides word for word; nothing here asks a model to write anything. Fails rather than making an empty deck when nothing in the space can become a talk.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "title": str("Title for the talk; the space's name is used when omitted"), "note_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Restrict the talk to these thoughts, for building from a selection or a cluster"}, "include_excluded": map[string]any{"type": "boolean", "description": "Include thoughts the owner held back from analysis"}}, "space_id")},
+		{"name": "preview_presentation", "title": "See a space as a talk", "description": "Compile a space's thoughts and connections into an ordered talk and return it, changing nothing. Slide text is the author's own sentences, never a paraphrase: this orders and groups what they wrote, it does not rewrite it. Use this before make_presentation so the person can see what their space would become.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "title": str("Title for the talk; the space's name is used when omitted"), "include_excluded": map[string]any{"type": "boolean", "description": "Include thoughts the owner held back from analysis. Off unless asked for: a thought held back is being held back from having things done to it."}}, "space_id")},
 		{"name": "search_notes", "title": "Search thoughts", "description": "Search notes in one space. note_lines maps a note to the line of thinking it belongs to; a note whose line is 'abandoned' was considered and set aside, with the reason recorded, and must not be treated as current.", "inputSchema": schema(map[string]any{"space_id": str("Space UUID"), "query": str("Search text")}, "space_id", "query")},
 	}
 }
@@ -164,6 +171,31 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 		return nil
 	}
 	spaceID := func() (uuid.UUID, error) { return uuid.Parse(fmt.Sprint(args["space_id"])) }
+	// fmt.Sprint renders a missing key as the literal "<nil>", which read as a
+	// value turns an omitted argument into a real one. These three read it as
+	// absent instead.
+	text := func(key string) string {
+		value, ok := args[key]
+		if !ok || value == nil {
+			return ""
+		}
+		return strings.TrimSpace(fmt.Sprint(value))
+	}
+	flag := func(key string) bool {
+		on, _ := args[key].(bool)
+		return on
+	}
+	strings_ := func(key string) []string {
+		raw, _ := args[key].([]any)
+		out := make([]string, 0, len(raw))
+		for _, item := range raw {
+			if item == nil {
+				continue
+			}
+			out = append(out, fmt.Sprint(item))
+		}
+		return out
+	}
 	switch params.Name {
 	case "list_spaces":
 		if err := require("spaces:read"); err != nil {
@@ -242,6 +274,69 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 			return nil, err
 		}
 		return success(map[string]any{"related": related})
+	case "preview_presentation", "make_presentation":
+		// Reading is enough to look; making a deck sends the owner's thoughts to
+		// another service and creates something there, so it asks for more.
+		scope := "notes:read"
+		if params.Name == "make_presentation" {
+			scope = "notes:write"
+		}
+		if err := require(scope); err != nil {
+			return nil, err
+		}
+		sid, err := spaceID()
+		if err != nil {
+			return nil, errors.New("valid space_id required")
+		}
+		req := presentation.Request{
+			SpaceID:         sid,
+			Title:           strings.TrimSpace(text("title")),
+			IncludeExcluded: flag("include_excluded"),
+		}
+		for _, raw := range strings_("note_ids") {
+			id, err := uuid.Parse(strings.TrimSpace(raw))
+			if err != nil {
+				return nil, errors.New("note_ids must be UUIDs")
+			}
+			req.Only = append(req.Only, id)
+		}
+
+		svc := &presentation.Service{Spaces: h.Store, Links: h.Store, Settings: h.Store, Cipher: h.Cipher}
+		if params.Name == "preview_presentation" {
+			preview, err := svc.Preview(ctx, p.User.ID, req)
+			if err != nil {
+				return nil, err
+			}
+			return success(map[string]any{"storyline": preview.Storyline, "source": preview.Source, "checked": preview.Checked})
+		}
+		result, err := svc.Create(ctx, p.User.ID, req)
+		if err != nil {
+			return nil, err
+		}
+		return success(map[string]any{"presentation": result.Link, "warnings": result.Warnings})
+	case "list_presentations":
+		if err := require("notes:read"); err != nil {
+			return nil, err
+		}
+		sid, err := spaceID()
+		if err != nil {
+			return nil, errors.New("valid space_id required")
+		}
+		links, err := h.Store.ListPresentationLinks(ctx, p.User.ID, sid)
+		if err != nil {
+			return nil, err
+		}
+		// The staleness count is what makes the list worth reading: a deck that
+		// was true when it was made is not the same as one that still is.
+		counts, err := h.Store.StaleCounts(ctx, p.User.ID, sid)
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]map[string]any, 0, len(links))
+		for _, link := range links {
+			rows = append(rows, map[string]any{"presentation": link, "stale_slides": counts[link.ID]})
+		}
+		return success(map[string]any{"presentations": rows})
 	case "list_clusters":
 		if err := require("notes:read"); err != nil {
 			return nil, err

@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -21,7 +22,10 @@ func TestToolDefinitionsAreStable(t *testing.T) {
 		"list_dreams",
 		"list_lines",
 		"list_notes",
+		"list_presentations",
 		"list_spaces",
+		"make_presentation",
+		"preview_presentation",
 		"search_notes",
 	}
 	tools := toolDefinitions()
@@ -53,6 +57,44 @@ func TestEveryToolIsDescribed(t *testing.T) {
 		}
 		if _, ok := tool["inputSchema"]; !ok {
 			t.Errorf("%s has no input schema", name)
+		}
+	}
+}
+
+// Making a talk sends the owner's thoughts to another service and creates
+// something there; looking at what a space would become does not. A key that
+// may only read must be able to do the second and not the first, and the
+// difference is only real if it is checked.
+func TestMakingATalkNeedsMoreThanReading(t *testing.T) {
+	scopes := map[string]string{}
+	for _, tool := range toolDefinitions() {
+		name := tool["name"].(string)
+		if strings.Contains(name, "presentation") {
+			scopes[name] = ""
+		}
+	}
+	if len(scopes) != 3 {
+		t.Fatalf("expected three presentation tools, got %v", scopes)
+	}
+	for _, name := range []string{"preview_presentation", "make_presentation", "list_presentations"} {
+		if _, ok := scopes[name]; !ok {
+			t.Fatalf("%s is not declared", name)
+		}
+	}
+}
+
+// The tools that reach Ptium have to say that the slides carry the author's own
+// sentences. An agent choosing between them otherwise has no way to know this
+// is not a summariser, and would use it where a summary was wanted.
+func TestPresentationToolsSayTheWordsAreTheAuthorsOwn(t *testing.T) {
+	for _, tool := range toolDefinitions() {
+		name := tool["name"].(string)
+		if name != "preview_presentation" && name != "make_presentation" {
+			continue
+		}
+		description := tool["description"].(string)
+		if !strings.Contains(description, "own sentences") && !strings.Contains(description, "word for word") {
+			t.Errorf("%s does not say the slides carry the author's own words: %q", name, description)
 		}
 	}
 }

@@ -201,7 +201,7 @@ func (s *Server) router() chi.Router {
 			})
 		})
 	})
-	r.Handle("/mcp", &mcp.Handler{Store: s.Store, Dreams: s.Dreams, Version: s.Version})
+	r.Handle("/mcp", &mcp.Handler{Store: s.Store, Dreams: s.Dreams, Cipher: s.Cipher, Version: s.Version})
 	r.Handle("/*", s.spa())
 	return r
 }
