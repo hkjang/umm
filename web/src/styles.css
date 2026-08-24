@@ -388,6 +388,33 @@ textarea,
 .postit.selected .note-handle {
   opacity: 0.8;
 }
+/* Says how much of the thought is out of view. Measured on a default note:
+   179 characters, a 168px card, 169px hidden — more of it hidden than shown,
+   cut mid-syllable, with nothing on the card admitting it. */
+.more-chip {
+  position: absolute;
+  right: 11px;
+  bottom: 10px;
+  border: 0;
+  padding: 3px 8px;
+  border-radius: 99px;
+  background: rgba(87, 73, 104, 0.13);
+  color: #5b4a6e;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 130ms ease;
+}
+.more-chip:hover {
+  background: rgba(87, 73, 104, 0.22);
+}
+/* The text fades into the edge instead of stopping mid-letter, so the cut is
+   visibly a cut. Lifted while editing, where seeing every character matters
+   more than the card looking tidy. */
+.postit-clipped:not(:focus-within) textarea {
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+}
 .related-chip {
   position: absolute;
   left: 15px;
@@ -594,18 +621,38 @@ textarea,
 /* A thought in a line that was set aside. Marked rather than hidden or greyed
    out: it is still a thought the person wrote and may want to read, it just must
    not read as current. */
-.postit-set-aside {
+.note-badges {
   position: absolute;
   top: 6px;
   left: 10px;
+  display: flex;
+  gap: 4px;
+  /* The row must not run under the note menu in the opposite corner. */
+  max-width: calc(100% - 52px);
+  pointer-events: none;
+}
+.note-badge {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
   padding: 1px 7px;
   border-radius: 99px;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.note-badge-set-aside {
   background: rgba(60, 60, 60, 0.14);
   color: rgba(40, 40, 40, 0.72);
-  pointer-events: auto;
+}
+/* Marked, not inferred — so it reads as a note someone turned into a question,
+   not as a colour the app chose. */
+.note-badge-question {
+  background: rgba(62, 92, 158, 0.16);
+  color: #2f4a83;
+}
+.note-badge-excluded {
+  background: rgba(120, 84, 150, 0.15);
+  color: #5c3f78;
 }
 .lens-banner {
   position: absolute;
