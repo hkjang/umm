@@ -113,14 +113,7 @@ func (s *Server) listPresentations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "발표 자료 목록을 불러오지 못했습니다.")
 		return
 	}
-	rows := s.withDeckURLs(r, links)
-	// One query for the whole list rather than one per deck.
-	if counts, err := s.Store.StaleCounts(r.Context(), principal(r).User.ID, spaceID); err == nil {
-		for i := range rows {
-			rows[i].StaleSlides = counts[rows[i].ID]
-		}
-	}
-	writeJSON(w, 200, map[string]any{"presentations": rows})
+	writeJSON(w, 200, map[string]any{"presentations": s.decks(r, links)})
 }
 
 // deckLink is a stored link plus where the deck can be opened.
@@ -135,6 +128,42 @@ type deckLink struct {
 	// stops being true when the thinking moves on, and only umm is in a
 	// position to notice.
 	StaleSlides int `json:"staleSlides,omitempty"`
+}
+
+// decks turns stored links into what a client reads: where to open each deck,
+// and how much of it has gone stale.
+//
+// One function rather than each handler assembling its own, because they did
+// not agree: the list of a space's talks reported a deck as having a changed
+// slide while the same deck, reached from the note that changed, reported
+// none. The note view is where it matters most — you have just rewritten the
+// thought — and it was the one saying nothing was wrong.
+func (s *Server) decks(r *http.Request, links []store.PresentationLink) []deckLink {
+	rows := s.withDeckURLs(r, links)
+
+	// Staleness is counted per space, so ask once per space rather than once
+	// per deck. In practice that is a single query.
+	spaces := map[uuid.UUID]bool{}
+	for _, link := range links {
+		spaces[link.SpaceID] = true
+	}
+	counts := map[uuid.UUID]int{}
+	for spaceID := range spaces {
+		found, err := s.Store.StaleCounts(r.Context(), principal(r).User.ID, spaceID)
+		if err != nil {
+			// A count that cannot be read is left absent rather than reported
+			// as zero: "nothing has changed" is a claim, and this is not in a
+			// position to make it.
+			return rows
+		}
+		for id, count := range found {
+			counts[id] = count
+		}
+	}
+	for i := range rows {
+		rows[i].StaleSlides = counts[rows[i].ID]
+	}
+	return rows
 }
 
 func (s *Server) withDeckURLs(r *http.Request, links []store.PresentationLink) []deckLink {
@@ -209,7 +238,7 @@ func (s *Server) notePresentations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "이 생각이 쓰인 발표 자료를 불러오지 못했습니다.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"presentations": s.withDeckURLs(r, links)})
+	writeJSON(w, 200, map[string]any{"presentations": s.decks(r, links)})
 }
 
 // writePresentationError turns the service's errors into the right status.

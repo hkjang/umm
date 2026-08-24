@@ -395,3 +395,59 @@ func TestAPastDeckCarriesWhereToOpenItIntegration(t *testing.T) {
 		t.Fatalf("the url does not open the editor: %q", deckURL)
 	}
 }
+
+// The same deck has to look the same from both directions.
+//
+// It did not: the list of a space's talks reported a changed slide while the
+// same deck reached from the note that changed reported none. The note view is
+// where it matters most — you have just rewritten the thought — and it was the
+// one saying nothing was wrong.
+func TestBothViewsOfADeckAgreeOnWhatChangedIntegration(t *testing.T) {
+	h := presentationAPI(t)
+	ctx := context.Background()
+
+	link, err := h.db.CreatePresentationLink(ctx, h.userID, h.spaceID, "pt_agree", "임원 보고")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.CompletePresentationLink(ctx, h.userID, link.ID, store.PresentationReady, "# 임원 보고\n",
+		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.Pool.Exec(ctx, `UPDATE notes SET content='고쳐 썼다' WHERE id=$1`, h.notes[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	staleFrom := func(path string) int {
+		t.Helper()
+		response := h.do(t, http.MethodGet, path, "")
+		if response.Code != 200 {
+			t.Fatalf("%s: status %d", path, response.Code)
+		}
+		var body struct {
+			Presentations []struct {
+				ID          string `json:"id"`
+				StaleSlides int    `json:"staleSlides"`
+			} `json:"presentations"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range body.Presentations {
+			if p.ID == link.ID.String() {
+				return p.StaleSlides
+			}
+		}
+		t.Fatalf("%s did not return the deck: %s", path, response.Body.String())
+		return -1
+	}
+
+	fromSpace := staleFrom("/spaces/" + h.spaceID.String() + "/presentations")
+	fromNote := staleFrom("/notes/" + h.notes[0].String() + "/presentations")
+	if fromSpace != 1 {
+		t.Fatalf("the space's list reports %d changed slides, want 1", fromSpace)
+	}
+	if fromNote != fromSpace {
+		t.Fatalf("the two views disagree: space says %d, note says %d", fromSpace, fromNote)
+	}
+}
