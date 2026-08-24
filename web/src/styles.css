@@ -293,6 +293,13 @@ textarea,
 
 .postit {
   position: relative;
+  /* A column, so anything above the text pushes it down instead of lying on
+     top of it. The badge row used to be positioned over the card and could not
+     wrap: in English at the smallest note size the three marks measured 207px
+     inside a 138px box and the last one hung 68px past the card, over the note
+     menu. Korean fitted at 139px against 138px and hid the fault entirely. */
+  display: flex;
+  flex-direction: column;
   width: 100%;
   height: 100%;
   min-width: 190px;
@@ -343,7 +350,11 @@ textarea,
 }
 .postit textarea {
   width: 100%;
-  height: calc(100% - 20px);
+  /* Takes what the column has left. min-height:0 because a flex item defaults
+     to its content size and would otherwise refuse to shrink, pushing the text
+     out of the card instead of scrolling inside it. */
+  flex: 1 1 auto;
+  min-height: 0;
   resize: none;
   border: 0;
   outline: 0;
@@ -622,14 +633,18 @@ textarea,
    out: it is still a thought the person wrote and may want to read, it just must
    not read as current. */
 .note-badges {
-  position: absolute;
-  top: 6px;
-  left: 10px;
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  /* The row must not run under the note menu in the opposite corner. */
-  max-width: calc(100% - 52px);
+  flex: 0 0 auto;
+  /* Stops short of the note menu in the opposite corner; past that the marks
+     wrap to another line rather than out of the card. */
+  max-width: calc(100% - 20px);
+  margin-bottom: 6px;
   pointer-events: none;
+}
+.note-badges:empty {
+  display: none;
 }
 .note-badge {
   font-size: 10px;

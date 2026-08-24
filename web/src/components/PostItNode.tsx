@@ -163,29 +163,15 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
       <Handle className="note-handle" type="target" position={Position.Left} />
       <Handle className="note-handle" type="source" position={Position.Right} />
       {note.source === 'dream' && <div className="dream-label">Dream</div>}
-      <textarea
-        ref={editorRef}
-        className="nodrag"
-        aria-label={t('생각 내용')}
-        value={text}
-        onChange={(e) => schedule(e.currentTarget.value)}
-        onBlur={flush}
-        onKeyDown={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') e.currentTarget.blur();
-          if (e.key === 'Escape') {
-            e.preventDefault();
-            e.stopPropagation();
-            flush();
-            cardRef.current?.focus();
-          }
-        }}
-        placeholder={t('지금 떠오르는 생각을 적어보세요')}
-        autoFocus={note.content === ''}
-      />
       {/*
        * One row rather than three badges each pinned to the same corner. A note
        * can be set aside AND a question AND held back from Dream at once, and
        * absolutely positioning each one put them on top of each other.
+       *
+       * It sits above the text rather than over it: once the card became a
+       * column so the marks could wrap, DOM order started deciding layout, and
+       * this block had been sitting after the textarea — which put the badges
+       * underneath the thought instead of above it.
        */}
       <div className="note-badges">
         {data.setAsideLine && (
@@ -207,6 +193,25 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
           </Tooltip>
         )}
       </div>
+      <textarea
+        ref={editorRef}
+        className="nodrag"
+        aria-label={t('생각 내용')}
+        value={text}
+        onChange={(e) => schedule(e.currentTarget.value)}
+        onBlur={flush}
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') e.currentTarget.blur();
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            e.stopPropagation();
+            flush();
+            cardRef.current?.focus();
+          }
+        }}
+        placeholder={t('지금 떠오르는 생각을 적어보세요')}
+        autoFocus={note.content === ''}
+      />
       {!!data.relatedCount && (
         <button className="related-chip nodrag" type="button" onClick={() => data.onGather(note.id)}>
           {t('관련 {count}', { count: data.relatedCount })}
