@@ -43,6 +43,7 @@ import {
   IconPhoto,
   IconPlus,
   IconFocus2,
+  IconPresentation,
   IconSearch,
   IconSettings,
   IconShare,
@@ -89,6 +90,7 @@ import PostItNode, { type PostItData } from '../components/PostItNode';
 import { useAuth } from '../auth-context';
 import { msg, useTranslation } from '../i18n';
 import ImportThoughtsModal from '../components/ImportThoughtsModal';
+import PresentationModal from '../components/PresentationModal';
 import BranchPanel from '../components/BranchPanel';
 import { neighbourhood } from '../lens';
 import { hasOverlaps, packGroups, ringAround, spreadOverlaps, type Placement } from '../layout';
@@ -266,6 +268,11 @@ function CanvasInner() {
   const [conflict, setConflict] = useState<{ local: ThoughtNote; latest: ThoughtNote; offlineMutationId?: string }>();
   const [mergeDraft, setMergeDraft] = useState('');
   const [importOpen, setImportOpen] = useState(false);
+  const [presentationOpen, setPresentationOpen] = useState(false);
+  // Captured when the modal opens rather than read from it, so the deck matches
+  // what was selected at the moment the person asked, not whatever the canvas
+  // drifted to while they were reading the preview.
+  const [presentationSelection, setPresentationSelection] = useState<string[]>([]);
   const [shareOpen, setShareOpen] = useState(false);
   const [members, setMembers] = useState<SpaceMember[]>([]);
   const [canManage, setCanManage] = useState(false);
@@ -1796,6 +1803,25 @@ function CanvasInner() {
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
+            <Tooltip label={t('이 공간을 발표 자료로')}>
+              <ActionIcon
+                className="canvas-action"
+                variant="subtle"
+                color="dark"
+                aria-label={t('이 공간을 발표 자료로')}
+                onClick={() => {
+                  setPresentationSelection(
+                    flow
+                      .getNodes()
+                      .filter((node) => node.selected)
+                      .map((node) => node.id),
+                  );
+                  setPresentationOpen(true);
+                }}
+              >
+                <IconPresentation size={18} />
+              </ActionIcon>
+            </Tooltip>
             <div className="canvas-tool-divider" aria-hidden="true" />
             <Menu shadow="md">
               <Menu.Target>
@@ -2577,6 +2603,13 @@ function CanvasInner() {
         </Stack>
       </Modal>
       <ImportThoughtsModal opened={importOpen} onClose={() => setImportOpen(false)} onImport={importThoughts} />
+      <PresentationModal
+        opened={presentationOpen}
+        onClose={() => setPresentationOpen(false)}
+        spaceID={activeSpace}
+        spaceName={activeName}
+        selection={presentationSelection}
+      />
       <Modal opened={shareOpen} onClose={() => setShareOpen(false)} title={t('이 공간 함께 쓰기')} centered size="lg">
         <Stack>
           {shareMessage && (
