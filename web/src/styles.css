@@ -258,7 +258,12 @@ textarea,
 .react-flow__pane:active {
   cursor: grabbing;
 }
+/* The capture bar owns the bottom centre of the canvas at every width, and it
+   is up to 590px wide — so the two corner widgets belong above its band, not
+   beside it. Measured before this: at 1180px the minimap covered the right end
+   of the capture bar, and at 900px the zoom controls sat on its left end. */
 .react-flow__controls {
+  bottom: 96px !important;
   border: 0 !important;
   border-radius: 13px !important;
   overflow: hidden;
@@ -271,6 +276,7 @@ textarea,
   background: var(--surface) !important;
 }
 .react-flow__minimap {
+  bottom: 96px !important;
   border-radius: 12px;
   overflow: hidden;
   box-shadow: 0 5px 20px rgba(55, 49, 38, 0.09);
@@ -427,7 +433,11 @@ textarea,
   top: 16px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(650px, calc(100% - 32px));
+  /* Grows with the window instead of staying at 650px on every screen. At the
+     old fixed width the space name was cut to "My S" on a 1440px display —
+     losing the one thing on the bar that says where you are — while the room to
+     show it sat unused on either side. */
+  width: min(940px, calc(100% - 32px));
   background: var(--surface);
   border: 1px solid var(--line);
   box-shadow:
@@ -435,7 +445,12 @@ textarea,
     0 1px 2px rgba(61, 54, 41, 0.08);
 }
 .space-switcher {
-  max-width: 142px;
+  /* Enough for a real space name. This is the primary "where am I", so it gets
+     room before anything else on the bar does. */
+  max-width: 240px;
+  /* And a floor, so a crowded bar cannot squeeze it down to a bare chevron:
+     without this the name vanished entirely on a 900px window. */
+  min-width: 104px;
   flex: 0 1 auto;
   color: #4a3d14;
   background: #fff0a8;
@@ -463,7 +478,9 @@ textarea,
 }
 .thought-search {
   flex: 1 1 170px;
-  min-width: 110px;
+  /* Lower than the space switcher's floor on purpose: when the bar runs out of
+     room, a shorter search box costs less than a space name you cannot read. */
+  min-width: 84px;
 }
 .thought-search .mantine-TextInput-input {
   color: var(--ink);
@@ -484,6 +501,16 @@ textarea,
   box-shadow: 0 0 0 3px rgba(117, 83, 143, 0.12);
 }
 .canvas-toolbar-actions {
+  flex: 0 0 auto;
+}
+/* A hairline between groups of actions. Nine icons in an even row read as one
+   undifferentiated wall; the separators say which ones belong together without
+   adding labels the bar has no room for. */
+.canvas-tool-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 3px;
+  background: var(--line);
   flex: 0 0 auto;
 }
 .canvas-action {
@@ -816,6 +843,28 @@ textarea,
 }
 .mobile-tabs {
   display: none;
+}
+
+/* The toolbar's room is the canvas, not the window. With the sidebar taking
+   ~237px, a 900px window leaves the canvas narrower than a 390px phone gets —
+   which is how nine icons, a search box and a space name ended up fighting over
+   630px while the phone layout was comfortable. Collapse the actions into the
+   overflow menu whenever the canvas is the cramped one. */
+@media (min-width: 48.01em) and (max-width: 63em) {
+  .canvas-toolbar-actions {
+    display: none;
+  }
+  .canvas-mobile-tools {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+  }
+  /* The capture bar reaches across the whole canvas at this width, so the
+     minimap would sit on top of it. */
+  .react-flow__minimap {
+    display: none;
+  }
 }
 
 @media (max-width: 48em) {

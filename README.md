@@ -25,14 +25,15 @@
 
 ---
 
-## v0.35.0 — 정렬이 배치를 부수지 않습니다
+## v0.36.0 — 900px 창이 390px 휴대폰보다 좁았습니다
 
-- **정렬을 되돌릴 수 없었습니다**: 되돌리기가 직접 끈 것만 기록해서, 수십 개를 옮기는 정렬은 `Ctrl+Z`가 손대지 못했습니다. 위치가 곧 기억인 캔버스에서 되돌릴 수 없는 정렬은 되돌릴 수 없는 결정입니다.
-- **겹쳤습니다**: 고정 반지름·고정 격자라 연결이 많거나 메모를 키우면 서로 포개졌습니다. 이제 실제 크기를 봅니다.
-- **새로 생긴 겹침 정리**: 겹친 것만 최소 거리로 떼어 놓고 **여유 있는 생각은 한 개도 옮기지 않습니다.** 배치를 다시 만드는 대신 지킵니다.
-- **군집도 덜 부숩니다**: 묶음에 속한 것만 옮기고, 어디에도 없는 생각은 그대로 둡니다.
+- **공간 이름이 "My S"였습니다**: 도구 막대가 화면 크기와 무관하게 650px에 묶여, 1440px 모니터에서도 이름이 잘렸습니다. 보여 줄 자리는 양옆에 그대로 남아 있었습니다.
+- **좁은 건 창이 아니라 캔버스였습니다**: 접힘 기준이 창 너비라, 사이드바가 237px을 가져가는 900px 데스크톱이 390px 휴대폰보다 좁았습니다.
+- **미니맵이 입력창 위에 앉아 있었습니다**: 1180px에서 미니맵이, 900px에서 확대·축소 버튼이 생각 입력창을 덮었습니다. 눈으로는 보이지 않았고 재어 보고 나왔습니다.
+- **아이콘 아홉 개가 한 줄이었습니다**: 구분선으로 연결·보기·공유·AI·정렬 다섯 묶음으로 나눴습니다.
+- **고친 것을 되돌려 테스트를 실패시켰습니다**: 버그 하나에 실패 하나씩, 멀쩡했던 두 너비는 그대로 통과.
 
-이전 릴리스: [v0.34.4](docs/releases/v0.34.4.md) · [v0.34.3](docs/releases/v0.34.3.md) · [v0.34.2](docs/releases/v0.34.2.md) · [v0.34.1](docs/releases/v0.34.1.md) · [v0.34.0](docs/releases/v0.34.0.md) · [v0.33.2](docs/releases/v0.33.2.md) · [v0.33.1](docs/releases/v0.33.1.md) · [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.35.0](docs/releases/v0.35.0.md) · [v0.34.4](docs/releases/v0.34.4.md) · [v0.34.3](docs/releases/v0.34.3.md) · [v0.34.2](docs/releases/v0.34.2.md) · [v0.34.1](docs/releases/v0.34.1.md) · [v0.34.0](docs/releases/v0.34.0.md) · [v0.33.2](docs/releases/v0.33.2.md) · [v0.33.1](docs/releases/v0.33.1.md) · [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
