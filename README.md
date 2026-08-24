@@ -25,12 +25,14 @@
 
 ---
 
-## v0.34.4 — 비밀 값을 빠뜨리면 테스트가 먼저 알아챕니다
+## v0.35.0 — 정렬이 배치를 부수지 않습니다
 
-- **v0.34.0에서 마스킹 목록에 넣는 걸 거의 잊을 뻔했습니다**: 잊었다면 설정 API가 키를 평문으로 돌려주고 암호화 없이 저장했을 겁니다. 오류도 안 나고 화면도 멀쩡해 보입니다.
-- **이름으로 판별합니다**: `_key`·`_secret`·`_token` 등으로 끝나는 필드는 전부 마스킹 목록에 있어야 합니다. 값이 아니라 이름인 이유는, 갓 설치한 인스턴스에서 비어 있다고 통과하면 안 되기 때문입니다.
+- **정렬을 되돌릴 수 없었습니다**: 되돌리기가 직접 끈 것만 기록해서, 수십 개를 옮기는 정렬은 `Ctrl+Z`가 손대지 못했습니다. 위치가 곧 기억인 캔버스에서 되돌릴 수 없는 정렬은 되돌릴 수 없는 결정입니다.
+- **겹쳤습니다**: 고정 반지름·고정 격자라 연결이 많거나 메모를 키우면 서로 포개졌습니다. 이제 실제 크기를 봅니다.
+- **새로 생긴 겹침 정리**: 겹친 것만 최소 거리로 떼어 놓고 **여유 있는 생각은 한 개도 옮기지 않습니다.** 배치를 다시 만드는 대신 지킵니다.
+- **군집도 덜 부숩니다**: 묶음에 속한 것만 옮기고, 어디에도 없는 생각은 그대로 둡니다.
 
-이전 릴리스: [v0.34.3](docs/releases/v0.34.3.md) · [v0.34.2](docs/releases/v0.34.2.md) · [v0.34.1](docs/releases/v0.34.1.md) · [v0.34.0](docs/releases/v0.34.0.md) · [v0.33.2](docs/releases/v0.33.2.md) · [v0.33.1](docs/releases/v0.33.1.md) · [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.34.4](docs/releases/v0.34.4.md) · [v0.34.3](docs/releases/v0.34.3.md) · [v0.34.2](docs/releases/v0.34.2.md) · [v0.34.1](docs/releases/v0.34.1.md) · [v0.34.0](docs/releases/v0.34.0.md) · [v0.33.2](docs/releases/v0.33.2.md) · [v0.33.1](docs/releases/v0.33.1.md) · [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 

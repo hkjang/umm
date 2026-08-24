@@ -24,6 +24,7 @@ import {
 } from '@mantine/core';
 import {
   IconArrowRight,
+  IconArrowsMaximize,
   IconBrain,
   IconCheck,
   IconChevronDown,
@@ -90,6 +91,7 @@ import { msg, useTranslation } from '../i18n';
 import ImportThoughtsModal from '../components/ImportThoughtsModal';
 import BranchPanel from '../components/BranchPanel';
 import { neighbourhood } from '../lens';
+import { hasOverlaps, packGroups, ringAround, spreadOverlaps, type Placement } from '../layout';
 import type { Branch } from '../components/BranchPanel';
 import { readLocalStorage, readSessionStorage, writeLocalStorage, writeSessionStorage } from '../lib/browser-storage';
 import { importLayout, type ImportedThought, type ImportThoughtsResult } from '../lib/markdown-import';
@@ -138,10 +140,16 @@ interface DreamHistory {
   spaceId: string;
   qualityScore: number;
 }
+/**
+ * One undoable change of position, however many notes it touched.
+ *
+ * This used to hold a single note, and only dragging ever recorded one — so
+ * arranging, which moves everything at once, could not be undone at all. On a
+ * canvas where position is what a thought is remembered by, that made every
+ * arrangement a decision you could not take back.
+ */
 interface HistoryAction {
-  id: string;
-  before: { x: number; y: number };
-  after: { x: number; y: number };
+  moves: { id: string; before: { x: number; y: number }; after: { x: number; y: number } }[];
 }
 interface RelatedThought {
   note: ThoughtNote;
@@ -442,6 +450,38 @@ function CanvasInner() {
     setNotes((all) => all.map((n) => (n.id === id ? restored : n)));
   }, []);
 
+  /**
+   * Moves a set of notes and records the whole move as one undoable step.
+   *
+   * Every arrangement goes through here. Arranging without this recorded nothing,
+   * so a person who did not like the result had no way back to the layout they
+   * had built — and on this canvas that layout is the memory.
+   */
+  const applyPlacements = useCallback(
+    (placements: Placement[]) => {
+      const current = notesRef.current;
+      const moves = placements
+        .map((placement) => {
+          const note = current[placement.id];
+          if (!note) return undefined;
+          const before = { x: note.x, y: note.y };
+          const after = { x: placement.x, y: placement.y };
+          if (before.x === after.x && before.y === after.y) return undefined;
+          return { id: placement.id, before, after };
+        })
+        .filter((move): move is NonNullable<typeof move> => !!move);
+      if (moves.length === 0) return 0;
+
+      undo.current.push({ moves });
+      redo.current = [];
+      moves.forEach((move) => persist(move.id, move.after));
+      const byID = new Map(moves.map((move) => [move.id, move.after]));
+      setNodes((all) => all.map((n) => (byID.has(n.id) ? { ...n, position: byID.get(n.id)! } : n)));
+      return moves.length;
+    },
+    [persist, setNodes],
+  );
+
   const gravity = useCallback(
     (selectedID?: string) => {
       const selected = selectedID ? flow.getNode(selectedID) : flow.getNodes().find((n) => n.selected);
@@ -451,16 +491,13 @@ function CanvasInner() {
         if (e.source === selected.id) related.add(e.target);
         if (e.target === selected.id) related.add(e.source);
       });
-      [...related].forEach((id, index) => {
-        const angle = (index / Math.max(1, related.size)) * Math.PI * 2;
-        const patch = {
-          x: selected.position.x + Math.cos(angle) * 330,
-          y: selected.position.y + Math.sin(angle) * 230,
-        };
-        persist(id, patch);
-      });
+      const current = notesRef.current;
+      const centre = current[selected.id];
+      const around = [...related].map((id) => current[id]).filter(Boolean);
+      if (!centre || around.length === 0) return;
+      applyPlacements(ringAround(centre, around));
     },
-    [flow, rawEdges, persist],
+    [flow, rawEdges, applyPlacements],
   );
   /**
    * Opens the panel that holds a thought's connections and its line of thinking,
@@ -984,7 +1021,7 @@ function CanvasInner() {
     const before = dragStart.current[node.id];
     const after = { ...node.position };
     if (before && (before.x !== after.x || before.y !== after.y)) {
-      undo.current.push({ id: node.id, before, after });
+      undo.current.push({ moves: [{ id: node.id, before, after }] });
       redo.current = [];
     }
     persist(node.id, { x: after.x, y: after.y });
@@ -1058,9 +1095,11 @@ function CanvasInner() {
         event.preventDefault();
         const action = event.shiftKey ? redo.current.pop() : undo.current.pop();
         if (!action) return;
-        const position = event.shiftKey ? action.after : action.before;
-        persist(action.id, position);
-        setNodes((all) => all.map((n) => (n.id === action.id ? { ...n, position } : n)));
+        const positions = new Map(
+          action.moves.map((move) => [move.id, event.shiftKey ? move.after : move.before] as const),
+        );
+        positions.forEach((position, id) => persist(id, position));
+        setNodes((all) => all.map((n) => (positions.has(n.id) ? { ...n, position: positions.get(n.id)! } : n)));
         (event.shiftKey ? undo.current : redo.current).push(action);
       }
     };
@@ -1160,12 +1199,54 @@ function CanvasInner() {
   };
   const clusterThoughts = async () => {
     const { clusters } = await api<{ clusters: Cluster[] }>(`/spaces/${activeSpace}/clusters`);
-    clusters.forEach((cluster, clusterIndex) =>
-      cluster.noteIds.forEach((id, noteIndex) =>
-        persist(id, { x: clusterIndex * 620 + (noteIndex % 2) * 270, y: Math.floor(noteIndex / 2) * 205 }),
-      ),
+    if (clusters.length === 0) {
+      showInfo(t('아직 뚜렷한 생각 군집이 없습니다. 조금 더 생각을 붙여보세요.'), t('생각 군집'));
+      return;
+    }
+    const current = notesRef.current;
+    // Only the notes that belong to a group are moved. Laying out the whole
+    // space would throw away where someone put everything else, and the notes
+    // outside a group are the ones whose placement was most deliberate.
+    const groups = clusters
+      .map((cluster) => cluster.noteIds.map((id) => current[id]).filter(Boolean))
+      .filter((group) => group.length > 0);
+    const grouped = new Set(groups.flat().map((note) => note.id));
+    const moved = applyPlacements(packGroups(groups));
+    showInfo(
+      t('생각 {count}개를 묶음별로 정렬했습니다. 묶이지 않은 {kept}개는 그대로 두었습니다. Ctrl+Z로 되돌립니다.', {
+        count: moved,
+        kept: Object.keys(current).length - grouped.size,
+      }),
+      t('생각 군집'),
     );
-    if (clusters.length === 0) window.alert(t('아직 뚜렷한 생각 군집이 없습니다. 조금 더 생각을 붙여보세요.'));
+  };
+
+  /**
+   * Separates notes that sit on top of each other and leaves everything else be.
+   *
+   * The other two arrangements replace a layout; this one keeps it. A note with
+   * room around it is not moved at all, so tidying a crowded corner does not cost
+   * someone the placement they built everywhere else.
+   */
+  const spreadThoughts = () => {
+    const current = notesRef.current;
+    const chosen = flow
+      .getNodes()
+      .filter((n) => n.selected && n.type === 'postit')
+      .map((n) => current[n.id])
+      .filter(Boolean);
+    const target = chosen.length > 1 ? chosen : Object.values(current);
+    const scope = chosen.length > 1 ? t('선택한 생각') : t('이 공간');
+
+    if (!hasOverlaps(target)) {
+      showInfo(t('{scope}에서 겹친 생각이 없습니다.', { scope }), t('겹침 정리'));
+      return;
+    }
+    const moved = applyPlacements(spreadOverlaps(target));
+    showInfo(
+      t('겹친 생각 {count}개만 옮겼습니다. 나머지는 그대로입니다. Ctrl+Z로 되돌립니다.', { count: moved }),
+      t('겹침 정리'),
+    );
   };
   const assist = async (mode: string) => {
     const selected = flow
@@ -1745,6 +1826,17 @@ function CanvasInner() {
                 aria-label={t('생각 군집')}
               >
                 <IconLayoutGrid size={20} />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label={t('겹친 생각만 펼치기')}>
+              <ActionIcon
+                className="canvas-action"
+                variant="subtle"
+                color="teal"
+                onClick={() => spreadThoughts()}
+                aria-label={t('겹침 정리')}
+              >
+                <IconArrowsMaximize size={20} />
               </ActionIcon>
             </Tooltip>
             <Tooltip label={t('직접 연결한 생각 모으기')}>
