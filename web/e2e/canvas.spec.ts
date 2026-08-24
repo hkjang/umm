@@ -146,6 +146,27 @@ test.describe('canvas', () => {
   // shape says so rather than implying it read the notes.
   test('summarises the canvas when zoomed out past reading distance', async ({ page }) => {
     const topic = unique('묶음');
+    /*
+     * Its own space. This test needs twenty-eight notes, and it used to put
+     * them in the shared canvas that beforeEach opens — where they stayed. One
+     * run of the suite left that space over the twenty-five note threshold, so
+     * the next run against the same database opened it already summarised and
+     * three card-based tests found cluster boxes instead of their note. It
+     * passed in CI only because CI always starts from an empty database.
+     */
+    const space = await page.evaluate(async (name) => {
+      const created = await (
+        await fetch('/api/v1/spaces', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        })
+      ).json();
+      return created.id as string;
+    }, `${topic}-공간`);
+    await page.goto(`/space/${space}`);
+    await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+
     // Two huddles, and enough notes that summarising is worth doing at all.
     for (let group = 0; group < 2; group++) {
       for (let i = 0; i < 14; i++) {
