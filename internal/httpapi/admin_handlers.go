@@ -496,35 +496,48 @@ func (s *Server) embeddingQuality(w http.ResponseWriter, r *http.Request) {
 // this screen.
 func (s *Server) testEmbeddingGateway(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		BaseURL string `json:"base_url"`
-		APIKey  string `json:"api_key"`
-		Model   string `json:"embedding_model"`
+		BaseURL          string `json:"base_url"`
+		APIKey           string `json:"api_key"`
+		Model            string `json:"embedding_model"`
+		EmbeddingBaseURL string `json:"embedding_base_url"`
+		EmbeddingAPIKey  string `json:"embedding_api_key"`
 	}
 	if decodeJSON(w, r, &body) != nil {
 		writeError(w, 400, "게이트웨이 정보가 올바르지 않습니다.")
 		return
 	}
-	if strings.TrimSpace(body.BaseURL) == "" || strings.TrimSpace(body.Model) == "" {
-		writeError(w, 400, "주소와 임베딩 모델 이름이 모두 필요합니다.")
-		return
-	}
 	// A saved key arrives masked, because the settings screen never sends the
 	// stored secret back. Fall back to the stored one so testing an unchanged
 	// gateway does not require retyping it.
-	key := body.APIKey
-	if key == "" || key == secretMask {
-		var stored struct {
-			APIKey string `json:"api_key"`
-		}
-		if s.Store.GetSetting(r.Context(), "ai_gateway", &stored) == nil {
-			key = s.Store.DecryptSetting(stored.APIKey)
-		}
+	var stored struct {
+		APIKey          string `json:"api_key"`
+		EmbeddingAPIKey string `json:"embedding_api_key"`
+	}
+	hasStored := s.Store.GetSetting(r.Context(), "ai_gateway", &stored) == nil
+	chatKey := body.APIKey
+	if hasStored && (chatKey == "" || chatKey == secretMask) {
+		chatKey = s.Store.DecryptSetting(stored.APIKey)
+	}
+	embedKey := body.EmbeddingAPIKey
+	if hasStored && embedKey == secretMask {
+		// Only the mask means "the one already saved". An empty embedding key is
+		// a real answer — most embedding servers want no authentication — and
+		// must not be filled in with the chat gateway's key.
+		embedKey = s.Store.DecryptSetting(stored.EmbeddingAPIKey)
+	}
+
+	// Resolved exactly as the runtime resolves it, so a green test means the
+	// thing that actually embeds will work.
+	testURL, testKey := store.ResolveEmbeddingEndpoint(body.BaseURL, chatKey, body.EmbeddingBaseURL, embedKey)
+	if strings.TrimSpace(testURL) == "" || strings.TrimSpace(body.Model) == "" {
+		writeError(w, 400, "주소와 임베딩 모델 이름이 모두 필요합니다.")
+		return
 	}
 
 	ctx, cancel := contextWithTimeout(r, 30*time.Second)
 	defer cancel()
 	provider := intelligence.Provider{Remote: &intelligence.RemoteConfig{
-		BaseURL: body.BaseURL, APIKey: key, Model: body.Model, Timeout: 25 * time.Second,
+		BaseURL: testURL, APIKey: testKey, Model: body.Model, Timeout: 25 * time.Second,
 	}}
 	vectors, err := provider.EmbedStrict(ctx, []string{"연결 확인", "connection check"})
 	if err != nil {
