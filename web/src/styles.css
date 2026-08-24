@@ -209,10 +209,36 @@ textarea,
   backdrop-filter: blur(14px);
 }
 
+/* The one scroll container for page content.
+ *
+ * html, body and #root are held at overflow:hidden so the canvas can be a fixed
+ * pan-and-zoom surface — but that clipped every other page too: the review page
+ * rendered 2272px of content inside a 520px window with no way to reach the rest
+ * of it.
+ *
+ * Scrolling belongs to the shell's main region rather than the document, so the
+ * canvas still cannot scroll and every routed page gets this without asking. Any
+ * page added later inherits it, because they all render inside this element.
+ *
+ * The height is the full viewport and AppShell adds the header as padding-top;
+ * with border-box that leaves exactly the space under the header. .canvas-page
+ * then takes 100% of this content box, so the canvas fills the space under the
+ * header exactly and produces no scrollbar of its own — and it keeps doing so
+ * when the mobile tab bar adds padding at the bottom.
+ */
+.app-main {
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
 .canvas-page {
   position: relative;
   width: 100%;
-  height: calc(100dvh - var(--app-shell-header-offset, 66px));
+  /* Of .app-main's content box, which already excludes the header and, on a
+     phone, the tab bar. Sizing to the viewport instead would push past both. */
+  height: 100%;
   background: var(--canvas);
   isolation: isolate;
   overflow: hidden;
@@ -846,6 +872,12 @@ textarea,
     top: 76px;
     right: 12px;
     width: calc(100% - 24px);
+  }
+  /* The tab bar is fixed over the bottom of the viewport, so the scroll
+     container reserves room for it. Doing it here means every page clears the
+     bar — including ones added later — rather than each remembering to. */
+  .app-main {
+    padding-bottom: calc(62px + env(safe-area-inset-bottom));
   }
   .mobile-tabs {
     display: flex;
