@@ -355,3 +355,75 @@ func TestWithoutATitleTheFirstSlideIsPositionOne(t *testing.T) {
 		t.Fatalf("positions are off when there is no cover: %+v", sources)
 	}
 }
+
+type fakeCipher struct{ calls int }
+
+func (f *fakeCipher) Decrypt(value string) (string, error) {
+	f.calls++
+	return "plain:" + value, nil
+}
+
+// Secrets are written to app_settings encrypted and prefixed "enc:". Sending
+// that string as a bearer credential got a 401 from a real Ptium — which reads
+// exactly like a wrong key and sends whoever is debugging it to check the one
+// thing that was right.
+func TestAStoredCredentialIsDecryptedBeforeItIsSent(t *testing.T) {
+	cipher := &fakeCipher{}
+	ptium := &fakePtium{deckID: "pt_1"}
+	var sentKey string
+	svc := &Service{
+		Spaces: spaceFixture(), Links: &fakeLinks{},
+		Settings: fakeSettings{Config{BaseURL: "https://ptium.internal", APIKey: "enc:ABC123"}},
+		Cipher:   cipher,
+		NewPtium: func(cfg Config) (Ptium, error) { sentKey = cfg.APIKey; return ptium, nil },
+	}
+
+	if _, err := svc.Create(context.Background(), uuid.New(), Request{SpaceID: id(9)}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if cipher.calls != 1 {
+		t.Fatalf("the credential was not decrypted (%d calls)", cipher.calls)
+	}
+	if sentKey != "plain:ABC123" {
+		t.Fatalf("ptium was given %q", sentKey)
+	}
+	if strings.HasPrefix(sentKey, "enc:") {
+		t.Fatal("the ciphertext was sent as a bearer credential")
+	}
+}
+
+// A credential that was never encrypted still has to work, so an operator who
+// pasted one in before encryption was on is not locked out.
+func TestAPlainCredentialIsSentAsItIs(t *testing.T) {
+	cipher := &fakeCipher{}
+	var sentKey string
+	svc := &Service{
+		Spaces: spaceFixture(), Links: &fakeLinks{},
+		Settings: fakeSettings{Config{BaseURL: "https://ptium.internal", APIKey: "ptium_plain"}},
+		Cipher:   cipher,
+		NewPtium: func(cfg Config) (Ptium, error) { sentKey = cfg.APIKey; return &fakePtium{deckID: "pt_1"}, nil },
+	}
+	if _, err := svc.Create(context.Background(), uuid.New(), Request{SpaceID: id(9)}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if cipher.calls != 0 {
+		t.Fatal("a plain credential was run through the cipher")
+	}
+	if sentKey != "ptium_plain" {
+		t.Fatalf("ptium was given %q", sentKey)
+	}
+}
+
+// Without a key, saying so beats sending ciphertext and getting a 401 that
+// blames the credential.
+func TestAnUnreadableCredentialSaysSoRatherThanFailingAsA401(t *testing.T) {
+	svc := &Service{
+		Spaces: spaceFixture(), Links: &fakeLinks{},
+		Settings: fakeSettings{Config{BaseURL: "https://ptium.internal", APIKey: "enc:ABC123"}},
+		NewPtium: func(Config) (Ptium, error) { return &fakePtium{deckID: "pt_1"}, nil },
+	}
+	_, err := svc.Create(context.Background(), uuid.New(), Request{SpaceID: id(9)})
+	if err == nil || !strings.Contains(err.Error(), "encrypted") {
+		t.Fatalf("got %v, want an error naming the unreadable credential", err)
+	}
+}

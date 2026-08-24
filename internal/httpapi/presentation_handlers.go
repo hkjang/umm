@@ -22,7 +22,7 @@ import (
 // presentations returns the service, built from the store each time so the
 // Ptium address and credential are read fresh rather than cached past a change.
 func (s *Server) presentations() *presentation.Service {
-	return &presentation.Service{Spaces: s.Store, Links: s.Store, Settings: s.Store}
+	return &presentation.Service{Spaces: s.Store, Links: s.Store, Settings: s.Store, Cipher: s.Cipher}
 }
 
 // presentationRequest is what a caller may ask for.
