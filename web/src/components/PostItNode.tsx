@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ActionIcon, Menu, Tooltip } from '@mantine/core';
 import {
   IconBrain,
@@ -45,6 +45,58 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
   useEffect(() => setText(note.content), [note.content]);
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
+  /*
+   * How much of this thought the card is not showing.
+   *
+   * The textarea scrolls, so a long note has always been readable — but nothing
+   * on the card admitted there was more. Measured on a default note: 179
+   * characters, a 168px card, and 169px of text below the fold. More of the
+   * thought was hidden than shown, and it ended mid-syllable with no ellipsis.
+   * On a canvas whose whole purpose is remembering what you wrote, a card that
+   * quietly misreports its own contents is the worst thing it can do.
+   */
+  const [hiddenLines, setHiddenLines] = useState(0);
+  const measure = useCallback(() => {
+    const ta = editorRef.current;
+    if (!ta) return;
+    const hidden = ta.scrollHeight - ta.clientHeight;
+    if (hidden <= 2) {
+      setHiddenLines(0);
+      return;
+    }
+    const line = Number.parseFloat(getComputedStyle(ta).lineHeight) || 24;
+    setHiddenLines(Math.max(1, Math.round(hidden / line)));
+  }, []);
+
+  // Re-measured on the text and on the card's size, because either can put a
+  // line out of view: typing more, or dragging the note smaller.
+  useEffect(measure, [measure, text]);
+  useEffect(() => {
+    const ta = editorRef.current;
+    if (!ta || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(ta);
+    return () => observer.disconnect();
+  }, [measure]);
+
+  /*
+   * Grow the card until the whole thought fits.
+   *
+   * Only ever on a click. A note's size is something the person set, and this
+   * canvas treats what someone arranged as theirs — so the card says there is
+   * more and waits, rather than resizing itself the moment text overflows.
+   */
+  const fitToContent = () => {
+    const ta = editorRef.current;
+    const card = cardRef.current;
+    if (!ta || !card) return;
+    // The gap between what the textarea can show and what the card measures,
+    // taken from the elements rather than restated from the stylesheet, so
+    // padding can change in one place.
+    const chrome = card.getBoundingClientRect().height - ta.clientHeight;
+    data.onPatch(note.id, { height: Math.ceil(ta.scrollHeight + chrome) });
+  };
+
   const schedule = (value: string) => {
     setText(value);
     window.clearTimeout(timer.current);
@@ -59,7 +111,7 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
   return (
     <div
       ref={cardRef}
-      className={`postit postit-${colorClass} ${note.source === 'dream' ? 'postit-dream' : ''} ${selected ? 'selected' : ''}`}
+      className={`postit postit-${colorClass} ${note.source === 'dream' ? 'postit-dream' : ''} ${selected ? 'selected' : ''} ${hiddenLines ? 'postit-clipped' : ''}`}
       style={{ '--note-rotation': `${note.rotation || 0}deg` } as CSSProperties}
       role="group"
       tabIndex={0}
@@ -130,15 +182,42 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
         placeholder={t('지금 떠오르는 생각을 적어보세요')}
         autoFocus={note.content === ''}
       />
-      {data.setAsideLine && (
-        <Tooltip label={t('접어 둔 갈래: {line}', { line: data.setAsideLine })} multiline w={220}>
-          <span className="postit-set-aside">{t('접어 둠')}</span>
-        </Tooltip>
-      )}
+      {/*
+       * One row rather than three badges each pinned to the same corner. A note
+       * can be set aside AND a question AND held back from Dream at once, and
+       * absolutely positioning each one put them on top of each other.
+       */}
+      <div className="note-badges">
+        {data.setAsideLine && (
+          <Tooltip label={t('접어 둔 갈래: {line}', { line: data.setAsideLine })} multiline w={220}>
+            <span className="note-badge note-badge-set-aside">{t('접어 둠')}</span>
+          </Tooltip>
+        )}
+        {/* Marked by the person, never inferred — so the mark has to be visible.
+            It was settable from the menu and left no trace on the card, which
+            made it a mark only its author could remember making. */}
+        {note.kind === 'question' && (
+          <Tooltip label={t('질문으로 표시한 생각')}>
+            <span className="note-badge note-badge-question">{t('질문')}</span>
+          </Tooltip>
+        )}
+        {note.aiExcluded && (
+          <Tooltip label={t('Dream 분석이 이 생각을 읽지 않습니다')}>
+            <span className="note-badge note-badge-excluded">{t('분석 제외')}</span>
+          </Tooltip>
+        )}
+      </div>
       {!!data.relatedCount && (
         <button className="related-chip nodrag" type="button" onClick={() => data.onGather(note.id)}>
           {t('관련 {count}', { count: data.relatedCount })}
         </button>
+      )}
+      {hiddenLines > 0 && (
+        <Tooltip label={t('눌러서 생각 전체가 보이게 넓히기')}>
+          <button className="more-chip nodrag" type="button" onClick={fitToContent}>
+            {t('+{count}줄', { count: hiddenLines })}
+          </button>
+        </Tooltip>
       )}
       <div className="note-actions nodrag">
         <Menu shadow="sm" width={170} position="bottom-end">
