@@ -895,8 +895,8 @@ export const en: Dictionary = {
   '접어 둔 이유: {reason}': 'Set aside because: {reason}',
   'umm을 docker compose로 실행 중이라면, 모델을 곁에 띄우는 것이 두 줄입니다. 받아 둔 뒤에는 네트워크 없이 동작합니다.':
     'If you run umm with docker compose, standing a model up beside it is two lines. Once pulled, it works with no network.',
-  '그 다음 위의 AI Gateway 주소를 http://embeddings:11434 으로, 임베딩 모델을 bge-m3 으로 저장하고 다시 측정하세요. 후보 모델 비교는 docs/admin-guide.md에 있습니다.':
-    'Then set the AI Gateway above to http://embeddings:11434 with embedding model bge-m3, save, and measure again. Candidate models are compared in docs/admin-guide.md.',
+  '그 다음 아래 임베딩 Gateway 주소에 http://embeddings:11434 을, 임베딩 모델에 bge-m3 을 넣고 저장한 뒤 다시 측정하세요. 채팅 모델 주소는 그대로 두면 됩니다. 후보 모델 비교는 docs/admin-guide.md에 있습니다.':
+    'Then put http://embeddings:11434 in the embedding gateway URL below and bge-m3 in the embedding model, save, and measure again. Leave the chat model address as it is. Candidate models are compared in docs/admin-guide.md.',
   '공간이 커서 최근 생각까지만 비교했습니다. 겹치는 것이 더 있을 수 있습니다.':
     'The space is large, so only recent thoughts were compared. There may be more duplicates.',
   '연결과 갈래': 'Connections and lines',

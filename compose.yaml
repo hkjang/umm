@@ -17,8 +17,8 @@ services:
     build:
       context: .
       args:
-        VERSION: 0.34.0
-    image: umm:v0.34.0
+        VERSION: 0.34.1
+    image: umm:v0.34.1
     environment:
       POSTGRES_DSN: "postgres://umm:local-development-only@postgres:5432/umm?sslmode=disable&pool_max_conns=16"
       BOOTSTRAP_ADMIN: admin
@@ -45,7 +45,7 @@ services:
   #   docker compose --profile embeddings up -d
   #   docker compose exec embeddings ollama pull bge-m3
   #
-  # Then set the AI Gateway to http://embeddings:11434 with embedding model
+  # Then set the *embedding* gateway URL to http://embeddings:11434 with model
   # bge-m3, and confirm it took effect on Admin -> AI Gateway -> Embedding
   # quality. Candidates measured on the same data, including one that scores
   # higher on the labelled sets but fails umm's end-to-end clustering test, are
