@@ -91,6 +91,7 @@ import { useAuth } from '../auth-context';
 import { msg, useTranslation } from '../i18n';
 import ImportThoughtsModal from '../components/ImportThoughtsModal';
 import PresentationModal from '../components/PresentationModal';
+import { opensSummarised } from '../opening-view';
 import BranchPanel from '../components/BranchPanel';
 import { neighbourhood } from '../lens';
 import { hasOverlaps, packGroups, ringAround, spreadOverlaps, type Placement } from '../layout';
@@ -111,6 +112,11 @@ type CanvasNode = Node<PostItData> | Node<ClusterNodeData>;
 // existing 0.15 floor and 2.2 ceiling: it is roughly where a note becomes a
 // coloured rectangle.
 const clusterZoom = 0.45;
+// The canvas's own view limits, named once. The prediction in opening-view.ts
+// has to use exactly these or it would predict a different opening view from
+// the one fitView produces, and the canvas would flicker through the notes on
+// its way to the summary.
+const canvasView = { padding: 0.3, minZoom: 0.15, maxZoom: 2.2 };
 
 // Summarising exists to answer information overload, so it does not apply to a
 // canvas that has none. Opening a space with a dozen notes zooms out far enough
@@ -241,7 +247,23 @@ function CanvasInner() {
   // rather than the zoom value: storing the number would rerender the canvas on
   // every wheel tick to no purpose.
   const [zoomedOut, setZoomedOut] = useState(false);
+  // Whether the canvas has reported a real viewport yet. Until it has, how far
+  // out the notes sit is a prediction; after it has, it is a fact, and the
+  // prediction must get out of the way — otherwise zooming back in would never
+  // bring the notes back, because the notes have not moved.
+  const [viewportKnown, setViewportKnown] = useState(false);
   const [clusters, setClusters] = useState<Cluster[]>([]);
+  // The space whose grouping has been settled — arrived or failed. Recorded as
+  // an id rather than a boolean flag so that "we have not asked yet" cannot
+  // depend on which effect React happens to run first: the effect that builds
+  // the nodes runs before the one that fetches, and a flag started at false
+  // sent it down the "draw every note" path every time.
+  const [clustersSettledFor, setClustersSettledFor] = useState('');
+  // The canvas's own size, which decides how far out the notes have to be
+  // fitted. Measured rather than assumed: the sidebar and the window both
+  // change it.
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   // Where the selected thought could be filed. Loaded with the connection panel,
   // because filing and connecting are the two things you do to a thought you are
   // looking at.
@@ -315,7 +337,12 @@ function CanvasInner() {
       .catch(() => undefined);
   }, []);
   useEffect(() => {
-    if (params.spaceId && params.spaceId !== activeSpace) setActiveSpace(params.spaceId);
+    if (params.spaceId && params.spaceId !== activeSpace) {
+      setActiveSpace(params.spaceId);
+      // A different space opens fresh, so its opening view is predicted again
+      // rather than inherited from wherever the last one had been zoomed to.
+      setViewportKnown(false);
+    }
   }, [params.spaceId]);
   const loadCanvas = useCallback(
     async (silent = false) => {
@@ -661,6 +688,33 @@ function CanvasInner() {
           }),
     [notes, searchTerms],
   );
+
+  /*
+   * Whether the canvas is showing groups rather than thoughts.
+   *
+   * Worked out from where the notes are, not from mounting them and measuring.
+   * fitView only reports the zoom after React Flow has built and measured every
+   * node, so a space of two thousand notes built two thousand post-its and
+   * threw them away for a handful of cluster boxes. Measured in a browser:
+   * 2000 nodes mounted at +5.5s, replaced by 1 at +8.6s, against a request the
+   * server answered in 85ms.
+   *
+   * zoomedOut stays part of it because a person can zoom out by hand, and then
+   * the mounted view is the truth. The prediction only decides how the canvas
+   * opens.
+   */
+  const summarised = useMemo(
+    () =>
+      viewportKnown
+        ? zoomedOut
+        : opensSummarised(
+            searchMatches,
+            { width: canvasSize.width, height: canvasSize.height },
+            { ...canvasView, clusterZoom, clusterMinNotes },
+          ),
+    [viewportKnown, zoomedOut, searchMatches, canvasSize.width, canvasSize.height],
+  );
+
   const visibleSpaces = useMemo(() => {
     const term = normalizeSearch(spaceQuery);
     return [...spaces]
@@ -717,7 +771,21 @@ function CanvasInner() {
         },
       }));
 
-    if (!zoomedOut || clusters.length === 0 || searchMatches.length < clusterMinNotes) {
+    if (!summarised || searchMatches.length < clusterMinNotes) {
+      setNodes(noteNodes(searchMatches));
+      return;
+    }
+
+    // Summarised, but the groups have not arrived yet. Drawing every note here
+    // would be building exactly what is about to be replaced — the cost this
+    // whole path exists to avoid — so the canvas stays on its loading state,
+    // which is true: it is still working out what to show.
+    if (clusters.length === 0) {
+      if (clustersSettledFor !== activeSpace) {
+        setNodes([]);
+        return;
+      }
+      // Asked, and there are no groups. The notes are what there is.
       setNodes(noteNodes(searchMatches));
       return;
     }
@@ -759,10 +827,26 @@ function CanvasInner() {
     openComments,
     zoomedOut,
     clusters,
+    clustersSettledFor,
+    activeSpace,
+    summarised,
     lens,
     setAsideLines,
   ]);
   useEffect(() => {
+    /*
+     * A connection between two thoughts has nowhere to land when the canvas is
+     * showing groups instead of thoughts.
+     *
+     * Building them anyway made React Flow resolve a handle for each one
+     * against nodes that are not mounted: measured at 854ms of querySelector
+     * and 250ms of getBBox in a space with two thousand connections, on a view
+     * that draws none of them.
+     */
+    if (summarised) {
+      setEdges([]);
+      return;
+    }
     const visible = new Set(searchMatches.map((note) => note.id));
     setEdges(
       rawEdges
@@ -783,7 +867,7 @@ function CanvasInner() {
           style: lens && !(lens.ids.has(e.source) && lens.ids.has(e.target)) ? { opacity: 0.15 } : undefined,
         })),
     );
-  }, [edgeStyle, rawEdges, searchMatches, lens]);
+  }, [edgeStyle, rawEdges, searchMatches, lens, summarised, setEdges]);
 
   /**
    * A lens over connections: everything within `steps` of one thought.
@@ -1001,23 +1085,47 @@ function CanvasInner() {
     [t],
   );
 
+  useEffect(() => {
+    const element = canvasRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return;
+    const read = () => {
+      const box = element.getBoundingClientRect();
+      setCanvasSize((current) =>
+        Math.round(current.width) === Math.round(box.width) && Math.round(current.height) === Math.round(box.height)
+          ? current
+          : { width: box.width, height: box.height },
+      );
+    };
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
   // Clusters are fetched when the canvas crosses into the zoomed-out view and
   // then reused, because the grouping does not change as the person keeps
   // zooming and refetching on every wheel tick would be a request storm.
   useEffect(() => {
-    if (!zoomedOut || !activeSpace) return;
+    // Asked for as soon as the canvas is going to open summarised, rather than
+    // waiting for a zoom event that only arrives after every note has been
+    // mounted and measured.
+    if (!summarised || !activeSpace) return;
     let cancelled = false;
-    api<{ clusters: Cluster[] }>(`/spaces/${activeSpace}/clusters`, { silent: true })
+    const asked = activeSpace;
+    api<{ clusters: Cluster[] }>(`/spaces/${asked}/clusters`, { silent: true })
       .then((result) => {
         if (!cancelled) setClusters(result.clusters);
       })
       .catch(() => {
         if (!cancelled) setClusters([]);
+      })
+      .finally(() => {
+        if (!cancelled) setClustersSettledFor(asked);
       });
     return () => {
       cancelled = true;
     };
-  }, [zoomedOut, activeSpace, notes.length]);
+  }, [summarised, activeSpace]);
 
   // Cluster shapes are not draggable, so only post-its reach these — but the
   // handler types follow the node union the canvas is declared with.
@@ -1435,7 +1543,7 @@ function CanvasInner() {
   const activeName = spaces.find((s) => s.id === activeSpace)?.name || 'My Space';
 
   return (
-    <div className="canvas-page">
+    <div className="canvas-page" ref={canvasRef}>
       {loading && (
         <div className="canvas-loading" role="status" aria-label={t('생각 불러오는 중')}>
           <Loader color="grape" />
@@ -1520,15 +1628,18 @@ function CanvasInner() {
             if (event.detail === 2) onPaneDoubleClick(event);
           }}
           onMove={(_, viewport) => {
+            // The canvas has now said where it actually is, so the prediction
+            // stands down.
+            setViewportKnown(true);
             // Only the crossing matters, so state changes once per crossing
             // rather than on every wheel tick.
             const out = viewport.zoom < clusterZoom;
             setZoomedOut((current) => (current === out ? current : out));
           }}
           fitView
-          fitViewOptions={{ padding: 0.3 }}
-          minZoom={0.15}
-          maxZoom={2.2}
+          fitViewOptions={{ padding: canvasView.padding }}
+          minZoom={canvasView.minZoom}
+          maxZoom={canvasView.maxZoom}
           deleteKeyCode={null}
           selectionOnDrag
           panOnScroll
