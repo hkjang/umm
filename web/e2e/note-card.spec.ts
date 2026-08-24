@@ -147,4 +147,77 @@ test.describe('note card', () => {
     // reopening the menu to find out.
     await expect(page.locator('.note-badge-question')).toHaveCount(1);
   });
+
+  /*
+   * Every mark at once, on the smallest note a person can make, in the longer
+   * language.
+   *
+   * The badges started out positioned over the card and unable to wrap. In
+   * English at 190px the three of them measured 207px inside a 138px box and
+   * the last one hung 68px past the card, across the note menu. Korean fitted
+   * at 139px against 138px — one pixel inside — so nothing looked wrong in the
+   * language the app is developed in. Only the combination shows it, which is
+   * why this test insists on all of it.
+   */
+  test('fits every mark inside the smallest note, in English too', async ({ page }) => {
+    await signIn(page, { locale: 'en' });
+    const made = await page.evaluate(async () => {
+      const post = async (path: string, body: unknown) =>
+        (
+          await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          })
+        ).json();
+      const space = await post('/api/v1/spaces', { name: 'every-mark' });
+      // The narrowest a note goes, so the row has the least room it ever gets.
+      const note = await post(`/api/v1/spaces/${space.id}/notes`, {
+        content: 'A question I am also keeping out of the analysis',
+        x: 0,
+        y: 0,
+        width: 190,
+        height: 120,
+        kind: 'question',
+        aiExcluded: true,
+      });
+      const branch = await post(`/api/v1/spaces/${space.id}/branches`, { name: 'a line I stopped' });
+      await fetch(`/api/v1/notes/${note.id}/branch`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branchId: branch.id }),
+      });
+      await post(`/api/v1/branches/${branch.id}/resolve`, { status: 'abandoned', resolution: 'not worth it' });
+      return { space: space.id, note: note.id };
+    });
+
+    await page.goto(`/space/${made.space}`);
+    await expect(page.getByRole('status', { name: /생각 불러오는 중|Loading thoughts/ })).toHaveCount(0);
+    const card = page.locator(`.react-flow__node[data-id="${made.note}"] .postit`);
+    await expect(card.locator('.note-badge')).toHaveCount(3);
+
+    const fit = await card.evaluate((el) => {
+      const row = el.querySelector('.note-badges')!;
+      const menu = el.querySelector('.note-actions')!.getBoundingClientRect();
+      const badges = [...row.querySelectorAll('.note-badge')].map((b) => b.getBoundingClientRect());
+      const box = el.getBoundingClientRect();
+      return {
+        // Not the row's own box: it is capped by max-width, so a badge can sit
+        // outside it while the row still measures as though it fits. What
+        // matters is where the badges actually are.
+        widest: Math.max(...badges.map((b) => b.right)),
+        cardRight: box.right,
+        menuLeft: menu.left,
+        lowest: Math.max(...badges.map((b) => b.bottom)),
+        cardBottom: box.bottom,
+      };
+    });
+    expect(fit.widest).toBeLessThanOrEqual(fit.cardRight);
+    expect(fit.widest).toBeLessThanOrEqual(fit.menuLeft);
+    expect(fit.lowest).toBeLessThanOrEqual(fit.cardBottom);
+
+    // Wrapping must not push the marks over the thought either.
+    const textTop = await card.locator('textarea').evaluate((el) => el.getBoundingClientRect().top);
+    expect(fit.lowest).toBeLessThanOrEqual(textTop + 1);
+  });
 });

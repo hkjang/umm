@@ -863,7 +863,7 @@ export const en: Dictionary = {
   '질문으로 표시한 생각': 'A thought marked as a question',
   '분석 제외': 'Not analysed',
   'Dream 분석이 이 생각을 읽지 않습니다': 'Dream analysis does not read this thought',
-  '+{count}줄': '+{count} lines',
+  '+{count}줄': '+{count} more',
   '눌러서 생각 전체가 보이게 넓히기': 'Click to grow the note until the whole thought fits',
   '이 방향으로 정함': 'Take this direction',
   '접어 두기': 'Set aside',
