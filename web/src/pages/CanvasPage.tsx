@@ -1678,6 +1678,7 @@ function CanvasInner() {
                 <IconSparkles size={19} />
               </ActionIcon>
             </Tooltip>
+            <div className="canvas-tool-divider" aria-hidden="true" />
             <Menu position="bottom" withinPortal width={230}>
               <Menu.Target>
                 <Tooltip label={t('한 갈래만 보기')}>
@@ -1741,6 +1742,7 @@ function CanvasInner() {
                 <IconList size={19} />
               </ActionIcon>
             </Tooltip>
+            <div className="canvas-tool-divider" aria-hidden="true" />
             <Tooltip label={t('공간 공유')}>
               <ActionIcon
                 className="canvas-action"
@@ -1794,6 +1796,7 @@ function CanvasInner() {
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
+            <div className="canvas-tool-divider" aria-hidden="true" />
             <Menu shadow="md">
               <Menu.Target>
                 <Tooltip label={t('선택한 생각 발전시키기')}>
@@ -1817,6 +1820,7 @@ function CanvasInner() {
                 ))}
               </Menu.Dropdown>
             </Menu>
+            <div className="canvas-tool-divider" aria-hidden="true" />
             <Tooltip label={t('관련 생각 군집 모으기')}>
               <ActionIcon
                 className="canvas-action"
