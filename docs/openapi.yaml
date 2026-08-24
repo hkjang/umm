@@ -344,6 +344,85 @@ paths:
       x-required-scope: notes:read
       responses:
         '200': { description: Thought clusters, content: { application/json: { schema: { type: object, properties: { clusters: { type: array, items: { $ref: '#/components/schemas/ThoughtCluster' } } } } } } }
+  /spaces/{spaceId}/presentation/preview:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+    get:
+      operationId: get_spaces_spaceId_presentation_preview
+      tags: [Thoughts]
+      summary: See what this space would become as a talk, without making anything
+      description: >-
+        Compiles the space's thoughts and connections into an ordered talk and
+        returns it with the Ptium deck source it produced. Nothing is created
+        and nothing is recorded. Slide text is the author's own sentences,
+        unchanged. `checked` says whether Ptium measured the result against a
+        real template, which it can only do against a deck that already exists —
+        pass `deckId` for that.
+      x-required-scope: notes:read
+      parameters:
+        - { in: query, name: title, schema: { type: string } }
+        - { in: query, name: includeExcluded, schema: { type: boolean } }
+        - { in: query, name: deckId, schema: { type: string } }
+      responses:
+        '200': { description: The compiled talk, content: { application/json: { schema: { $ref: '#/components/schemas/PresentationPreview' } } } }
+        '400': { description: Nothing in this space can become a talk }
+  /spaces/{spaceId}/presentations:
+    parameters:
+      - { $ref: '#/components/parameters/SpaceID' }
+    get:
+      operationId: get_spaces_spaceId_presentations
+      tags: [Thoughts]
+      summary: List the talks made from this space
+      x-required-scope: notes:read
+      responses:
+        '200': { description: Presentation links, content: { application/json: { schema: { type: object, properties: { presentations: { type: array, items: { $ref: '#/components/schemas/PresentationLink' } } } } } } }
+    post:
+      operationId: post_spaces_spaceId_presentations
+      tags: [Thoughts]
+      summary: Compile this space into a Ptium deck
+      description: >-
+        Creates a deck in Ptium and compiles the space into it. Requires
+        notes:write rather than notes:read because it sends the author's
+        thoughts to another service and creates something there.
+      x-required-scope: notes:write
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                noteIds: { type: array, items: { type: string, format: uuid } }
+                includeExcluded: { type: boolean }
+      responses:
+        '201': { description: The deck, content: { application/json: { schema: { type: object, properties: { link: { $ref: '#/components/schemas/PresentationLink' }, warnings: { type: array, items: { type: string } } } } } } }
+        '400': { description: Nothing in this space can become a talk }
+        '409': { description: No Ptium is configured }
+        '502': { description: Ptium refused or was unreachable }
+  /presentations/{linkId}/sources:
+    parameters:
+      - { in: path, name: linkId, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: get_presentations_linkId_sources
+      tags: [Thoughts]
+      summary: Which thoughts each slide quotes, and the source umm compiled
+      description: >-
+        The slides carry the author's own words, so being able to get back to
+        the note is being able to check that nothing was put in their mouth.
+      x-required-scope: notes:read
+      responses:
+        '200': { description: Slide sources, content: { application/json: { schema: { type: object, properties: { source: { type: string }, sources: { type: array, items: { $ref: '#/components/schemas/SlideSource' } } } } } } }
+        '404': { description: No such presentation }
+  /notes/{noteId}/presentations:
+    parameters:
+      - { $ref: '#/components/parameters/NoteID' }
+    get:
+      operationId: get_notes_noteId_presentations
+      tags: [Thoughts]
+      summary: Which talks quote this thought
+      x-required-scope: notes:read
+      responses:
+        '200': { description: Presentation links, content: { application/json: { schema: { type: object, properties: { presentations: { type: array, items: { $ref: '#/components/schemas/PresentationLink' } } } } } } }
   /spaces/{spaceId}/events:
     parameters:
       - { $ref: '#/components/parameters/SpaceID' }
@@ -1685,6 +1764,50 @@ components:
         note: { $ref: '#/components/schemas/Note' }
         score: { type: number, minimum: 0, maximum: 1 }
         reason: { type: string }
+    PresentationLink:
+      type: object
+      description: >-
+        umm's record that a space produced a deck. Ptium owns the presentation
+        and its slides; only the link is kept here, so nothing drifts when the
+        deck is edited.
+      properties:
+        id: { type: string, format: uuid }
+        spaceId: { type: string, format: uuid }
+        ptiumId: { type: string, description: Ptium's identifier for the deck. Opaque to umm. }
+        title: { type: string }
+        status: { type: string, enum: [pending, generating, ready, failed] }
+        error: { type: string, description: What Ptium said, when it failed. }
+        compiledSource: { type: string, description: The deck source umm sent. Omitted from list responses. }
+        thoughtCount: { type: integer }
+        excludedCount: { type: integer, description: Thoughts deliberately left out, so the count on screen is the real one. }
+        createdBy: { type: string, format: uuid, nullable: true }
+    SlideSource:
+      type: object
+      required: [slidePosition, noteId]
+      properties:
+        slidePosition:
+          type: integer
+          description: >-
+            Position in the deck, one-based, rather than a Ptium slide id: a
+            slide id changes when the deck is recompiled and umm has no way to
+            learn that it did.
+        noteId: { type: string, format: uuid }
+    PresentationPreview:
+      type: object
+      properties:
+        storyline:
+          type: object
+          description: The talk in umm's own terms — order, grouping, and the author's sentences.
+        source: { type: string, description: The same talk written in Ptium's deck source language. }
+        slideCount: { type: integer, description: Present only when Ptium checked it. }
+        warnings: { type: array, items: { type: string } }
+        checked:
+          type: boolean
+          description: >-
+            Whether Ptium measured this against a real template. False on a
+            first preview, because Ptium can only dry-run source against a deck
+            that already exists. Without this flag, a preview with no warnings
+            and one that was never checked look identical.
     ThoughtCluster:
       type: object
       required: [id, label, noteIds, cohesion, basis]
