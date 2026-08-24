@@ -179,7 +179,10 @@ export default function AppLayout() {
           </Text>
         </AppShell.Section>
       </AppShell.Navbar>
-      <AppShell.Main h="100%">
+      {/* No h="100%" here: an inline height outranks the stylesheet, and it let
+          the region grow to its content instead of bounding it, which is what
+          left long pages unscrollable. .app-main owns the height. */}
+      <AppShell.Main className="app-main">
         <Outlet />
       </AppShell.Main>
       <OfflineStatus />
