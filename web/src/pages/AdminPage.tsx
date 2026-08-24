@@ -609,7 +609,11 @@ export default function AdminPage() {
                               variant={model.likelyEmbedding ? 'light' : 'subtle'}
                               color={model.likelyEmbedding ? 'grape' : 'gray'}
                               onClick={() => {
-                                update('ai_gateway', 'base_url', gateway.baseUrl);
+                                // The embedding address, not the chat one. This
+                                // used to overwrite Base URL, which was right
+                                // when both shared a field and would now point
+                                // the chat model at an embeddings-only server.
+                                update('ai_gateway', 'embedding_base_url', gateway.baseUrl);
                                 update('ai_gateway', 'embedding_model', model.name);
                                 setFound([]);
                               }}
@@ -1392,7 +1396,7 @@ function EmbeddingQualityPanel() {
               </Code>
               <Text size="xs" c="dimmed" mt={6}>
                 {t(
-                  '그 다음 위의 AI Gateway 주소를 http://embeddings:11434 으로, 임베딩 모델을 bge-m3 으로 저장하고 다시 측정하세요. 후보 모델 비교는 docs/admin-guide.md에 있습니다.',
+                  '그 다음 아래 임베딩 Gateway 주소에 http://embeddings:11434 을, 임베딩 모델에 bge-m3 을 넣고 저장한 뒤 다시 측정하세요. 채팅 모델 주소는 그대로 두면 됩니다. 후보 모델 비교는 docs/admin-guide.md에 있습니다.',
                 )}
               </Text>
             </Alert>
