@@ -116,6 +116,13 @@ func (s *Server) router() chi.Router {
 			protected.Get("/notes/{noteID}/history", s.noteHistory)
 			protected.Post("/notes/{noteID}/restore/{version}", s.restoreNote)
 			protected.Get("/spaces/{spaceID}/clusters", s.thoughtClusters)
+			// Turning a space into a talk. The preview is a GET because looking
+			// at what a space would become must not change anything.
+			protected.Get("/spaces/{spaceID}/presentation/preview", s.previewPresentation)
+			protected.Post("/spaces/{spaceID}/presentations", s.createPresentation)
+			protected.Get("/spaces/{spaceID}/presentations", s.listPresentations)
+			protected.Get("/presentations/{linkID}/sources", s.presentationSources)
+			protected.Get("/notes/{noteID}/presentations", s.notePresentations)
 			protected.Get("/spaces/{spaceID}/export/authorize", s.authorizeExport)
 			protected.Get("/spaces/{spaceID}/export/markdown", s.exportMarkdown)
 			protected.Delete("/notes/{noteID}", s.deleteNote)
