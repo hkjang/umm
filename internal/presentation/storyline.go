@@ -340,15 +340,17 @@ func comparisonSlide(t Thought, rel related, byID map[uuid.UUID]Thought, consume
 			continue
 		}
 		other := byID[id]
-		slide := Slide{
-			Role:  RoleComparison,
-			Title: headline(t),
-			Points: []Point{
-				{Text: body(t), From: t.ID},
-				{Text: body(other), From: other.ID},
-			},
-			From: []uuid.UUID{t.ID, other.ID},
+		slide := Slide{Role: RoleComparison, Title: headline(t), From: []uuid.UUID{t.ID, other.ID}}
+		// The title is already this side of the disagreement, word for word, so
+		// repeating it as a point puts the same sentence on the slide twice.
+		// Dropped here rather than only when writing the source: the preview
+		// renders these points directly, and a preview that shows a line the
+		// deck will not is exactly the kind of lie this feature exists to
+		// avoid.
+		if text := body(t); text != slide.Title {
+			slide.Points = append(slide.Points, Point{Text: text, From: t.ID})
 		}
+		slide.Points = append(slide.Points, Point{Text: body(other), From: other.ID})
 		return slide, []uuid.UUID{t.ID, other.ID}, true
 	}
 	return Slide{}, nil, false

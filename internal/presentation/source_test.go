@@ -182,3 +182,57 @@ func TestEveryLineIsValidDeckSource(t *testing.T) {
 		}
 	}
 }
+
+// The invariant the preview screen depends on: what a person reads in the
+// preview is what the deck will say.
+//
+// The preview renders Storyline.Points directly while Ptium renders the source,
+// so the two can drift. They did: the emitter dropped a point identical to its
+// slide's title and the storyline kept it, so a comparison slide showed the
+// same sentence twice on screen and once in the deck. A preview that shows a
+// line the deck will not is the one thing this feature must never do.
+func TestThePreviewSaysWhatTheDeckWillSay(t *testing.T) {
+	q := Thought{ID: id(1), Content: "정말 더 나은가?", Kind: "question"}
+	thoughts := []Thought{
+		q,
+		thought(2, "격주가 낫다", 700, 0),
+		thought(3, "맥락을 잊는다", 1400, 0),
+		thought(4, "지난 분기 3회 취소", 700, 300),
+		thought(5, "다음 스프린트에 시험한다", 2100, 0),
+	}
+	links := []Link{
+		link(2, 1, store.RelationAnswers),
+		link(4, 2, store.RelationSupports),
+		link(2, 3, store.RelationContradicts),
+		link(3, 5, store.RelationFollows),
+	}
+	story := Compile(thoughts, links, Options{Title: "회고"})
+	source := WriteSource(story, SourceOptions{})
+
+	// Every bullet the deck will show, in order.
+	var inDeck []string
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if after, ok := strings.CutPrefix(trimmed, "- "); ok {
+			inDeck = append(inDeck, strings.TrimPrefix(after, `\`))
+		}
+	}
+	// Every bullet the preview will show, in the same order.
+	var inPreview []string
+	for _, slide := range story.Slides {
+		for _, point := range slide.Points {
+			for _, line := range splitLines(point.Text) {
+				inPreview = append(inPreview, line)
+			}
+		}
+	}
+
+	if len(inDeck) != len(inPreview) {
+		t.Fatalf("the preview shows %d lines and the deck %d:\npreview %q\ndeck    %q", len(inPreview), len(inDeck), inPreview, inDeck)
+	}
+	for i := range inDeck {
+		if inDeck[i] != inPreview[i] {
+			t.Fatalf("line %d differs: preview %q, deck %q", i, inPreview[i], inDeck[i])
+		}
+	}
+}

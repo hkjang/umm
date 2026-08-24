@@ -1243,3 +1243,38 @@ textarea,
   font-size: 30px;
   opacity: 0.55;
 }
+
+/* The talk this space would become, before anything is made.
+   Indent and weight carry the structure, because the point of the screen is to
+   see the shape of the argument at a glance and correct it in the space rather
+   than in the deck. */
+.storyline-slide {
+  padding: 7px 9px;
+  border-radius: 8px;
+  border-left: 3px solid transparent;
+}
+.storyline-slide + .storyline-slide {
+  margin-top: 2px;
+}
+.storyline-number {
+  min-width: 18px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* A question the person marked opens a part of the talk. */
+.storyline-section {
+  border-left-color: #6b8fd4;
+  background: rgba(107, 143, 212, 0.07);
+}
+/* Two thoughts they recorded as contradicting each other. umm keeps
+   disagreements instead of resolving them, so the deck can show both. */
+.storyline-comparison {
+  border-left-color: #d59b5a;
+  background: rgba(213, 155, 90, 0.08);
+}
+.storyline-lead {
+  padding-left: 25px;
+}
+.storyline-point {
+  color: var(--ink);
+}
