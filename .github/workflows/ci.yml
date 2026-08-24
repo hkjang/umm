@@ -42,6 +42,12 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
+      # --- Version -----------------------------------------------------------
+      # Before anything slow: a version that disagrees with itself fails the
+      # release workflow at tag time, which is after the merge.
+      - name: Version consistency
+        run: ./scripts/check-version.sh
+
       # --- Go ---------------------------------------------------------------
       - run: go vet ./...
       # -p 1 because the integration tests share one PostgreSQL database, and
