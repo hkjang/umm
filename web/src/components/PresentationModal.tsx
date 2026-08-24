@@ -38,6 +38,18 @@ export interface Storyline {
   Excluded: string[] | null;
 }
 
+export interface PresentationLink {
+  id: string;
+  ptiumId: string;
+  title: string;
+  status: 'pending' | 'generating' | 'ready' | 'failed';
+  error?: string;
+  thoughtCount: number;
+  excludedCount: number;
+  /** Where the deck can be opened. Absent when no Ptium is configured. */
+  url?: string;
+}
+
 export interface PresentationPreview {
   storyline: Storyline;
   source: string;
@@ -72,6 +84,17 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [made, setMade] = useState<{ id: string; warnings: string[] } | null>(null);
+  const [history, setHistory] = useState<PresentationLink[]>([]);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const body = await api<{ presentations: PresentationLink[] }>(`/spaces/${spaceID}/presentations`);
+      setHistory(body.presentations ?? []);
+    } catch {
+      // A history that cannot be read must not stop someone making a new deck.
+      setHistory([]);
+    }
+  }, [spaceID]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -94,7 +117,8 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
     if (!opened) return;
     setMade(null);
     void load();
-  }, [opened, load]);
+    void loadHistory();
+  }, [opened, load, loadHistory]);
 
   const create = async () => {
     setBusy(true);
@@ -105,11 +129,12 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
       // Only when the person asked for it: a selection that silently narrowed
       // the deck would drop thoughts they expected to see.
       if (onlySelection && selection.length > 0) body.noteIds = selection;
-      const result = await api<{ link: { ptiumId: string }; warnings: string[] }>(
+      const result = await api<{ link: PresentationLink; warnings: string[] }>(
         `/spaces/${spaceID}/presentations`,
         json('POST', body),
       );
       setMade({ id: result.link.ptiumId, warnings: result.warnings ?? [] });
+      void loadHistory();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t('발표 자료를 만들지 못했습니다.'));
     } finally {
@@ -251,6 +276,49 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
               </Stack>
             </ScrollArea.Autosize>
           </>
+        )}
+
+        {history.length > 0 && (
+          <Stack gap={4}>
+            {/* What this space has already produced. It belongs here rather
+                than on a page of its own because this is where a person is
+                standing when the question "did I already make one of these"
+                occurs to them. */}
+            <Text size="sm" fw={620}>
+              {t('이 공간으로 만든 발표')}
+            </Text>
+            {history.map((link) => (
+              <Group key={link.id} gap={8} wrap="nowrap" className="presentation-history-row">
+                <Text size="sm" style={{ flex: 1, minWidth: 0 }} truncate>
+                  {link.title || t('제목 없음')}
+                </Text>
+                {link.status === 'failed' ? (
+                  <Tooltip label={link.error || t('만들지 못했습니다.')} multiline w={260}>
+                    <Badge size="sm" variant="light" color="red">
+                      {t('실패')}
+                    </Badge>
+                  </Tooltip>
+                ) : (
+                  <Badge size="sm" variant="light" color="gray">
+                    {t('생각 {count}개', { count: link.thoughtCount })}
+                  </Badge>
+                )}
+                {link.url && (
+                  <Button
+                    size="compact-xs"
+                    variant="subtle"
+                    component="a"
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    leftSection={<IconExternalLink size={13} />}
+                  >
+                    {t('열기')}
+                  </Button>
+                )}
+              </Group>
+            ))}
+          </Stack>
         )}
 
         <Group justify="space-between">

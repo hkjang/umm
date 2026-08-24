@@ -524,7 +524,7 @@ func (s *Store) putSettingPreserving(ctx context.Context, key string, value any,
 
 func AllowedSetting(key string) bool {
 	switch key {
-	case "general", "oidc", "security", "workflow", "dream", "ai_gateway", "intelligence":
+	case "general", "oidc", "security", "workflow", "dream", "ai_gateway", "intelligence", "ptium":
 		return true
 	}
 	return false

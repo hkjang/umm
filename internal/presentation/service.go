@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,6 +42,12 @@ type Settings interface {
 	GetSetting(ctx context.Context, key string, dst any) error
 }
 
+// Decrypter unwraps a stored credential. It stays an interface so this package
+// keeps no hard dependency on key management, the same way the store does.
+type Decrypter interface {
+	Decrypt(string) (string, error)
+}
+
 // Ptium is what the service needs from a Ptium installation.
 type Ptium interface {
 	CreateDeck(ctx context.Context, title, templateID, language string) (Deck, error)
@@ -61,6 +68,12 @@ type Service struct {
 	Spaces   Spaces
 	Links    Links
 	Settings Settings
+	// Cipher unwraps the stored Ptium credential. Secrets are written to
+	// app_settings encrypted and prefixed "enc:", so without this the bridge
+	// sends the ciphertext as a bearer token and Ptium answers 401 — which
+	// reads exactly like a wrong key and sends the operator to check the one
+	// thing that was right.
+	Cipher Decrypter
 	// NewPtium builds a client from the configured address. Injected so a test
 	// can hand back a stub without standing up an HTTP server, and so the
 	// credential is read at call time rather than cached past a rotation.
@@ -260,17 +273,38 @@ func (s *Service) client(ctx context.Context) (Ptium, Config, error) {
 	if cfg.BaseURL == "" {
 		return nil, cfg, ErrNotConfigured
 	}
+	key, err := s.credential(cfg.APIKey)
+	if err != nil {
+		return nil, cfg, err
+	}
+
 	build := s.NewPtium
 	if build == nil {
 		build = func(c Config) (Ptium, error) {
 			return NewClient(c.BaseURL, c.APIKey, time.Duration(c.TimeoutSeconds)*time.Second)
 		}
 	}
-	client, err := build(cfg)
+	// The decrypted key is handed to the builder, never written back to cfg,
+	// so a plaintext credential does not travel any further than the client
+	// that needs it.
+	withKey := cfg
+	withKey.APIKey = key
+	client, err := build(withKey)
 	if err != nil {
 		return nil, cfg, err
 	}
 	return client, cfg, nil
+}
+
+// credential unwraps a stored secret, leaving a plain one alone.
+func (s *Service) credential(stored string) (string, error) {
+	if !strings.HasPrefix(stored, "enc:") {
+		return stored, nil
+	}
+	if s.Cipher == nil {
+		return "", errors.New("ptium credential is encrypted but no key is available to read it")
+	}
+	return s.Cipher.Decrypt(strings.TrimPrefix(stored, "enc:"))
 }
 
 // SlideSources maps each slide's position to the thoughts on it.

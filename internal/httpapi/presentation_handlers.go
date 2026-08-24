@@ -3,9 +3,12 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/presentation"
+	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -19,7 +22,7 @@ import (
 // presentations returns the service, built from the store each time so the
 // Ptium address and credential are read fresh rather than cached past a change.
 func (s *Server) presentations() *presentation.Service {
-	return &presentation.Service{Spaces: s.Store, Links: s.Store, Settings: s.Store}
+	return &presentation.Service{Spaces: s.Store, Links: s.Store, Settings: s.Store, Cipher: s.Cipher}
 }
 
 // presentationRequest is what a caller may ask for.
@@ -110,7 +113,34 @@ func (s *Server) listPresentations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "발표 자료 목록을 불러오지 못했습니다.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"presentations": links})
+	writeJSON(w, 200, map[string]any{"presentations": s.withDeckURLs(r, links)})
+}
+
+// deckLink is a stored link plus where the deck can be opened.
+type deckLink struct {
+	store.PresentationLink
+	// URL is computed on every read and never stored. An administrator who
+	// moves Ptium would otherwise leave every past link pointing at an address
+	// that no longer answers, with no way to tell which ones were stale.
+	URL string `json:"url,omitempty"`
+}
+
+func (s *Server) withDeckURLs(r *http.Request, links []store.PresentationLink) []deckLink {
+	var cfg presentation.Config
+	// A missing or unreadable setting is not an error here: the list is still
+	// worth showing, just without somewhere to click through to.
+	_ = s.Store.GetSetting(r.Context(), "ptium", &cfg)
+	base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+
+	out := make([]deckLink, 0, len(links))
+	for _, link := range links {
+		row := deckLink{PresentationLink: link}
+		if base != "" && link.PtiumID != "" {
+			row.URL = base + "/presentations/" + url.PathEscape(link.PtiumID) + "/editor"
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // presentationSources answers "where did this slide's sentences come from".
@@ -160,7 +190,7 @@ func (s *Server) notePresentations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "이 생각이 쓰인 발표 자료를 불러오지 못했습니다.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"presentations": links})
+	writeJSON(w, 200, map[string]any{"presentations": s.withDeckURLs(r, links)})
 }
 
 // writePresentationError turns the service's errors into the right status.

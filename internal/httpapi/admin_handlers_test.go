@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/hkjang/umm/internal/dream"
+	"github.com/hkjang/umm/internal/store"
 )
 
 func TestValidateGeneralSettings(t *testing.T) {
@@ -137,5 +138,37 @@ func TestOmittedGatewayAddressReadsAsUnset(t *testing.T) {
 	ptium := map[string]any{"timeout_seconds": 30.0}
 	if err := s.validateSetting("ptium", ptium); err != nil {
 		t.Fatalf("ptium settings with no address were rejected: %v", err)
+	}
+}
+
+// Every section that has validation has to be reachable, or the validation
+// guards a page nobody can open.
+//
+// ptium shipped with a validator, a secret registration and a seeded row, and
+// was still 404 through the admin API because it was missing from the
+// allowlist — which made the whole feature unconfigurable. Checked as a class
+// rather than one name, so the next section cannot repeat it.
+func TestEverySectionWithValidationIsReachable(t *testing.T) {
+	for _, section := range []string{"general", "oidc", "security", "workflow", "dream", "ai_gateway", "intelligence", "ptium"} {
+		if !store.AllowedSetting(section) {
+			t.Fatalf("section %q has validation but cannot be written through the admin API", section)
+		}
+	}
+	// And the guard is a real one, not a function that says yes to everything.
+	if store.AllowedSetting("not_a_section") {
+		t.Fatal("the allowlist accepts anything")
+	}
+}
+
+// A section whose secrets are registered must also be writable, or the
+// credential is masked on a page that cannot be saved.
+func TestEverySectionWithSecretsIsReachable(t *testing.T) {
+	for _, section := range []string{"oidc", "ai_gateway", "ptium"} {
+		if len(secretFields(section)) == 0 {
+			t.Fatalf("section %q is expected to hold a secret", section)
+		}
+		if !store.AllowedSetting(section) {
+			t.Fatalf("section %q holds a secret but cannot be written", section)
+		}
 	}
 }
