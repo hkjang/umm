@@ -109,6 +109,8 @@ func secretFields(section string) []string {
 		return []string{"client_secret"}
 	case "ai_gateway":
 		return []string{"api_key", "embedding_api_key"}
+	case "ptium":
+		return []string{"api_key"}
 	}
 	return nil
 }
@@ -243,17 +245,19 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 			return fmt.Errorf("AI 응답 Token Limit은 %d~%s 사이의 정수여야 합니다", dream.MinTokenLimit, "262,144")
 		}
 	case "ai_gateway":
-		raw := strings.TrimSpace(fmt.Sprint(v["base_url"]))
+		// Through settingString, so an omitted address reads as unset rather
+		// than as the literal "<nil>" — which url.Parse accepts and then fails
+		// the scheme check, rejecting the request with "the URL is invalid"
+		// when there is no URL at all. embedding_base_url below already guarded
+		// against this; base_url did not.
+		raw := settingString(v, "base_url")
 		if raw != "" {
 			u, err := url.Parse(raw)
 			if err != nil || !(u.Scheme == "http" || u.Scheme == "https") || u.Host == "" {
 				return errors.New("AI Gateway URL이 올바르지 않습니다")
 			}
 		}
-		embedURL := strings.TrimSpace(fmt.Sprint(v["embedding_base_url"]))
-		if embedURL == "<nil>" {
-			embedURL = ""
-		}
+		embedURL := settingString(v, "embedding_base_url")
 		if embedURL != "" {
 			// Refused rather than ignored. A malformed address here would leave
 			// embeddings quietly falling back to the offline algorithm, and the
@@ -276,7 +280,7 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 		if !ok || math.Trunc(retries) != retries || retries < 0 || retries > dream.MaxGatewayRetries {
 			return fmt.Errorf("AI Gateway 재시도는 0~%d 사이의 정수여야 합니다", dream.MaxGatewayRetries)
 		}
-		if model := strings.TrimSpace(fmt.Sprint(v["embedding_model"])); model != "" && model != "<nil>" {
+		if model := settingString(v, "embedding_model"); model != "" {
 			if raw == "" && embedURL == "" {
 				return errors.New("임베딩 모델을 사용하려면 AI Gateway 주소 또는 임베딩 Gateway 주소가 필요합니다")
 			}
@@ -284,8 +288,45 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 				return errors.New("임베딩 모델 이름은 200자 이내여야 합니다")
 			}
 		}
+	case "ptium":
+		base := settingString(v, "base_url")
+		if base != "" {
+			// Refused rather than ignored, for the same reason the embedding
+			// address is: a saved setting that does nothing looks exactly like
+			// one that works until someone tries to make a deck.
+			u, err := url.Parse(base)
+			if err != nil || !(u.Scheme == "http" || u.Scheme == "https") || u.Host == "" {
+				return errors.New("Ptium 주소가 올바르지 않습니다")
+			}
+		}
+		if key := settingString(v, "api_key"); base == "" && key != "" {
+			return errors.New("Ptium API 키를 쓰려면 Ptium 주소가 필요합니다")
+		}
+		if language := settingString(v, "language"); len(language) > 32 {
+			return errors.New("Ptium 언어 코드는 32자 이내여야 합니다")
+		}
+		if template := settingString(v, "template_id"); len(template) > 200 {
+			return errors.New("Ptium 템플릿 ID는 200자 이내여야 합니다")
+		}
+		timeout, ok := v["timeout_seconds"].(float64)
+		if !ok || math.Trunc(timeout) != timeout || timeout < 5 || timeout > 300 {
+			return errors.New("Ptium Timeout은 5~300초 사이의 정수여야 합니다")
+		}
 	}
 	return nil
+}
+
+// settingString reads one setting field as trimmed text.
+//
+// A missing key formats as the literal "<nil>" through fmt.Sprint, which read
+// as a real value would turn an unset address into a saved one. Every caller
+// was writing that check out by hand, and one of them had already forgotten it.
+func settingString(v map[string]any, key string) string {
+	value := strings.TrimSpace(fmt.Sprint(v[key]))
+	if value == "<nil>" {
+		return ""
+	}
+	return value
 }
 
 func chiParam(r *http.Request, key string) string { return strings.TrimSpace(chi.URLParam(r, key)) }

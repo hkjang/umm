@@ -78,3 +78,64 @@ func TestValidateSecuritySettingsDistinguishesOmittedAndExplicitValues(t *testin
 		t.Fatal("an explicit null abuse guard was accepted as an omission")
 	}
 }
+
+func TestValidatePtiumSettings(t *testing.T) {
+	s := &Server{}
+	base := func(over map[string]any) map[string]any {
+		v := map[string]any{"base_url": "", "api_key": "", "template_id": "", "language": "ko", "timeout_seconds": 30.0}
+		for k, val := range over {
+			v[k] = val
+		}
+		return v
+	}
+
+	if err := s.validateSetting("ptium", base(nil)); err != nil {
+		t.Fatalf("the seeded, unconnected default was rejected: %v", err)
+	}
+	if err := s.validateSetting("ptium", base(map[string]any{"base_url": "https://ptium.internal"})); err != nil {
+		t.Fatalf("a valid address was rejected: %v", err)
+	}
+	// Refused rather than ignored: a saved address that does nothing looks
+	// exactly like one that works until someone tries to make a deck.
+	for _, bad := range []string{"ptium.internal", "javascript:alert(1)", "file:///etc/passwd", "not a url"} {
+		if err := s.validateSetting("ptium", base(map[string]any{"base_url": bad})); err == nil {
+			t.Fatalf("address %q accepted", bad)
+		}
+	}
+	// A key with nowhere to send it is a credential stored for no reason.
+	if err := s.validateSetting("ptium", base(map[string]any{"api_key": "ptium_x"})); err == nil {
+		t.Fatal("an API key without an address was accepted")
+	}
+	for _, timeout := range []any{0.0, 4.0, 301.0, 30.5, "30", nil} {
+		if err := s.validateSetting("ptium", base(map[string]any{"timeout_seconds": timeout})); err == nil {
+			t.Fatalf("timeout %v accepted", timeout)
+		}
+	}
+}
+
+// The Ptium credential has to be masked on read and encrypted on write like
+// every other secret, or connecting a second service quietly becomes the one
+// place a key is served back in clear text.
+func TestPtiumAPIKeyIsTreatedAsASecret(t *testing.T) {
+	fields := secretFields("ptium")
+	if len(fields) != 1 || fields[0] != "api_key" {
+		t.Fatalf("ptium secrets are %v", fields)
+	}
+}
+
+// An omitted address is unset, not invalid. fmt.Sprint renders a missing key as
+// the literal "<nil>", which url.Parse accepts and the scheme check then
+// rejects — so a payload with no base_url came back as "the URL is invalid"
+// when there was no URL at all.
+func TestOmittedGatewayAddressReadsAsUnset(t *testing.T) {
+	s := &Server{}
+	v := map[string]any{"timeout_seconds": 45.0, "max_retries": 2.0, "log_retention_days": 90.0}
+	if err := s.validateSetting("ai_gateway", v); err != nil {
+		t.Fatalf("settings with no address were rejected: %v", err)
+	}
+
+	ptium := map[string]any{"timeout_seconds": 30.0}
+	if err := s.validateSetting("ptium", ptium); err != nil {
+		t.Fatalf("ptium settings with no address were rejected: %v", err)
+	}
+}
