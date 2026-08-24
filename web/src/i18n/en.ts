@@ -903,4 +903,10 @@ export const en: Dictionary = {
   '가장 최근 {count}개만 보여 주고 있습니다. 그 앞에도 표시한 결정이 더 있습니다.':
     'Showing the {count} most recent. There are more marked decisions before these.',
   '생각 메모: {title} · 접어 둔 갈래: {line}': 'Thought: {title} · set-aside line: {line}',
+  '임베딩 Gateway 주소': 'Embedding gateway URL',
+  '비워 두면 위의 Base URL을 씁니다. 임베딩 서버를 따로 두었다면 여기에 적으세요.':
+    'Left empty, the Base URL above is used. Put the address here if the embedding server runs somewhere else.',
+  '임베딩 API Key': 'Embedding API key',
+  '임베딩 Gateway 주소를 적으면 위의 API Key는 그쪽으로 보내지 않습니다. 인증이 필요 없으면 비워 두세요.':
+    'With an embedding gateway URL set, the API key above is not sent there. Leave this empty if that server needs no authentication.',
 };

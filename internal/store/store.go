@@ -439,7 +439,7 @@ func (s *Store) PutSetting(ctx context.Context, key string, value any, actor uui
 	case "oidc":
 		return s.putSettingPreserving(ctx, key, value, actor, []string{"client_secret"})
 	case "ai_gateway":
-		return s.putSettingPreserving(ctx, key, value, actor, []string{"api_key"})
+		return s.putSettingPreserving(ctx, key, value, actor, []string{"api_key", "embedding_api_key"})
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {

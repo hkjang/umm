@@ -229,7 +229,9 @@ export default function AdminPage() {
         json('POST', {
           base_url: gateway.base_url || '',
           embedding_model: gateway.embedding_model || '',
+          embedding_base_url: gateway.embedding_base_url || '',
           api_key: gateway.api_key || '',
+          embedding_api_key: gateway.embedding_api_key || '',
         }),
       );
       if (result.ok) {
@@ -629,6 +631,21 @@ export default function AdminPage() {
                 placeholder="text-embedding-3-small"
                 value={settings.ai_gateway.embedding_model || ''}
                 onChange={(e) => update('ai_gateway', 'embedding_model', e.currentTarget.value)}
+              />
+              <TextInput
+                label={t('임베딩 Gateway 주소')}
+                description={t('비워 두면 위의 Base URL을 씁니다. 임베딩 서버를 따로 두었다면 여기에 적으세요.')}
+                placeholder="http://embeddings:11434"
+                value={settings.ai_gateway.embedding_base_url || ''}
+                onChange={(e) => update('ai_gateway', 'embedding_base_url', e.currentTarget.value)}
+              />
+              <PasswordInput
+                label={t('임베딩 API Key')}
+                description={t(
+                  '임베딩 Gateway 주소를 적으면 위의 API Key는 그쪽으로 보내지 않습니다. 인증이 필요 없으면 비워 두세요.',
+                )}
+                value={settings.ai_gateway.embedding_api_key || ''}
+                onChange={(e) => update('ai_gateway', 'embedding_api_key', e.currentTarget.value)}
               />
               <EmbeddingQualityPanel />
               <Switch

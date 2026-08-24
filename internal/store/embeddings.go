@@ -43,6 +43,28 @@ type embeddingSettings struct {
 	APIKey         string `json:"api_key"`
 	TimeoutSeconds int    `json:"timeout_seconds"`
 	EmbeddingModel string `json:"embedding_model"`
+	// Embeddings may live somewhere other than the chat model. umm's own compose
+	// file suggests exactly that — a small embedding server beside umm while a
+	// larger model answers questions elsewhere — and until now both had to be the
+	// same host.
+	EmbeddingBaseURL string `json:"embedding_base_url"`
+	EmbeddingAPIKey  string `json:"embedding_api_key"`
+}
+
+// embeddingEndpoint resolves where embeddings are sent and what to authenticate
+// with there.
+//
+// Leaving the embedding address empty keeps today's behaviour exactly: the chat
+// gateway's address and key. Setting it changes both, and the chat key is not
+// carried over — a key issued for one host is a credential, and sending it to a
+// different host because a field was left blank would hand it to whoever runs
+// that host. An embedding server with no auth is the ordinary case, so an empty
+// embedding key means no Authorization header rather than "reuse the other one".
+func (settings embeddingSettings) embeddingEndpoint() (baseURL, apiKey string) {
+	if custom := strings.TrimSpace(settings.EmbeddingBaseURL); custom != "" {
+		return custom, strings.TrimSpace(settings.EmbeddingAPIKey)
+	}
+	return strings.TrimSpace(settings.BaseURL), settings.APIKey
 }
 
 type embeddingCache struct {
@@ -75,10 +97,10 @@ func (s *Store) EmbeddingProvider(ctx context.Context) intelligence.Provider {
 }
 
 func (s *Store) embeddingProviderFromSettings(settings embeddingSettings) intelligence.Provider {
-	if strings.TrimSpace(settings.EmbeddingModel) == "" || strings.TrimSpace(settings.BaseURL) == "" {
+	baseURL, key := settings.embeddingEndpoint()
+	if strings.TrimSpace(settings.EmbeddingModel) == "" || baseURL == "" {
 		return intelligence.Provider{}
 	}
-	key := settings.APIKey
 	if strings.HasPrefix(key, "enc:") {
 		if s.Cipher == nil {
 			return intelligence.Provider{}
@@ -94,7 +116,7 @@ func (s *Store) embeddingProviderFromSettings(settings embeddingSettings) intell
 		timeout = 45 * time.Second
 	}
 	return intelligence.Provider{Remote: &intelligence.RemoteConfig{
-		BaseURL: settings.BaseURL, APIKey: key,
+		BaseURL: baseURL, APIKey: key,
 		Model: strings.TrimSpace(settings.EmbeddingModel), Timeout: timeout, SettingsManaged: true,
 	}}
 }

@@ -66,6 +66,12 @@ Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
 | `GET` | `/onboarding` | 실제 사용 기반 온보딩 진행률 | 로그인 |
 | `POST` | `/onboarding/complete` | 온보딩 완료 표시 | 로그인 |
 
+### ⚙️ 임베딩 Gateway 분리
+
+`ai_gateway` 설정의 `embedding_base_url`·`embedding_api_key`로 임베딩만 다른 서버로 보낼 수 있습니다. 비워 두면 `base_url`·`api_key`를 그대로 씁니다.
+
+`embedding_base_url`을 지정하면 **`api_key`는 그쪽으로 보내지 않습니다.** 한 호스트에 발급된 키를 다른 호스트로 넘기지 않기 위해서이며, 인증이 필요 없으면 `embedding_api_key`를 비워 두면 됩니다. 두 키 모두 조회 시 마스킹되고 저장 시 암호화됩니다.
+
 ### 🌿 생각의 갈래와 결정 기록
 
 | 메서드 | 경로 | 설명 | 권한 스코프 |
