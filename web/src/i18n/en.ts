@@ -860,6 +860,9 @@ export const en: Dictionary = {
   '진행 중': 'Exploring',
   채택: 'Taken',
   '접어 둠': 'Set aside',
+  '슬라이드 {count}장 바뀜': '{count} slides changed',
+  '이 발표가 인용한 생각이 그 뒤에 바뀌었습니다. 다시 만들면 반영됩니다.':
+    'A thought this talk quotes has been rewritten since. Making it again brings it up to date.',
   '이 공간으로 만든 발표': 'Talks made from this space',
   '제목 없음': 'Untitled',
   실패: 'Failed',

@@ -48,6 +48,12 @@ export interface PresentationLink {
   excludedCount: number;
   /** Where the deck can be opened. Absent when no Ptium is configured. */
   url?: string;
+  /**
+   * How many of this deck's slides quote a thought that has since been
+   * rewritten or deleted. Moving a thought does not count — the check is on the
+   * words, not the note's version, which also changes when a note is dragged.
+   */
+  staleSlides?: number;
 }
 
 export interface PresentationPreview {
@@ -296,6 +302,20 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
                   <Tooltip label={link.error || t('만들지 못했습니다.')} multiline w={260}>
                     <Badge size="sm" variant="light" color="red">
                       {t('실패')}
+                    </Badge>
+                  </Tooltip>
+                ) : link.staleSlides ? (
+                  /* The deck was true when it was made and the thinking has
+                     moved on since. Only umm is in a position to notice, and
+                     saying which slides is what makes it actionable rather than
+                     just unsettling. */
+                  <Tooltip
+                    label={t('이 발표가 인용한 생각이 그 뒤에 바뀌었습니다. 다시 만들면 반영됩니다.')}
+                    multiline
+                    w={260}
+                  >
+                    <Badge size="sm" variant="light" color="orange">
+                      {t('슬라이드 {count}장 바뀜', { count: link.staleSlides })}
                     </Badge>
                   </Tooltip>
                 ) : (

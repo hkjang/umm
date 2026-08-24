@@ -411,7 +411,7 @@ paths:
         the note is being able to check that nothing was put in their mouth.
       x-required-scope: notes:read
       responses:
-        '200': { description: Slide sources, content: { application/json: { schema: { type: object, properties: { source: { type: string }, sources: { type: array, items: { $ref: '#/components/schemas/SlideSource' } } } } } } }
+        '200': { description: Slide sources and what has changed since, content: { application/json: { schema: { type: object, properties: { source: { type: string }, sources: { type: array, items: { $ref: '#/components/schemas/SlideSource' } }, stale: { type: array, items: { $ref: '#/components/schemas/StaleSlide' } } } } } } }
         '404': { description: No such presentation }
   /notes/{noteId}/presentations:
     parameters:
@@ -1781,6 +1781,14 @@ components:
         thoughtCount: { type: integer }
         excludedCount: { type: integer, description: Thoughts deliberately left out, so the count on screen is the real one. }
         createdBy: { type: string, format: uuid, nullable: true }
+        url: { type: string, description: Where the deck can be opened. Computed on every read, never stored. Absent when no Ptium is configured. }
+        staleSlides:
+          type: integer
+          description: >-
+            How many of this deck's slides quote a thought that has since been
+            rewritten or deleted. Moving a thought does not count: the check is
+            on the words, not the note's version, which also changes when a note
+            is dragged.
     SlideSource:
       type: object
       required: [slidePosition, noteId]
@@ -1792,6 +1800,20 @@ components:
             slide id changes when the deck is recompiled and umm has no way to
             learn that it did.
         noteId: { type: string, format: uuid }
+    StaleSlide:
+      type: object
+      required: [slidePosition, noteId, reason]
+      properties:
+        slidePosition: { type: integer }
+        noteId: { type: string, format: uuid }
+        reason:
+          type: string
+          enum: [changed, deleted]
+          description: >-
+            A rewritten thought and a deleted one call for different things —
+            one slide can be brought up to date, the other has lost its source
+            entirely — so they are not collapsed into "out of date".
+        content: { type: string, description: What the thought says now, so the change can be seen without leaving the deck. Empty for a deleted one. }
     PresentationPreview:
       type: object
       properties:

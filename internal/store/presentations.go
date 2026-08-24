@@ -142,13 +142,15 @@ func (s *Store) CompletePresentationLink(ctx context.Context, userID, linkID uui
 	for _, src := range sources {
 		// A thought from another space would credit a slide to something the
 		// deck's readers cannot see.
+		// The fingerprint is taken from the same row being credited, by the
+		// database, so what "the same words" means is defined once and cannot
+		// drift between the write and the later check.
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO presentation_sources(presentation_link_id,slide_position,note_id)
-			SELECT $1,$2,$3
-			WHERE EXISTS(
-				SELECT 1 FROM notes n
-				JOIN presentation_links l ON l.id=$1
-				WHERE n.id=$3 AND n.space_id=l.space_id AND n.deleted_at IS NULL)
+			INSERT INTO presentation_sources(presentation_link_id,slide_position,note_id,note_fingerprint)
+			SELECT $1,$2,$3,md5(coalesce(n.title,'') || E'\n' || coalesce(n.content,''))
+			FROM notes n
+			JOIN presentation_links l ON l.id=$1
+			WHERE n.id=$3 AND n.space_id=l.space_id AND n.deleted_at IS NULL
 			ON CONFLICT DO NOTHING`,
 			linkID, src.SlidePosition, src.NoteID); err != nil {
 			return err
@@ -259,4 +261,107 @@ func (s *Store) PresentationLinkSource(ctx context.Context, userID, linkID uuid.
 		LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
 		WHERE l.id=$1 AND (sp.owner_id=$2 OR m.permission IS NOT NULL)`, linkID, userID).Scan(&source)
 	return source, err
+}
+
+// StaleSlide is a slide whose thought no longer says what it said.
+type StaleSlide struct {
+	SlidePosition int       `json:"slidePosition"`
+	NoteID        uuid.UUID `json:"noteId"`
+	// Reason is "changed" when the words were rewritten, "deleted" when the
+	// thought is gone. They call for different things — one slide can be
+	// updated, the other has lost its source entirely — so they are not
+	// collapsed into a single "out of date".
+	Reason string `json:"reason"`
+	// Content is what the thought says now, so a person can see what changed
+	// without leaving the deck. Empty for a deleted one.
+	Content string `json:"content,omitempty"`
+}
+
+// Reasons a slide is out of date.
+const (
+	StaleChanged = "changed"
+	StaleDeleted = "deleted"
+)
+
+// StaleSlides reports which of a deck's slides no longer match their thoughts.
+//
+// A slide whose fingerprint is empty is never reported: it was compiled before
+// umm recorded one, and claiming a slide is stale when nobody knows is worse
+// than saying nothing. Moving a note does not make a slide stale — only
+// rewriting its words does, which is what the fingerprint is of.
+func (s *Store) StaleSlides(ctx context.Context, userID, linkID uuid.UUID) ([]StaleSlide, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT ps.slide_position,
+		       ps.note_id,
+		       CASE WHEN n.id IS NULL OR n.deleted_at IS NOT NULL THEN 'deleted' ELSE 'changed' END,
+		       coalesce(n.content,'')
+		FROM presentation_sources ps
+		JOIN presentation_links l ON l.id=ps.presentation_link_id
+		JOIN spaces sp ON sp.id=l.space_id
+		LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
+		LEFT JOIN notes n ON n.id=ps.note_id
+		WHERE ps.presentation_link_id=$1
+		  AND (sp.owner_id=$2 OR m.permission IS NOT NULL)
+		  AND ps.note_fingerprint <> ''
+		  AND (
+			n.id IS NULL
+			OR n.deleted_at IS NOT NULL
+			OR md5(coalesce(n.title,'') || E'\n' || coalesce(n.content,'')) <> ps.note_fingerprint
+		  )
+		ORDER BY ps.slide_position, ps.note_id`, linkID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	stale := []StaleSlide{}
+	for rows.Next() {
+		var row StaleSlide
+		if err := rows.Scan(&row.SlidePosition, &row.NoteID, &row.Reason, &row.Content); err != nil {
+			return nil, err
+		}
+		if row.Reason == StaleDeleted {
+			row.Content = ""
+		}
+		stale = append(stale, row)
+	}
+	return stale, rows.Err()
+}
+
+// StaleCounts reports, for every deck made from a space, how many of its slides
+// have gone out of date.
+//
+// One query rather than one per deck, because this is read to draw a list.
+func (s *Store) StaleCounts(ctx context.Context, userID, spaceID uuid.UUID) (map[uuid.UUID]int, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT l.id, count(DISTINCT ps.slide_position)
+		FROM presentation_links l
+		JOIN spaces sp ON sp.id=l.space_id
+		LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
+		JOIN presentation_sources ps ON ps.presentation_link_id=l.id
+		LEFT JOIN notes n ON n.id=ps.note_id
+		WHERE l.space_id=$1
+		  AND (sp.owner_id=$2 OR m.permission IS NOT NULL)
+		  AND ps.note_fingerprint <> ''
+		  AND (
+			n.id IS NULL
+			OR n.deleted_at IS NOT NULL
+			OR md5(coalesce(n.title,'') || E'\n' || coalesce(n.content,'')) <> ps.note_fingerprint
+		  )
+		GROUP BY l.id`, spaceID, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	counts := map[uuid.UUID]int{}
+	for rows.Next() {
+		var id uuid.UUID
+		var count int
+		if err := rows.Scan(&id, &count); err != nil {
+			return nil, err
+		}
+		counts[id] = count
+	}
+	return counts, rows.Err()
 }
