@@ -73,9 +73,17 @@ test('previews a space as a talk without making anything', async ({ page }) => {
   expect(made).toBe(0);
 });
 
-// Without Ptium connected the button must still explain itself rather than
-// failing silently or with a stack trace.
-test('says to connect Ptium rather than failing obscurely', async ({ page }) => {
+/*
+ * When making the deck cannot work, the screen says why in terms a person can
+ * act on.
+ *
+ * Which reason it is depends on the deployment — no Ptium configured, or one
+ * configured that cannot be reached — and the test does not control that, so it
+ * asserts on what both have in common: an alert that names Ptium. Pinning one
+ * of the two made this fail the moment a Ptium address was set, which is a
+ * property of the database rather than of the code.
+ */
+test('explains why a deck cannot be made', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);
 
@@ -102,6 +110,11 @@ test('says to connect Ptium rather than failing obscurely', async ({ page }) => 
   await expect(modal).toBeVisible();
   await modal.getByRole('button', { name: 'Ptium에서 만들기' }).click();
 
-  await expect(modal.getByText(/Ptium/).first()).toBeVisible();
-  await expect(modal.getByRole('alert')).toContainText('Ptium');
+  const alert = modal.getByRole('alert');
+  await expect(alert).toBeVisible();
+  // Case-insensitive: "Ptium이 연결되어 있지 않습니다" and "ptium is unreachable"
+  // are both fine, and both name the thing to go and fix.
+  await expect(alert).toContainText(/ptium/i);
+  // And it is a sentence, not an empty box or a bare status code.
+  expect(((await alert.textContent()) ?? '').trim().length).toBeGreaterThan(10);
 });

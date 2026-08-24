@@ -1278,3 +1278,8 @@ textarea,
 .storyline-point {
   color: var(--ink);
 }
+/* One line per talk this space has already produced. */
+.presentation-history-row {
+  padding: 3px 2px;
+  border-top: 1px solid var(--line);
+}

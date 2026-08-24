@@ -329,3 +329,69 @@ func TestAReadOnlyKeyCannotMakeADeckIntegration(t *testing.T) {
 		t.Fatalf("the refusal does not name the missing scope: %s", response.Body.String())
 	}
 }
+
+// A past deck is only useful if you can get back to it, and the address it
+// lives at is computed on every read rather than stored: an administrator who
+// moves Ptium would otherwise leave every past link pointing somewhere that no
+// longer answers, with nothing to say which ones were stale.
+func TestAPastDeckCarriesWhereToOpenItIntegration(t *testing.T) {
+	h := presentationAPI(t)
+	ctx := context.Background()
+
+	link, err := h.db.CreatePresentationLink(ctx, h.userID, h.spaceID, "pt link/with space", "임원 보고")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.db.CompletePresentationLink(ctx, h.userID, link.ID, store.PresentationReady, "# 임원 보고\n",
+		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	read := func() []map[string]any {
+		t.Helper()
+		response := h.do(t, http.MethodGet, "/spaces/"+h.spaceID.String()+"/presentations", "")
+		if response.Code != 200 {
+			t.Fatalf("status %d: %s", response.Code, response.Body.String())
+		}
+		var body struct {
+			Presentations []map[string]any `json:"presentations"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		return body.Presentations
+	}
+
+	// With no Ptium configured the list still comes back; there is simply
+	// nowhere to click through to.
+	rows := read()
+	if len(rows) != 1 {
+		t.Fatalf("expected one talk, got %+v", rows)
+	}
+	if _, ok := rows[0]["url"]; ok {
+		t.Fatalf("a deck url appeared with no Ptium configured: %+v", rows[0])
+	}
+
+	if _, err := h.db.Pool.Exec(ctx,
+		`INSERT INTO app_settings(key,value) VALUES('ptium', jsonb_build_object('base_url','https://ptium.internal/'))
+		 ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`); err != nil {
+		t.Fatal(err)
+	}
+
+	rows = read()
+	deckURL, _ := rows[0]["url"].(string)
+	if deckURL == "" {
+		t.Fatalf("no deck url once Ptium is configured: %+v", rows[0])
+	}
+	// One slash, not two: the configured address may or may not end in one.
+	if strings.Contains(strings.TrimPrefix(deckURL, "https://"), "//") {
+		t.Fatalf("the trailing slash doubled up: %q", deckURL)
+	}
+	// Ptium ids are opaque to umm, so nothing may assume they are safe in a path.
+	if strings.Contains(deckURL, "pt link/with space") {
+		t.Fatalf("the deck id was not escaped into the url: %q", deckURL)
+	}
+	if !strings.HasSuffix(deckURL, "/editor") {
+		t.Fatalf("the url does not open the editor: %q", deckURL)
+	}
+}
