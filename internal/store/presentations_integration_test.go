@@ -284,3 +284,230 @@ func TestDeletingASpaceTakesItsLinksIntegration(t *testing.T) {
 		t.Fatalf("%d source rows outlived their space", remaining)
 	}
 }
+
+// Whether a deck is still true.
+//
+// The whole feature turns on one distinction: moving a thought must not make a
+// slide stale, and rewriting one must. Notes bump their version on any update
+// and x, y, width, height and rotation share that statement, so the obvious
+// signal would report every deck as stale the moment anyone dragged a note —
+// on this canvas, permanently, and the warning would come to mean nothing.
+
+func freshDeck(t *testing.T, db *Store, userID, spaceID uuid.UUID, notes []uuid.UUID) PresentationLink {
+	t.Helper()
+	ctx := context.Background()
+	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_"+uuid.NewString(), "덱")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := make([]SlideSource, 0, len(notes))
+	for i, id := range notes {
+		sources = append(sources, SlideSource{SlidePosition: i + 2, NoteID: id})
+	}
+	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "x", sources, len(notes), 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	return link
+}
+
+func TestAFreshDeckHasNoStaleSlidesIntegration(t *testing.T) {
+	db, userID, spaceID, notes := presentationFixture(t)
+	link := freshDeck(t, db, userID, spaceID, notes)
+
+	stale, err := db.StaleSlides(context.Background(), userID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 0 {
+		t.Fatalf("a deck compiled a moment ago is already stale: %+v", stale)
+	}
+}
+
+// The distinction the feature lives or dies on.
+func TestMovingAThoughtDoesNotMakeASlideStaleIntegration(t *testing.T) {
+	db, userID, spaceID, notes := presentationFixture(t)
+	link := freshDeck(t, db, userID, spaceID, notes)
+	ctx := context.Background()
+
+	// Exactly what dragging a note across the canvas does, version bump and all.
+	if _, err := db.Pool.Exec(ctx,
+		`UPDATE notes SET x=1234, y=567, width=400, height=300, rotation=2, version=version+1, updated_at=now() WHERE id=$1`,
+		notes[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	stale, err := db.StaleSlides(ctx, userID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 0 {
+		t.Fatalf("moving a thought marked the deck stale: %+v", stale)
+	}
+}
+
+func TestRewritingAThoughtMakesItsSlideStaleIntegration(t *testing.T) {
+	db, userID, spaceID, notes := presentationFixture(t)
+	link := freshDeck(t, db, userID, spaceID, notes)
+	ctx := context.Background()
+
+	if _, err := db.Pool.Exec(ctx,
+		`UPDATE notes SET content='생각이 바뀌었다', version=version+1, updated_at=now() WHERE id=$1`, notes[1]); err != nil {
+		t.Fatal(err)
+	}
+
+	stale, err := db.StaleSlides(ctx, userID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 || stale[0].NoteID != notes[1] {
+		t.Fatalf("the rewritten thought was not reported: %+v", stale)
+	}
+	if stale[0].Reason != StaleChanged {
+		t.Fatalf("reason: %q", stale[0].Reason)
+	}
+	// What it says now, so a person can see the change without leaving the deck.
+	if stale[0].Content != "생각이 바뀌었다" {
+		t.Fatalf("the current text was not carried: %q", stale[0].Content)
+	}
+	// And it names the slide, not just the deck.
+	if stale[0].SlidePosition != 3 {
+		t.Fatalf("slide position: %d", stale[0].SlidePosition)
+	}
+}
+
+// A retitled thought is a rewritten one: the title is what a slide is called.
+func TestRetitlingAThoughtMakesItsSlideStaleIntegration(t *testing.T) {
+	db, userID, spaceID, notes := presentationFixture(t)
+	link := freshDeck(t, db, userID, spaceID, notes)
+	ctx := context.Background()
+
+	if _, err := db.Pool.Exec(ctx, `UPDATE notes SET title='새 제목' WHERE id=$1`, notes[0]); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := db.StaleSlides(ctx, userID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 || stale[0].NoteID != notes[0] {
+		t.Fatalf("a retitled thought was not reported: %+v", stale)
+	}
+}
+
+// A deleted thought and a rewritten one call for different things — one slide
+// can be brought up to date, the other has lost its source entirely — so they
+// are not collapsed into "out of date".
+func TestADeletedThoughtIsReportedAsDeletedIntegration(t *testing.T) {
+	db, userID, spaceID, notes := presentationFixture(t)
+	link := freshDeck(t, db, userID, spaceID, notes)
+	ctx := context.Background()
+
+	if _, err := db.Pool.Exec(ctx, `UPDATE notes SET deleted_at=now() WHERE id=$1`, notes[2]); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := db.StaleSlides(ctx, userID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 || stale[0].Reason != StaleDeleted {
+		t.Fatalf("a deleted thought: %+v", stale)
+	}
+	if stale[0].Content != "" {
+		t.Fatalf("a deleted thought reported text: %q", stale[0].Content)
+	}
+}
+
+// Claiming a slide is stale when nobody knows is worse than saying nothing.
+func TestASlideCompiledBeforeFingerprintsIsNeverStaleIntegration(t *testing.T) {
+	db, userID, spaceID, notes := presentationFixture(t)
+	link := freshDeck(t, db, userID, spaceID, notes)
+	ctx := context.Background()
+
+	// Exactly the state an upgrade leaves behind.
+	if _, err := db.Pool.Exec(ctx,
+		`UPDATE presentation_sources SET note_fingerprint='' WHERE presentation_link_id=$1`, link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE notes SET content='완전히 다른 내용' WHERE id=$1`, notes[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	stale, err := db.StaleSlides(ctx, userID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 0 {
+		t.Fatalf("a deck of unknown freshness was reported as stale: %+v", stale)
+	}
+}
+
+func TestStaleCountsAreDrawnInOneQueryIntegration(t *testing.T) {
+	db, userID, spaceID, notes := presentationFixture(t)
+	ctx := context.Background()
+	changed := freshDeck(t, db, userID, spaceID, notes)
+	untouched := freshDeck(t, db, userID, spaceID, notes[:1])
+
+	if _, err := db.Pool.Exec(ctx, `UPDATE notes SET content='바뀜' WHERE id=$1`, notes[1]); err != nil {
+		t.Fatal(err)
+	}
+
+	counts, err := db.StaleCounts(ctx, userID, spaceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts[changed.ID] != 1 {
+		t.Fatalf("the affected deck counts %d slides", counts[changed.ID])
+	}
+	// A deck that does not quote the changed thought is not affected by it.
+	if _, ok := counts[untouched.ID]; ok {
+		t.Fatalf("a deck that never quoted the change was reported: %+v", counts)
+	}
+}
+
+// Recompiling brings a deck back up to date rather than leaving the warning
+// standing for a slide that has just been rewritten from the current text.
+func TestRecompilingClearsTheWarningIntegration(t *testing.T) {
+	db, userID, spaceID, notes := presentationFixture(t)
+	link := freshDeck(t, db, userID, spaceID, notes)
+	ctx := context.Background()
+
+	if _, err := db.Pool.Exec(ctx, `UPDATE notes SET content='고쳐 씀' WHERE id=$1`, notes[0]); err != nil {
+		t.Fatal(err)
+	}
+	if stale, _ := db.StaleSlides(ctx, userID, link.ID); len(stale) != 1 {
+		t.Fatalf("expected one stale slide first, got %+v", stale)
+	}
+
+	sources := []SlideSource{{SlidePosition: 2, NoteID: notes[0]}}
+	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "x", sources, 1, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := db.StaleSlides(ctx, userID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 0 {
+		t.Fatalf("recompiling left the warning standing: %+v", stale)
+	}
+}
+
+func TestAStrangerCannotSeeWhichSlidesWentStaleIntegration(t *testing.T) {
+	db, userID, spaceID, notes := presentationFixture(t)
+	link := freshDeck(t, db, userID, spaceID, notes)
+	ctx := context.Background()
+
+	stranger := uuid.New()
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,'stale_stranger'::citext,'x')`, stranger); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, stranger)
+
+	if _, err := db.Pool.Exec(ctx, `UPDATE notes SET content='바뀜' WHERE id=$1`, notes[0]); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := db.StaleSlides(ctx, stranger, link.ID); err != nil || len(stale) != 0 {
+		t.Fatalf("a stranger read someone else's stale slides: %+v %v", stale, err)
+	}
+	if counts, err := db.StaleCounts(ctx, stranger, spaceID); err != nil || len(counts) != 0 {
+		t.Fatalf("a stranger counted someone else's stale slides: %+v %v", counts, err)
+	}
+}

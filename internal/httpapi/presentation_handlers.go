@@ -113,7 +113,14 @@ func (s *Server) listPresentations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "발표 자료 목록을 불러오지 못했습니다.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"presentations": s.withDeckURLs(r, links)})
+	rows := s.withDeckURLs(r, links)
+	// One query for the whole list rather than one per deck.
+	if counts, err := s.Store.StaleCounts(r.Context(), principal(r).User.ID, spaceID); err == nil {
+		for i := range rows {
+			rows[i].StaleSlides = counts[rows[i].ID]
+		}
+	}
+	writeJSON(w, 200, map[string]any{"presentations": rows})
 }
 
 // deckLink is a stored link plus where the deck can be opened.
@@ -123,6 +130,11 @@ type deckLink struct {
 	// moves Ptium would otherwise leave every past link pointing at an address
 	// that no longer answers, with no way to tell which ones were stale.
 	URL string `json:"url,omitempty"`
+	// StaleSlides is how many of this deck's slides quote a thought that has
+	// since been rewritten or deleted. A deck made from someone's thinking
+	// stops being true when the thinking moves on, and only umm is in a
+	// position to notice.
+	StaleSlides int `json:"staleSlides,omitempty"`
 }
 
 func (s *Server) withDeckURLs(r *http.Request, links []store.PresentationLink) []deckLink {
@@ -171,7 +183,14 @@ func (s *Server) presentationSources(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "슬라이드 출처를 불러오지 못했습니다.")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"sources": sources, "source": source})
+	// What has changed since, alongside where each slide came from: the two
+	// answer one question between them — is this deck still what I think.
+	stale, err := s.Store.StaleSlides(r.Context(), userID, linkID)
+	if err != nil {
+		writeError(w, 500, "슬라이드 출처를 불러오지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"sources": sources, "source": source, "stale": stale})
 }
 
 // notePresentations answers the other direction: which talks quote this
