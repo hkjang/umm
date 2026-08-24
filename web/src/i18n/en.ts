@@ -909,4 +909,13 @@ export const en: Dictionary = {
   '임베딩 API Key': 'Embedding API key',
   '임베딩 Gateway 주소를 적으면 위의 API Key는 그쪽으로 보내지 않습니다. 인증이 필요 없으면 비워 두세요.':
     'With an embedding gateway URL set, the API key above is not sent there. Leave this empty if that server needs no authentication.',
+  '겹침 정리': 'Tidy overlaps',
+  '겹친 생각만 펼치기': 'Separate only the overlapping thoughts',
+  '{scope}에서 겹친 생각이 없습니다.': 'Nothing overlaps in {scope}.',
+  '선택한 생각': 'the selected thoughts',
+  '이 공간': 'this space',
+  '겹친 생각 {count}개만 옮겼습니다. 나머지는 그대로입니다. Ctrl+Z로 되돌립니다.':
+    'Moved only the {count} thoughts that were in the way. The rest are untouched. Ctrl+Z undoes it.',
+  '생각 {count}개를 묶음별로 정렬했습니다. 묶이지 않은 {kept}개는 그대로 두었습니다. Ctrl+Z로 되돌립니다.':
+    'Arranged {count} thoughts by group. The {kept} that belong to no group were left alone. Ctrl+Z undoes it.',
 };
