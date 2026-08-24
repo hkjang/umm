@@ -61,10 +61,22 @@ type embeddingSettings struct {
 // that host. An embedding server with no auth is the ordinary case, so an empty
 // embedding key means no Authorization header rather than "reuse the other one".
 func (settings embeddingSettings) embeddingEndpoint() (baseURL, apiKey string) {
-	if custom := strings.TrimSpace(settings.EmbeddingBaseURL); custom != "" {
-		return custom, strings.TrimSpace(settings.EmbeddingAPIKey)
+	return ResolveEmbeddingEndpoint(settings.BaseURL, settings.APIKey,
+		settings.EmbeddingBaseURL, settings.EmbeddingAPIKey)
+}
+
+// ResolveEmbeddingEndpoint decides where embeddings go and what authenticates
+// them there, given the four configured values.
+//
+// Exported so the connection test in the admin screen answers the same question
+// the runtime does. It did not, at first: the test read only the chat address
+// and so checked a server embeddings were no longer being sent to. A second copy
+// of this rule is how the two come apart, so there is one.
+func ResolveEmbeddingEndpoint(baseURL, apiKey, embeddingBaseURL, embeddingAPIKey string) (string, string) {
+	if custom := strings.TrimSpace(embeddingBaseURL); custom != "" {
+		return custom, strings.TrimSpace(embeddingAPIKey)
 	}
-	return strings.TrimSpace(settings.BaseURL), settings.APIKey
+	return strings.TrimSpace(baseURL), apiKey
 }
 
 type embeddingCache struct {
