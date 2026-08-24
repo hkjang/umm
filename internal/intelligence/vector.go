@@ -61,6 +61,15 @@ func Cosine(a, b []float32) float64 {
 	for i := 0; i < limit; i++ {
 		dot += float64(a[i] * b[i])
 	}
+	return clampSimilarity(dot)
+}
+
+// clampSimilarity holds a score inside the range a similarity is defined on.
+//
+// Shared so that the dense path and the compressed one in neighbours.go cannot
+// round or clamp differently: the two must agree exactly, because one is only
+// ever a faster way of computing the other.
+func clampSimilarity(dot float64) float64 {
 	return math.Max(0, math.Min(1, dot))
 }
 
