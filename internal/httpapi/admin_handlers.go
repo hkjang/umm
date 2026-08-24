@@ -32,7 +32,7 @@ func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(raw, &value) != nil {
 			continue
 		}
-		for _, field := range []string{"client_secret", "api_key"} {
+		for _, field := range secretFields(key) {
 			if secret, ok := value[field].(string); ok && secret != "" {
 				value[field] = secretMask
 				value[field+"_configured"] = true
@@ -61,7 +61,7 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
-	if field := secretField(section); field != "" {
+	for _, field := range secretFields(section) {
 		raw, _ := incoming[field].(string)
 		if raw == "" || raw == secretMask {
 			// Omit a masked secret so Store.PutSetting can merge the latest
@@ -97,14 +97,20 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
-func secretField(section string) string {
-	if section == "oidc" {
-		return "client_secret"
+// secretFields names every value in a section that must be masked when read and
+// encrypted when written.
+//
+// One list, used by both the read and the write path. They used to name their
+// fields separately, so adding a second secret to a section meant remembering
+// two places — and forgetting the read side would return a key in plain text.
+func secretFields(section string) []string {
+	switch section {
+	case "oidc":
+		return []string{"client_secret"}
+	case "ai_gateway":
+		return []string{"api_key", "embedding_api_key"}
 	}
-	if section == "ai_gateway" {
-		return "api_key"
-	}
-	return ""
+	return nil
 }
 
 func (s *Server) validateSetting(section string, v map[string]any) error {
@@ -244,6 +250,20 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 				return errors.New("AI Gateway URL이 올바르지 않습니다")
 			}
 		}
+		embedURL := strings.TrimSpace(fmt.Sprint(v["embedding_base_url"]))
+		if embedURL == "<nil>" {
+			embedURL = ""
+		}
+		if embedURL != "" {
+			// Refused rather than ignored. A malformed address here would leave
+			// embeddings quietly falling back to the offline algorithm, and the
+			// person who typed it would be looking at a saved setting that does
+			// nothing.
+			u, err := url.Parse(embedURL)
+			if err != nil || !(u.Scheme == "http" || u.Scheme == "https") || u.Host == "" {
+				return errors.New("임베딩 Gateway URL이 올바르지 않습니다")
+			}
+		}
 		retention, ok := v["log_retention_days"].(float64)
 		if !ok || retention < 1 || retention > 3650 {
 			return errors.New("AI 로그 보존 기간은 1~3650일이어야 합니다")
@@ -257,8 +277,8 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 			return fmt.Errorf("AI Gateway 재시도는 0~%d 사이의 정수여야 합니다", dream.MaxGatewayRetries)
 		}
 		if model := strings.TrimSpace(fmt.Sprint(v["embedding_model"])); model != "" && model != "<nil>" {
-			if raw == "" {
-				return errors.New("임베딩 모델을 사용하려면 AI Gateway 주소가 필요합니다")
+			if raw == "" && embedURL == "" {
+				return errors.New("임베딩 모델을 사용하려면 AI Gateway 주소 또는 임베딩 Gateway 주소가 필요합니다")
 			}
 			if len(model) > 200 {
 				return errors.New("임베딩 모델 이름은 200자 이내여야 합니다")

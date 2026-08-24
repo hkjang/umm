@@ -25,14 +25,13 @@
 
 ---
 
-## v0.33.2 — 긴 페이지가 스크롤되지 않았습니다
+## v0.34.0 — 임베딩 Gateway를 따로 지정할 수 있습니다
 
-- **오늘의 리뷰 본문 2272px, 창 520px, 스크롤 불가**: 1,750픽셀이 닿을 수 없었습니다.
-- **캔버스를 위해 뿌리에 걸어 둔 `overflow: hidden`이 나머지 페이지도 전부 잘랐습니다**: 스크롤을 문서가 아니라 셸의 본문 영역이 갖게 했습니다.
-- **앞으로 추가되는 페이지도 자동 적용**: 모든 라우팅된 페이지가 그 안에서 그려지므로 페이지마다 따로 할 일이 없습니다.
-- **휴대폰 하단 탭 여백도 컨테이너에서 한 번에**: 스크롤이 되더라도 마지막 46픽셀이 탭 바 밑에 깔리던 문제까지 해결했습니다.
+- **임베딩 Gateway 주소·API Key**를 채팅 모델과 별개로 설정합니다. 비우면 기존 동작 그대로입니다.
+- **채팅 API Key는 임베딩 주소로 따라가지 않습니다**: 한 호스트에 발급된 키를 다른 호스트로 넘기지 않기 위해서입니다. 비움 = 보내지 않음.
+- **잘못된 주소는 거부합니다**: 조용히 무시하면 임베딩이 내장 알고리즘으로 돌아간 채 설정만 저장된 것처럼 보입니다.
 
-이전 릴리스: [v0.33.1](docs/releases/v0.33.1.md) · [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.33.2](docs/releases/v0.33.2.md) · [v0.33.1](docs/releases/v0.33.1.md) · [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 
