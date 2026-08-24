@@ -710,7 +710,10 @@ paths:
       operationId: put_admin_settings_section
       tags: [Admin]
       summary: Replace one settings section
-      description: OIDC client_secret and AI api_key are AES-256-GCM encrypted before PostgreSQL storage. Masked secret saves merge the latest ciphertext under the same per-setting transaction lock used by master-key rotation.
+      description: >
+        OIDC client_secret and the AI gateway's api_key and embedding_api_key are AES-256-GCM
+        encrypted before PostgreSQL storage. Masked secret saves merge the latest ciphertext
+        under the same per-setting transaction lock used by master-key rotation.
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
       responses: { '200': { description: Saved }, '400': { $ref: '#/components/responses/Error' } }
   /admin/oidc/test:
@@ -1400,11 +1403,24 @@ paths:
           application/json:
             schema:
               type: object
-              required: [base_url, embedding_model]
+              required: [embedding_model]
+              description: >
+                Probes the gateway embeddings are actually sent to. With embedding_base_url set
+                that address is used and api_key is not sent there; otherwise base_url and
+                api_key are, which is where embeddings go in that case. One of the two
+                addresses is required. Resolved by the same rule the runtime uses, so a
+                passing probe means the server that embeds is the one that passed.
               properties:
-                base_url: { type: string }
+                base_url: { type: string, description: Chat gateway address; used for embeddings when no embedding address is set }
+                embedding_base_url: { type: string, description: Where embeddings go, when they have their own server }
                 embedding_model: { type: string }
-                api_key: { type: string }
+                api_key: { type: string, description: Sent only when base_url is the address being probed }
+                embedding_api_key:
+                  type: string
+                  description: >
+                    Sent when embedding_base_url is the address being probed. Empty means no
+                    authentication — the common case for an embedding server — and only the
+                    mask means "the one already saved".
       responses:
         '200':
           description: The probe result. ok is false with a detail when the gateway refused or was unreachable; this is not an HTTP error because the request itself succeeded.
