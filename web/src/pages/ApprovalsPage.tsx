@@ -9,11 +9,37 @@ interface Request {
   id: string;
   requesterName: string;
   resourceType: string;
+  resourceName: string;
   action: string;
   status: string;
   comment: string;
   createdAt: string;
 }
+/**
+ * The words for a request, rather than the values it is stored as.
+ *
+ * This page rendered `pending` and `export · space` — internal identifiers, in
+ * English, on a Korean screen. The product already has words for these: the
+ * admin screen that switches the workflow on calls them 팀 공간 공유 and
+ * 외부 내보내기. It was only this page that never used them.
+ *
+ * Written out rather than looked up in a map, because a dynamic key never
+ * reaches the translation extractor and would ship untranslated — the same
+ * mistake in a new place.
+ */
+function actionLabel(action: string, t: (key: string) => string): string {
+  if (action === 'space_share') return t('팀 공간 공유');
+  if (action === 'export') return t('외부 내보내기');
+  return action;
+}
+
+function statusLabel(status: string, t: (key: string) => string): string {
+  if (status === 'pending') return t('검토 대기');
+  if (status === 'approved') return t('승인됨');
+  if (status === 'rejected') return t('반려됨');
+  return status;
+}
+
 export default function ApprovalsPage() {
   const { user } = useAuth();
   const { t, formatDate } = useTranslation();
@@ -53,11 +79,19 @@ export default function ApprovalsPage() {
                   <Group>
                     <Text fw={650}>{req.requesterName}</Text>
                     <Badge color={req.status === 'approved' ? 'green' : req.status === 'rejected' ? 'red' : 'yellow'}>
-                      {req.status}
+                      {statusLabel(req.status, t)}
                     </Badge>
                   </Group>
-                  <Text mt="sm">
-                    {req.action} · {req.resourceType}
+                  <Text mt="sm" fw={600}>
+                    {actionLabel(req.action, t)}
+                  </Text>
+                  {/* Which space, not just that it is a space. The reviewer is
+                      deciding whether this may happen to this workspace, and a
+                      name is the whole of that decision. A request can outlive
+                      its space, so an unnamed one says so rather than showing
+                      an empty line. */}
+                  <Text size="sm" c="dimmed">
+                    {req.resourceName || t('이름을 확인할 수 없는 대상')}
                   </Text>
                   <Text size="sm" c="dimmed">
                     {formatDate(req.createdAt)}
