@@ -48,16 +48,35 @@ func (s *Server) createApproval(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listApprovals(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
-	query := `SELECT a.id,a.requester_id,a.team_id,a.resource_type,a.resource_id,a.action,a.status,a.comment,a.reviewer_id,a.reviewed_at,a.created_at,u.display_name FROM approval_requests a JOIN users u ON u.id=a.requester_id WHERE a.requester_id=$1 ORDER BY a.created_at DESC`
+
+	// The reviewer is being asked to allow something to happen to a particular
+	// space, so the query says which one. Without it the page could only offer
+	// "export · space", and approving an export without knowing what is being
+	// exported is the one thing the reviewer is there to judge.
+	//
+	// LEFT JOIN because a request outlives its subject: a space deleted while a
+	// request is still open must leave the request listed and reviewable, not
+	// drop it from the page.
+	const columns = `SELECT a.id,a.requester_id,a.team_id,a.resource_type,a.resource_id,a.action,a.status,
+		       a.comment,a.reviewer_id,a.reviewed_at,a.created_at,u.display_name,COALESCE(sp.name,'')
+		FROM approval_requests a
+		JOIN users u ON u.id=a.requester_id
+		LEFT JOIN spaces sp ON a.resource_type='space' AND sp.id=a.resource_id `
+
+	// Pending first for the people who can act on it; a reviewer opens this page
+	// to find what is waiting, not to read history.
+	where, order := `WHERE a.requester_id=$1`, `ORDER BY a.created_at DESC`
 	args := []any{p.User.ID}
-	if p.User.Role == "admin" {
-		query = `SELECT a.id,a.requester_id,a.team_id,a.resource_type,a.resource_id,a.action,a.status,a.comment,a.reviewer_id,a.reviewed_at,a.created_at,u.display_name FROM approval_requests a JOIN users u ON u.id=a.requester_id ORDER BY (a.status='pending') DESC,a.created_at DESC`
-		args = nil
-	} else if p.User.Role == "team_lead" && p.User.TeamID != nil {
-		query = `SELECT a.id,a.requester_id,a.team_id,a.resource_type,a.resource_id,a.action,a.status,a.comment,a.reviewer_id,a.reviewed_at,a.created_at,u.display_name FROM approval_requests a JOIN users u ON u.id=a.requester_id WHERE a.team_id=$1 OR a.requester_id=$2 ORDER BY (a.status='pending') DESC,a.created_at DESC`
+	switch {
+	case p.User.Role == "admin":
+		where, order, args = ``, `ORDER BY (a.status='pending') DESC,a.created_at DESC`, nil
+	case p.User.Role == "team_lead" && p.User.TeamID != nil:
+		where = `WHERE a.team_id=$1 OR a.requester_id=$2`
+		order = `ORDER BY (a.status='pending') DESC,a.created_at DESC`
 		args = []any{p.User.TeamID, p.User.ID}
 	}
-	rows, err := s.Store.Pool.Query(r.Context(), query, args...)
+
+	rows, err := s.Store.Pool.Query(r.Context(), columns+where+" "+order, args...)
 	if err != nil {
 		writeError(w, 500, "검토 요청을 불러오지 못했습니다.")
 		return
@@ -67,13 +86,13 @@ func (s *Server) listApprovals(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, requester, resource uuid.UUID
 		var team, reviewer *uuid.UUID
-		var resourceType, action, status, comment, name string
+		var resourceType, action, status, comment, name, resourceName string
 		var reviewed *time.Time
 		var created time.Time
-		if rows.Scan(&id, &requester, &team, &resourceType, &resource, &action, &status, &comment, &reviewer, &reviewed, &created, &name) != nil {
+		if rows.Scan(&id, &requester, &team, &resourceType, &resource, &action, &status, &comment, &reviewer, &reviewed, &created, &name, &resourceName) != nil {
 			continue
 		}
-		out = append(out, map[string]any{"id": id, "requesterId": requester, "requesterName": name, "teamId": team, "resourceType": resourceType, "resourceId": resource, "action": action, "status": status, "comment": comment, "reviewerId": reviewer, "reviewedAt": reviewed, "createdAt": created})
+		out = append(out, map[string]any{"id": id, "requesterId": requester, "requesterName": name, "teamId": team, "resourceType": resourceType, "resourceId": resource, "resourceName": resourceName, "action": action, "status": status, "comment": comment, "reviewerId": reviewer, "reviewedAt": reviewed, "createdAt": created})
 	}
 	writeJSON(w, 200, map[string]any{"requests": out})
 }
