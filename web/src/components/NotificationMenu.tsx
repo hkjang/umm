@@ -59,7 +59,7 @@ export default function NotificationMenu() {
     <Menu shadow="md" width={330} position="bottom-end">
       <Menu.Target>
         <Indicator disabled={unread === 0} label={unread > 9 ? '9+' : unread} size={17} color="grape">
-          <UnstyledButton aria-label={t('알림 {count}개', { count: unread })}>
+          <UnstyledButton className="header-icon-button" aria-label={t('알림 {count}개', { count: unread })}>
             <IconBell size={22} />
           </UnstyledButton>
         </Indicator>
