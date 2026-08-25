@@ -1283,3 +1283,27 @@ textarea,
   padding: 3px 2px;
   border-top: 1px solid var(--line);
 }
+
+/* A note's name, when its author gave it one.
+   Sits above the thought and is styled as a heading rather than a field: it is
+   part of the note, not a form control that happens to be on it. */
+.note-title {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #2f2b22;
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 1.35;
+  padding: 0;
+  margin-bottom: 4px;
+}
+.note-title::placeholder {
+  color: rgba(60, 54, 40, 0.42);
+  font-weight: 600;
+}
+.note-title:focus {
+  /* Enough to show which line has the cursor without turning it into a box. */
+  box-shadow: 0 1px 0 0 rgba(60, 54, 40, 0.28);
+}

@@ -221,3 +221,164 @@ test.describe('note card', () => {
     expect(fit.lowest).toBeLessThanOrEqual(textTop + 1);
   });
 });
+
+/*
+ * A note's name.
+ *
+ * Notes have carried a title for as long as importing a document has existed —
+ * a markdown heading becomes one — and the canvas showed none of it. The
+ * heading was in the database, in what search matched, on the slide a
+ * presentation compiled it into and in what a screen reader read out, and
+ * invisible in the one place its author actually looks. There was also no way
+ * to give a note a name, or to take one off.
+ */
+test('shows the name an imported document gave a thought', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+
+  const marker = unique('가져온');
+  const space = await page.evaluate(async (text) => {
+    const created = await (
+      await fetch('/api/v1/spaces', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: text }),
+      })
+    ).json();
+    // Exactly the shape importing a markdown document produces.
+    await fetch(`/api/v1/spaces/${created.id}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: `${text} 배포 파이프라인`, content: '젠킨스로 옮기는 실험', x: 0, y: 0 }),
+    });
+    return created.id as string;
+  }, marker);
+
+  await page.goto(`/space/${space}`);
+  await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+  await expect(page.locator('.note-title')).toHaveValue(`${marker} 배포 파이프라인`);
+});
+
+// A thought nobody named stays as it was. An empty field above every note would
+// be a form where there was a piece of paper.
+test('a thought with no name shows no field for one', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await spaceWith(page, [{ content: SHORT, x: 0, y: 0 }]);
+  await expect(page.locator('.note-title')).toHaveCount(0);
+});
+
+test('names a thought and keeps the name', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  const space = await spaceWith(page, [{ content: SHORT, x: 0, y: 0 }]);
+
+  const card = page.locator('.postit').first();
+  await card.hover();
+  await card.getByRole('button', { name: '메모 메뉴' }).click();
+  await page.getByRole('menuitem', { name: '제목 붙이기' }).click();
+
+  // Naming is one action: the field exists and has the cursor, rather than
+  // appearing and leaving someone to find it.
+  const field = page.locator('.note-title');
+  await expect(field).toBeFocused();
+  await field.fill('회고 주기');
+  await field.press('Enter');
+  // Enter moves on to the thought, which is where someone naming a note was
+  // heading anyway.
+  await expect(card.getByRole('textbox', { name: '생각 내용' })).toBeFocused();
+
+  // A name that lives only in the tab is not a name.
+  await page.reload();
+  await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+  await expect(page.locator('.note-title')).toHaveValue('회고 주기');
+
+  const stored = await page.evaluate(async (id) => {
+    const { notes } = await (await fetch(`/api/v1/spaces/${id}/notes`)).json();
+    return notes[0].title as string;
+  }, space);
+  expect(stored).toBe('회고 주기');
+});
+
+test('takes a name back off', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await spaceWith(page, [{ content: SHORT, x: 0, y: 0, title: '지울 이름' }]);
+
+  await expect(page.locator('.note-title')).toHaveValue('지울 이름');
+  const card = page.locator('.postit').first();
+  await card.hover();
+  await card.getByRole('button', { name: '메모 메뉴' }).click();
+  await page.getByRole('menuitem', { name: '제목 지우기' }).click();
+  await expect(page.locator('.note-title')).toHaveCount(0);
+});
+
+// The name takes room from the thought, so what the card says is out of view
+// has to account for it — or the count is describing a card that no longer
+// exists.
+test('counts the hidden lines with the name taking its room', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await spaceWith(page, [
+    { content: LONG, x: 0, y: 0 },
+    { content: LONG, x: 500, y: 0, title: '온보딩 문서' },
+  ]);
+
+  await expect(page.locator('.more-chip')).toHaveCount(2);
+  const hidden = await page.evaluate(() =>
+    [...document.querySelectorAll('.postit')].map((card) => {
+      const editor = card.querySelector('textarea')!;
+      return { named: !!card.querySelector('.note-title'), hidden: editor.scrollHeight - editor.clientHeight };
+    }),
+  );
+  const named = hidden.find((h) => h.named)!;
+  const plain = hidden.find((h) => !h.named)!;
+  expect(named.hidden).toBeGreaterThan(plain.hidden);
+});
+
+/*
+ * The addresses a thought refers to.
+ *
+ * A note saying "참고 자료: https://…" had its most useful part unreachable: the
+ * body is a textarea so it can be edited, and text in a textarea is text.
+ * Copying the address out by hand was the workaround.
+ */
+test('offers the addresses a thought refers to', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await spaceWith(page, [
+    {
+      content: '참고 자료: https://github.com/hkjang/umm 와 https://github.com/hkjang/ptium 를 보면 된다.',
+      x: 0,
+      y: 0,
+    },
+  ]);
+
+  const card = page.locator('.postit').first();
+  await card.hover();
+  await card.getByRole('button', { name: '메모 메뉴' }).click();
+  await page.getByRole('menuitem', { name: '링크 열기' }).click();
+
+  const links = page.locator('a[role=menuitem]');
+  await expect(links).toHaveCount(2);
+  // Both are openable, and each is told apart from the other rather than both
+  // reading as the host they share.
+  await expect(links.first()).toHaveAttribute('href', 'https://github.com/hkjang/umm');
+  // The full stop ends the sentence; it is not part of the address.
+  await expect(links.last()).toHaveAttribute('href', 'https://github.com/hkjang/ptium');
+  // The page being opened has no business knowing which thought opened it.
+  await expect(links.first()).toHaveAttribute('rel', /noreferrer/);
+});
+
+// A thought that refers to nothing offers nothing, rather than an entry that
+// opens an empty list.
+test('a thought that refers to nothing offers no links', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+  await spaceWith(page, [{ content: SHORT, x: 0, y: 0 }]);
+
+  const card = page.locator('.postit').first();
+  await card.hover();
+  await card.getByRole('button', { name: '메모 메뉴' }).click();
+  await expect(page.getByRole('menuitem', { name: '링크 열기' })).toHaveCount(0);
+});
