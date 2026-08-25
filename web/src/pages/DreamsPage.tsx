@@ -95,6 +95,18 @@ const developModes = [
 // against the raw server value while the badge renders a translated copy.
 const wellSourcedLabel = msg('근거 충분');
 
+/**
+ * A tab's label, with its count when the server has sent one.
+ *
+ * Undefined rather than zero while the counts are still in flight, and
+ * undefined again if counting failed — a tab that says 0 when the answer is
+ * unknown is a claim, and this page has already been wrong about that number
+ * once.
+ */
+function tabLabel(name: string, count: number | undefined): string {
+  return count === undefined ? name : `${name} ${count}`;
+}
+
 export default function DreamsPage() {
   const navigate = useNavigate();
   const { t, formatDate } = useTranslation();
@@ -106,6 +118,11 @@ export default function DreamsPage() {
   const [filter, setFilter] = useState('inbox');
   const [busy, setBusy] = useState('');
   const [developed, setDeveloped] = useState<{ dream: Dream; result: DevelopResult }>();
+  // Counted by the server across every dream, not by this page across the ones
+  // it happens to have loaded. Thirty arrive at a time, so counting what is in
+  // hand counts the page rather than the queue — and it changed under the
+  // reader the moment they pressed 이전 Dream 더 불러오기.
+  const [counts, setCounts] = useState<Record<string, number>>();
   const exposed = useRef(new Set<string>());
   const focused = useRef('');
   const visible = useMemo(() => {
@@ -121,7 +138,9 @@ export default function DreamsPage() {
     try {
       const query = new URLSearchParams({ limit: '30' });
       if (cursor) query.set('cursor', cursor);
-      const value = await api<{ dreams: Dream[]; nextCursor: string }>(`/dreams?${query}`);
+      const value = await api<{ dreams: Dream[]; nextCursor: string; counts?: Record<string, number> }>(
+        `/dreams?${query}`,
+      );
       setDreams((all) =>
         cursor
           ? [
@@ -131,6 +150,7 @@ export default function DreamsPage() {
           : value.dreams,
       );
       setNextCursor(value.nextCursor || '');
+      if (value.counts) setCounts(value.counts);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t('Dream 기록을 불러오지 못했습니다.'));
       if (!cursor) {
@@ -187,6 +207,40 @@ export default function DreamsPage() {
       });
     return () => observer.disconnect();
   }, [visible]);
+  /**
+   * Re-reads the counts after a dream changes state.
+   *
+   * Asked of the server rather than adjusted here, even though this page knows
+   * exactly which way the dream moved. Adjusting locally would put the rule for
+   * which status belongs to which tab in two places, and the reason these
+   * numbers were wrong in the first place was a count derived from something
+   * other than what it labelled. One dream is requested because the counts ride
+   * along with the listing; the dreams on screen are left alone.
+   */
+  const refreshCounts = useCallback(async () => {
+    try {
+      const value = await api<{ counts?: Record<string, number> }>('/dreams?limit=1', { silent: true });
+      if (value.counts) setCounts(value.counts);
+    } catch {
+      // A stale number is worse than none, but re-reading is the only way to
+      // learn the new one — leaving what is shown alone is the least wrong of
+      // the options here, and the next load corrects it.
+    }
+  }, []);
+
+  /**
+   * The day each visible dream belongs to, as the reader sees it written.
+   *
+   * Formatted rather than compared as timestamps, because the heading is what
+   * they are looking at: two dreams an hour apart across midnight are different
+   * days to them, and the formatter is what decides that — in their locale and
+   * their calendar, not in UTC.
+   */
+  const days = useMemo(
+    () => visible.map((d) => formatDate(d.generatedAt, { year: 'numeric', month: 'long', day: 'numeric' })),
+    [visible, formatDate],
+  );
+
   const replace = (next: Dream) => setDreams((all) => all?.map((d) => (d.dreamId === next.dreamId ? next : d)));
   const accept = async (dream: Dream, content = '') => {
     setBusy(`accept:${dream.dreamId}`);
@@ -217,6 +271,7 @@ export default function DreamsPage() {
       setDreams((all) =>
         all?.map((d) => (d.dreamId === dream.dreamId ? { ...d, status: 'deleted', dismissedReason: reason } : d)),
       );
+      void refreshCounts();
       showSuccess(
         t(
           reason === 'too_frequent'
@@ -279,15 +334,10 @@ export default function DreamsPage() {
           value={filter}
           onChange={setFilter}
           data={[
-            {
-              value: 'inbox',
-              label: t('검토함 {count}', {
-                count: (dreams || []).filter((d) => d.status === 'created' || d.status === 'exposed').length,
-              }),
-            },
-            { value: 'kept', label: t('채택됨') },
-            { value: 'hidden', label: t('숨김') },
-            { value: 'all', label: t('전체') },
+            { value: 'inbox', label: tabLabel(t('검토함'), counts?.inbox) },
+            { value: 'kept', label: tabLabel(t('채택됨'), counts?.kept) },
+            { value: 'hidden', label: tabLabel(t('숨김'), counts?.hidden) },
+            { value: 'all', label: tabLabel(t('전체'), counts?.all) },
           ]}
         />
         {error && (
@@ -322,11 +372,16 @@ export default function DreamsPage() {
         ) : (
           <>
             <Timeline color="grape" bulletSize={30} lineWidth={2}>
-              {visible.map((d) => (
+              {visible.map((d, index) => (
                 <Timeline.Item
                   key={d.dreamId}
                   bullet={<IconMoonStars size={16} />}
-                  title={formatDate(d.generatedAt, { year: 'numeric', month: 'long', day: 'numeric' })}
+                  // The date heads the first dream of its day and nothing after
+                  // it. Every item used to carry its own: measured with a full
+                  // page loaded, twenty-nine headings for two distinct days, so
+                  // the one thing a timeline is for — seeing where one day ends
+                  // and the next begins — was the one thing it could not show.
+                  title={index > 0 && days[index - 1] === days[index] ? undefined : days[index]}
                 >
                   <Card
                     id={`dream-${d.dreamId}`}

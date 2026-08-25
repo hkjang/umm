@@ -365,7 +365,7 @@ export const en: Dictionary = {
   '이 Dream을 숨기고 생성 빈도를 한 단계 낮췄습니다.': 'Hidden, and Dreams will arrive less often.',
   '이 Dream을 숨기고 스타일 선호도에 반영했습니다.': 'Hidden, and your style preference was updated.',
   '피드백 반영': 'Feedback recorded',
-  '검토함 {count}': 'Inbox {count}',
+  검토함: 'Inbox',
   채택됨: 'Kept',
   숨김: 'Hidden',
   'Dream을 불러오지 못했습니다.': 'Could not load Dreams.',

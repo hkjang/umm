@@ -302,7 +302,16 @@ func (s *Server) dreamHistory(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		next = encodeOffsetCursor(offset + limit)
 	}
-	writeJSON(w, 200, map[string]any{"dreams": v, "nextCursor": next})
+	// The tabs label states, not pages, so their counts cannot come from the
+	// slice above. Counting is cheap next to the join the listing already did;
+	// a failure here costs the labels their numbers rather than the page its
+	// dreams.
+	counts, err := s.Dreams.StatusCounts(r.Context(), principal(r).User.ID)
+	if err != nil {
+		slog.Warn("could not count dreams by state", "error", err)
+		counts = nil
+	}
+	writeJSON(w, 200, map[string]any{"dreams": v, "nextCursor": next, "counts": counts})
 }
 func (s *Server) dreamFeedback(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "dreams:read") {

@@ -80,6 +80,53 @@ func (s *Service) History(ctx context.Context, userID uuid.UUID) ([]DreamView, e
 	return views, err
 }
 
+// StatusCounts is how many dreams a person has in each state.
+//
+// The page shows thirty at a time, so counting what arrived counts the page
+// rather than the queue. Measured with thirty-seven waiting: the tab read
+// 검토함 30, and pressing 이전 Dream 더 불러오기 — a button about older
+// history, not about the queue — changed it to 37. A number that moves when
+// you press something unrelated is worse than no number, and the home screen
+// tile had 37 the whole time, so the two pages disagreed about the same thing.
+//
+// The scope is copied from the listing above deliberately: same user, same
+// reachable spaces. A count derived from a different rule than the list it
+// labels is how they drift apart again.
+func (s *Service) StatusCounts(ctx context.Context, userID uuid.UUID) (map[string]int, error) {
+	counts := map[string]int{"inbox": 0, "kept": 0, "hidden": 0, "all": 0}
+	rows, err := s.Store.Pool.Query(ctx, `
+		SELECT d.status,count(*)
+		FROM dream_notes d
+		JOIN spaces sp ON sp.id=d.space_id
+		WHERE d.user_id=$1
+		  AND (sp.owner_id=$1 OR EXISTS(SELECT 1 FROM space_members sm WHERE sm.space_id=sp.id AND sm.user_id=$1))
+		GROUP BY d.status`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			return nil, err
+		}
+		// The buckets the tabs offer, named as the page names them. A status
+		// that belongs to none of them still counts toward 전체, because that
+		// tab shows every dream the list can return.
+		switch status {
+		case "created", "exposed":
+			counts["inbox"] += n
+		case "kept":
+			counts["kept"] += n
+		case "deleted":
+			counts["hidden"] += n
+		}
+		counts["all"] += n
+	}
+	return counts, rows.Err()
+}
+
 func (s *Service) HistoryPage(ctx context.Context, userID uuid.UUID, limit, offset int) ([]DreamView, bool, error) {
 	if limit < 1 {
 		limit = 30
