@@ -782,6 +782,8 @@ export const en: Dictionary = {
   '연결됨 · {model} · {dimensions}차원': 'Connected · {model} · {dimensions} dimensions',
   '연결 실패: {detail}': 'Connection failed: {detail}',
   '무슨 생각을 하고 있나요?': 'What are you thinking?',
+  '{total}개 중 {shown}개를 보여드립니다.': 'Showing {shown} of {total}.',
+  '검토하거나 미루면 다음 생각이 올라옵니다.': 'Reviewing or postponing one brings up the next.',
   '수집함에 담기': 'Send to inbox',
   '수집함에 담았습니다.': 'Kept in your inbox.',
   '생각 기록': 'Thought captured',

@@ -96,6 +96,41 @@ type MorningBrief struct {
 	Quiet bool `json:"quiet"`
 }
 
+// skipWorthMentioning returns the skip only when the check it describes had
+// something to examine.
+//
+// A skip exists so an empty list is not read as an all-clear. That is a real
+// service to someone with thoughts umm could not compare — and nothing at all
+// to someone who has not written two yet. It was measured on a fresh account:
+// the very first thing the home screen said, above the guide and the empty
+// review, was that overlapping thoughts could not be checked because the
+// embedding measures word overlap rather than meaning. Nothing had been
+// skipped. There was nothing to skip.
+//
+// A duplicate is a pair, so two is the number that makes the check meaningful.
+func (s *Store) skipWorthMentioning(ctx context.Context, userID uuid.UUID) *BriefSkip {
+	skip := &BriefSkip{Kind: "duplicates", Reason: SkipBackendNotSemantic}
+	var comparable int
+	err := s.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM (
+			SELECT 1 FROM notes n
+			JOIN spaces sp ON sp.id=n.space_id
+			LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$1
+			WHERE n.deleted_at IS NULL AND n.archived=false AND (sp.owner_id=$1 OR m.user_id=$1)
+			LIMIT 2
+		) t`, userID).Scan(&comparable)
+	if err != nil {
+		// Not knowing is not a reason to go quiet: staying silent would be the
+		// all-clear this whole mechanism exists to avoid.
+		slog.Warn("could not tell whether the duplicate check had anything to examine", "user_id", userID, "error", err)
+		return skip
+	}
+	if comparable < 2 {
+		return nil
+	}
+	return skip
+}
+
 // maxDuplicateScanNotes bounds how many thoughts in one space are compared
 // against each other.
 //
@@ -260,14 +295,11 @@ func (s *Store) MorningBrief(ctx context.Context, userID uuid.UUID, since time.T
 // looking unusual precisely when there are the most of them.
 func (s *Store) duplicateThoughts(ctx context.Context, userID uuid.UUID) ([]DuplicatePair, *BriefSkip, error) {
 	report, err := s.MeasureEmbeddingQuality(ctx, false)
-	if err != nil {
-		return []DuplicatePair{}, &BriefSkip{Kind: "duplicates", Reason: SkipBackendNotSemantic}, nil
-	}
-	if !report.Semantic {
-		// The offline algorithm scores genuinely different sentences as high as
-		// 0.889 while some real duplicates fall to 0.505 — the ranges overlap, so
-		// anything it reported here would be about wording, not substance.
-		return []DuplicatePair{}, &BriefSkip{Kind: "duplicates", Reason: SkipBackendNotSemantic}, nil
+	// The offline algorithm scores genuinely different sentences as high as
+	// 0.889 while some real duplicates fall to 0.505 — the ranges overlap, so
+	// anything it reported here would be about wording, not substance.
+	if err != nil || !report.Semantic {
+		return []DuplicatePair{}, s.skipWorthMentioning(ctx, userID), nil
 	}
 	settings := s.IntelligenceSettings(ctx)
 	spaces, err := s.ListSpaces(ctx, userID)
