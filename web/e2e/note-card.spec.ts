@@ -286,6 +286,45 @@ test('a thought with no name shows no field for one', async ({ page }) => {
  * on how loaded the machine is. Under CPU contention the cursor was lost five
  * times in six; asserting on the cause is what makes this reliable.
  */
+/**
+ * The chips must not be drawn over the thought.
+ *
+ * Both sit in the card's bottom corners and both are absolutely positioned, so
+ * they were painted on top of the text rather than beside it. Measured in
+ * layout pixels on a note whose text fills the card: the text area reached to
+ * 16px above the card's bottom edge while the chips occupied from 10px to 33px,
+ * leaving seventeen pixels of the last line underneath them.
+ *
+ * The +N줄 chip made it plainest — a chip whose entire job is to say part of
+ * the thought is hidden was itself hiding part of the thought.
+ *
+ * Measured in layout pixels rather than from bounding rectangles, because the
+ * canvas is under a zoom transform: a rect comparison mixes scaled and unscaled
+ * numbers and reports an overlap that is not there.
+ */
+test('never draws a chip over the thought', async ({ page }) => {
+  await signIn(page);
+  // Long enough that the text fills the card and the +N줄 chip appears.
+  await spaceWith(page, [{ content: LONG, x: 0, y: 0 }]);
+
+  const card = page.locator('.postit').first();
+  await expect(card.locator('.more-chip')).toBeVisible();
+
+  const room = await card.evaluate((el) => {
+    const ta = el.querySelector('textarea[aria-label="생각 내용"]')!;
+    const chip = el.querySelector('.more-chip')!;
+    const px = (v: string) => parseFloat(v) || 0;
+    // Distances up from the card's bottom edge, all in layout pixels.
+    return {
+      textFloor: px(getComputedStyle(el).paddingBottom) + px(getComputedStyle(ta).paddingBottom),
+      chipTop: px(getComputedStyle(chip).bottom) + (chip as HTMLElement).offsetHeight,
+    };
+  });
+
+  // The lowest a glyph can reach has to be above the highest the chip reaches.
+  expect(room.textFloor).toBeGreaterThanOrEqual(room.chipTop);
+});
+
 test('does not hide a thought on the canvas when it changes', async ({ page }) => {
   await signIn(page);
   await spaceWith(page, [{ content: SHORT, x: 0, y: 0 }]);

@@ -426,6 +426,24 @@ textarea,
   mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
 }
+/* The chips sit over the card's bottom corners, so the thought has to stop
+   above them.
+
+   Both are absolutely positioned, which put them on top of the text rather than
+   beside it. Measured on a note whose text fills the card: 2005px² of the
+   thought was underneath the 관련 chip at desktop width, and the last line came
+   out as overlapping glyphs. The +N줄 chip did the same — a chip whose entire
+   job is to say some of the thought is hidden was hiding some of the thought.
+
+   Reserving the strip only when a chip is there keeps the room for every note
+   that has none. That reads circular, since the +N줄 chip appears because lines
+   are hidden and this hides one more — but it settles rather than oscillating:
+   with nothing hidden no chip appears and no room is taken, and once one does
+   the count simply includes the line the chip covers, which is the truth. */
+.postit-chipped textarea {
+  padding-bottom: 26px;
+}
+
 .related-chip {
   position: absolute;
   left: 15px;

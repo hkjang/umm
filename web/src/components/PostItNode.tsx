@@ -148,7 +148,7 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
   return (
     <div
       ref={cardRef}
-      className={`postit postit-${colorClass} ${note.source === 'dream' ? 'postit-dream' : ''} ${selected ? 'selected' : ''} ${hiddenLines ? 'postit-clipped' : ''}`}
+      className={`postit postit-${colorClass} ${note.source === 'dream' ? 'postit-dream' : ''} ${selected ? 'selected' : ''} ${hiddenLines ? 'postit-clipped' : ''} ${hiddenLines > 0 || data.relatedCount ? 'postit-chipped' : ''}`}
       style={{ '--note-rotation': `${note.rotation || 0}deg` } as CSSProperties}
       role="group"
       tabIndex={0}
