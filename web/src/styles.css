@@ -1159,9 +1159,23 @@ textarea,
 @media (pointer: coarse) {
   .mantine-ActionIcon-root,
   .mantine-Button-root,
+  /* The two header controls this list had been missing. Neither is an
+     ActionIcon or a Button — the menu is a Burger and the bell an
+     UnstyledButton — so the rule that decided touch targets should be 44px had
+     never reached them. Measured on a phone: 28x28 and 22x28, while every
+     control the selector did name was already correct. */
+  .mantine-Burger-root,
+  .header-icon-button,
   .related-chip {
     min-width: 44px;
     min-height: 44px;
+  }
+  /* Centred, so growing the box does not shift the glyph inside it. */
+  .mantine-Burger-root,
+  .header-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 }
 
