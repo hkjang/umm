@@ -860,6 +860,9 @@ export const en: Dictionary = {
   '진행 중': 'Exploring',
   채택: 'Taken',
   '접어 둠': 'Set aside',
+  '링크 열기': 'Open a link',
+  '생각 제목': 'Thought title',
+  '이 생각의 이름': 'A name for this thought',
   'Ptium 서버 주소입니다. 예: http://ptium.internal:8080':
     'The address of the Ptium server. For example http://ptium.internal:8080',
   'Ptium 발표 자료': 'Ptium presentations',

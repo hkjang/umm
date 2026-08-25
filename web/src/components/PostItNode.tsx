@@ -1,11 +1,14 @@
-import { memo, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ActionIcon, Menu, Tooltip } from '@mantine/core';
 import {
   IconBrain,
   IconDots,
+  IconExternalLink,
   IconGitBranch,
+  IconHeading,
   IconHelp,
   IconHistory,
+  IconLink,
   IconMessageCircle,
   IconPalette,
   IconTrash,
@@ -13,6 +16,7 @@ import {
 import { Handle, NodeResizer, Position, type NodeProps, type Node } from '@xyflow/react';
 import type { ThoughtNote } from '../api';
 import { useTranslation } from '../i18n';
+import { noteLinks } from '../note-links';
 
 export type PostItData = {
   note: ThoughtNote;
@@ -39,10 +43,26 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
   const { note } = data;
   const { t } = useTranslation();
   const [text, setText] = useState(note.content);
+  const [title, setTitle] = useState(note.title);
+  /*
+   * A note has a title only if its author gave it one.
+   *
+   * Importing a document already creates them — a markdown heading becomes the
+   * note's title — and the canvas showed none of it. The heading was in the
+   * database, in search, on the presentation slide and in what a screen reader
+   * read out, and invisible in the one place the person actually looks.
+   *
+   * It is not inferred from the first line. A thought's opening sentence is
+   * usually the thought, not a name for it, and promoting it would put a title
+   * on every note whether or not anyone meant one.
+   */
+  const [namingTitle, setNamingTitle] = useState(false);
+  const titleRef = useRef<HTMLInputElement>(null);
   const timer = useRef<number | undefined>(undefined);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   useEffect(() => setText(note.content), [note.content]);
+  useEffect(() => setTitle(note.title), [note.title]);
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
   /*
@@ -106,7 +126,24 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
     window.clearTimeout(timer.current);
     if (text !== note.content) data.onPatch(note.id, { content: text });
   };
+
+  const flushTitle = () => {
+    const next = title.trim();
+    if (next !== note.title) data.onPatch(note.id, { title: next });
+    // A name nobody typed is not a name: leaving the field empty puts the card
+    // back the way it was rather than leaving a blank line above the thought.
+    if (next === '') setNamingTitle(false);
+  };
   const colorClass = note.source === 'dream' ? 'lavender' : note.color;
+  /*
+   * The addresses this thought refers to.
+   *
+   * Offered from the menu rather than drawn on the card: the body is a textarea
+   * so it can be edited, and text in a textarea cannot be a link. Printing them
+   * again underneath would put the same address on the card twice, on a card
+   * that is already short of room.
+   */
+  const links = useMemo(() => noteLinks(note.content), [note.content]);
 
   return (
     <div
@@ -193,6 +230,33 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
           </Tooltip>
         )}
       </div>
+      {(note.title !== '' || namingTitle) && (
+        <input
+          ref={titleRef}
+          className="note-title nodrag"
+          aria-label={t('생각 제목')}
+          value={title}
+          placeholder={t('이 생각의 이름')}
+          onChange={(event) => setTitle(event.currentTarget.value)}
+          onBlur={flushTitle}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              flushTitle();
+              // Enter moves on to the thought itself, which is where someone
+              // naming a note was heading anyway.
+              editorRef.current?.focus();
+            }
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              event.stopPropagation();
+              setTitle(note.title);
+              setNamingTitle(note.title !== '');
+              cardRef.current?.focus();
+            }
+          }}
+        />
+      )}
       <textarea
         ref={editorRef}
         className="nodrag"
@@ -256,6 +320,45 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
                 </Menu.Sub.Dropdown>
               </Menu.Sub>
             )}
+            {links.length > 0 && (
+              <Menu.Sub>
+                <Menu.Sub.Target>
+                  <Menu.Sub.Item leftSection={<IconLink size={15} />}>{t('링크 열기')}</Menu.Sub.Item>
+                </Menu.Sub.Target>
+                <Menu.Sub.Dropdown>
+                  {links.map((link) => (
+                    <Menu.Item
+                      key={link.href}
+                      component="a"
+                      href={link.href}
+                      target="_blank"
+                      // noreferrer as well as noopener: the page being opened
+                      // has no business knowing which thought it was opened from.
+                      rel="noreferrer"
+                      leftSection={<IconExternalLink size={15} />}
+                    >
+                      {link.label}
+                    </Menu.Item>
+                  ))}
+                </Menu.Sub.Dropdown>
+              </Menu.Sub>
+            )}
+            <Menu.Item
+              leftSection={<IconHeading size={15} />}
+              onClick={() => {
+                if (note.title !== '') {
+                  data.onPatch(note.id, { title: '' });
+                  setNamingTitle(false);
+                  return;
+                }
+                setNamingTitle(true);
+                // Focused after the field exists, so naming a note is one action
+                // rather than a menu click and then a hunt for where to type.
+                window.setTimeout(() => titleRef.current?.focus(), 0);
+              }}
+            >
+              {t(note.title !== '' ? '제목 지우기' : '제목 붙이기')}
+            </Menu.Item>
             {/* Marking, not inferring. umm never decides a note is a question —
                 a sentence ending in a question mark often is not one, and a real
                 question is often written without one. */}
