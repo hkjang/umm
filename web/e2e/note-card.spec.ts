@@ -268,6 +268,54 @@ test('a thought with no name shows no field for one', async ({ page }) => {
   await expect(page.locator('.note-title')).toHaveCount(0);
 });
 
+/**
+ * Changing a note must not make the canvas hide it.
+ *
+ * The nodes are rebuilt from scratch whenever a note changes, and a rebuilt
+ * node carries no measurements, so React Flow hides it — `visibility: hidden` —
+ * until it has measured it again. Hiding an element blurs whatever inside it
+ * held the cursor, which is why naming a thought and pressing Enter could drop
+ * you out of the thought you were sent to. Recorded from the page:
+ *
+ *   focusin  textarea[생각 내용]      the cursor arrives
+ *   ATTR     visibility: hidden       the rebuild is measured
+ *   focusout textarea -> null         and the cursor is dropped
+ *
+ * The test watches for the hiding rather than for the lost cursor, because the
+ * hiding happens on every save while whether it beats the cursor there depends
+ * on how loaded the machine is. Under CPU contention the cursor was lost five
+ * times in six; asserting on the cause is what makes this reliable.
+ */
+test('does not hide a thought on the canvas when it changes', async ({ page }) => {
+  await signIn(page);
+  await spaceWith(page, [{ content: SHORT, x: 0, y: 0 }]);
+
+  await page.evaluate(() => {
+    const hidden: string[] = [];
+    (window as unknown as { __hidden: string[] }).__hidden = hidden;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        const el = record.target as HTMLElement;
+        if (el.classList?.contains('react-flow__node') && el.style.visibility === 'hidden') {
+          hidden.push(el.getAttribute('data-id') ?? 'node');
+        }
+      }
+    }).observe(document.body, { attributes: true, subtree: true, attributeFilter: ['style'] });
+  });
+
+  // Any edit will do; this is the one a person makes most.
+  const editor = page.locator('.postit').first().getByRole('textbox', { name: '생각 내용' });
+  await editor.click();
+  await editor.fill('회고 주기를 격주로 줄이자');
+  await editor.blur();
+  await expect
+    .poll(async () => page.evaluate(() => (window as unknown as { __hidden: string[] }).__hidden.length), {
+      timeout: 4000,
+      intervals: [200, 300, 500, 1000],
+    })
+    .toBe(0);
+});
+
 test('names a thought and keeps the name', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signIn(page);

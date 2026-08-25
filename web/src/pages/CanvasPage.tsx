@@ -742,6 +742,36 @@ function CanvasInner() {
   }, [branches, branchAssignments]);
 
   useEffect(() => {
+    /**
+     * Carries React Flow's own measurements onto rebuilt nodes.
+     *
+     * These nodes are rebuilt from scratch whenever anything about a note
+     * changes. A rebuilt node has no measurements, so React Flow hides it —
+     * literally `visibility: hidden` — until it has measured it again, and
+     * hiding an element blurs whatever inside it had the cursor.
+     *
+     * That is not theoretical. Naming a note and pressing Enter is supposed to
+     * put the cursor in the thought; the save that follows rebuilt the node,
+     * React Flow hid it, and the cursor was gone. Recorded from the page:
+     *
+     *   focusin  textarea[생각 내용]      the cursor arrives
+     *   ATTR     visibility: hidden       the rebuild is measured
+     *   focusout textarea -> null         and the cursor is dropped
+     *
+     * On a loaded machine it happened five times in six. The measurements have
+     * not changed — the note is the same size it was a moment ago — so handing
+     * them back is both what stops the flicker and what keeps the cursor.
+     */
+    const keepMeasured = <T extends { id: string; measured?: Node['measured'] }>(
+      built: T[],
+      current: readonly { id: string; measured?: Node['measured'] }[],
+    ): T[] => {
+      const measured = new Map(current.map((node) => [node.id, node.measured]));
+      return built.map((node) => {
+        const known = measured.get(node.id);
+        return known ? { ...node, measured: known } : node;
+      });
+    };
     const noteNodes = (visible: ThoughtNote[]) =>
       visible.map((note) => ({
         id: note.id,
@@ -772,7 +802,7 @@ function CanvasInner() {
       }));
 
     if (!summarised || searchMatches.length < clusterMinNotes) {
-      setNodes(noteNodes(searchMatches));
+      setNodes((current) => keepMeasured(noteNodes(searchMatches), current));
       return;
     }
 
@@ -786,7 +816,7 @@ function CanvasInner() {
         return;
       }
       // Asked, and there are no groups. The notes are what there is.
-      setNodes(noteNodes(searchMatches));
+      setNodes((current) => keepMeasured(noteNodes(searchMatches), current));
       return;
     }
 
@@ -817,7 +847,9 @@ function CanvasInner() {
 
     // Notes in no group stay themselves. They are the outliers, and hiding them
     // would make the zoomed-out view claim the workspace is tidier than it is.
-    setNodes([...clusterNodes, ...noteNodes(searchMatches.filter((note) => !grouped.has(note.id)))]);
+    setNodes((current) =>
+      keepMeasured([...clusterNodes, ...noteNodes(searchMatches.filter((note) => !grouped.has(note.id)))], current),
+    );
   }, [
     searchMatches,
     persist,
