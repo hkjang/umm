@@ -53,5 +53,11 @@ test.describe('결정 기록', () => {
     const english = await dateLine(page);
     expect(english).not.toBe('2026. 8. 25.');
     expect(english).toBe('8/25/2026');
+
+    // The language is an account preference, so it outlives this test. signIn
+    // pins it for anything that signs in afterwards, but leaving the account in
+    // English means anything that does not is quietly reading a different app
+    // than it expects — which is the trap the helper's own comment describes.
+    await signIn(page, { locale: 'ko' });
   });
 });
