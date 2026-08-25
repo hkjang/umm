@@ -27,7 +27,7 @@ interface TurningPoint {
  * than one that admits what it covers.
  */
 export default function DecisionsPage() {
-  const { t } = useTranslation();
+  const { t, formatDate } = useTranslation();
   const navigate = useNavigate();
   const [points, setPoints] = useState<TurningPoint[]>();
   // Whether the record stops short of everything marked. Saying so matters for
@@ -92,7 +92,14 @@ export default function DecisionsPage() {
                 {label(point.kind)}
               </Badge>
               <Text size="xs" c="dimmed">
-                {new Date(point.at).toLocaleDateString()} · {point.space}
+                {/* Formatted in the language the person chose inside umm, not
+                    the one their browser happens to be set to. This was the
+                    only date in the app still asking the browser: with umm in
+                    English on a Korean browser, Dreams read August 25, 2026 and
+                    this row read 2026. 8. 25. — the same date, in one product,
+                    in two languages. The numeric form keeps the row exactly as
+                    it looked; only whose language decides it has changed. */}
+                {formatDate(point.at, { year: 'numeric', month: 'numeric', day: 'numeric' })} · {point.space}
               </Text>
             </Group>
             {/* A line resolved without a root thought has no note to open, and
