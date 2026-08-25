@@ -374,3 +374,73 @@ func TestACancelledContextStopsTheCall(t *testing.T) {
 		t.Fatal("a cancelled context still called ptium")
 	}
 }
+
+func TestTemplatesListsWhatPtiumOffers(t *testing.T) {
+	client, seen := stubPtium(t, http.StatusOK,
+		`{"data":[{"id":"t1","name":"KCB Executive","kind":"builtin"},{"id":"t2","name":"연간 보고"}],"meta":{"count":2}}`)
+	templates, err := client.Templates(context.Background())
+	if err != nil {
+		t.Fatalf("templates: %v", err)
+	}
+	if seen.method != http.MethodGet || seen.path != "/api/v1/templates" {
+		t.Fatalf("called %s %s", seen.method, seen.path)
+	}
+	if len(templates) != 2 || templates[1].Name != "연간 보고" {
+		t.Fatalf("templates: %+v", templates)
+	}
+	if seen.auth != "Bearer ptium_test_key" {
+		t.Fatalf("the credential was not sent: %q", seen.auth)
+	}
+}
+
+// A read carries no body. Sending "null" with a JSON content type on a GET is
+// what a strict server, or a proxy in front of one, rejects — and there is
+// nothing to send.
+func TestAReadSendsNoBody(t *testing.T) {
+	var length int64
+	var contentType string
+	var present bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		length = r.ContentLength
+		contentType = r.Header.Get("Content-Type")
+		_, present = r.Header["Content-Type"]
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[]}`)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "k", 5*time.Second)
+	if err != nil {
+		t.Fatalf("client: %v", err)
+	}
+	if _, err := client.Templates(context.Background()); err != nil {
+		t.Fatalf("templates: %v", err)
+	}
+	if length > 0 {
+		t.Fatalf("a read sent %d bytes of body", length)
+	}
+	if present {
+		t.Fatalf("a read declared a content type: %q", contentType)
+	}
+}
+
+// An empty list is not an error: a Ptium with no templates is unusual but
+// answering, and the connection test has to tell that apart from a refusal.
+func TestNoTemplatesIsNotAFailure(t *testing.T) {
+	client, _ := stubPtium(t, http.StatusOK, `{"data":[]}`)
+	templates, err := client.Templates(context.Background())
+	if err != nil {
+		t.Fatalf("templates: %v", err)
+	}
+	if len(templates) != 0 {
+		t.Fatalf("templates: %+v", templates)
+	}
+}
+
+func TestARefusedCredentialSurfacesFromTemplates(t *testing.T) {
+	client, _ := stubPtium(t, http.StatusUnauthorized, `{"title":"Unauthorized","detail":"API 키가 올바르지 않습니다"}`)
+	_, err := client.Templates(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "API 키가 올바르지 않습니다") {
+		t.Fatalf("got %v, want ptium's explanation", err)
+	}
+}

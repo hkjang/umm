@@ -25,6 +25,15 @@
 
 ---
 
+## v0.42.0 — Ptium 연결을 관리자 화면에서
+
+Ptium 설정은 API로만 존재했습니다. 저장할 화면이 없으니 **실제로는 연결할 방법이 없었습니다.**
+
+- **만들어 보기 전에 연결을 확인합니다**: `연결 테스트`가 Ptium의 템플릿 목록을 읽습니다. 인증이 필요한 읽기라서 **주소가 응답하고, 그것이 Ptium이고, 키가 통한다**는 세 가지가 한 번에 증명됩니다. 없으면 첫 신호는 누군가 발표 자료를 만들려다 받는 상태 코드입니다.
+- **고칠 방법이 다른 셋을 구분합니다**: 주소 없음 / 주소 형식 오류 / Ptium이 거절(그쪽이 한 말 그대로).
+- **템플릿은 이름으로 고릅니다**: UUID를 복사해 붙여넣는 설정은 저장된 것처럼 보이지만 아무것도 가리키지 않는 종류입니다.
+- **짐작한 응답 형식이 틀렸습니다**: `data`가 배열 그 자체였습니다. 스텁에는 깨끗하게 통과하고 **진짜 Ptium에 처음 붙이는 순간** 실패했습니다.
+
 ## v0.41.0 — 2000개 공간을 여는 데 7.5초, 이제 0.9초
 
 생각 2000개·연결 1999개짜리 공간으로 재 보고 고쳤습니다.
@@ -83,7 +92,7 @@ umm이 [Ptium](https://github.com/hkjang/ptium)으로 발표 자료를 만듭니
 - **색상 스와치는 멀쩡했습니다**: 전부 회색일 거라 의심했지만 확인해 보니 변수가 실제로 있었습니다 — 멀쩡한 코드를 건드리지 않았습니다.
 - **테스트의 결함 둘을 되돌리기가 잡았습니다**: `textarea[value^=…]`는 React 제어 값을 못 찾아 공허하게 통과하고 있었고, 카드 높이를 화면 픽셀로 비교하니 배율 때문에 `1091px` vs `642px`가 나왔습니다.
 
-이전 릴리스: [v0.40.1](docs/releases/v0.40.1.md) · [v0.40.0](docs/releases/v0.40.0.md) · [v0.39.0](docs/releases/v0.39.0.md) · [v0.38.0](docs/releases/v0.38.0.md) · [v0.37.1](docs/releases/v0.37.1.md) · [v0.37.0](docs/releases/v0.37.0.md) · [v0.36.0](docs/releases/v0.36.0.md) · [v0.35.0](docs/releases/v0.35.0.md) · [v0.34.4](docs/releases/v0.34.4.md) · [v0.34.3](docs/releases/v0.34.3.md) · [v0.34.2](docs/releases/v0.34.2.md) · [v0.34.1](docs/releases/v0.34.1.md) · [v0.34.0](docs/releases/v0.34.0.md) · [v0.33.2](docs/releases/v0.33.2.md) · [v0.33.1](docs/releases/v0.33.1.md) · [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
+이전 릴리스: [v0.41.0](docs/releases/v0.41.0.md) · [v0.40.1](docs/releases/v0.40.1.md) · [v0.40.0](docs/releases/v0.40.0.md) · [v0.39.0](docs/releases/v0.39.0.md) · [v0.38.0](docs/releases/v0.38.0.md) · [v0.37.1](docs/releases/v0.37.1.md) · [v0.37.0](docs/releases/v0.37.0.md) · [v0.36.0](docs/releases/v0.36.0.md) · [v0.35.0](docs/releases/v0.35.0.md) · [v0.34.4](docs/releases/v0.34.4.md) · [v0.34.3](docs/releases/v0.34.3.md) · [v0.34.2](docs/releases/v0.34.2.md) · [v0.34.1](docs/releases/v0.34.1.md) · [v0.34.0](docs/releases/v0.34.0.md) · [v0.33.2](docs/releases/v0.33.2.md) · [v0.33.1](docs/releases/v0.33.1.md) · [v0.33.0](docs/releases/v0.33.0.md) · [v0.32.2](docs/releases/v0.32.2.md) · [v0.32.1](docs/releases/v0.32.1.md) · [v0.32.0](docs/releases/v0.32.0.md) · [v0.31.2](docs/releases/v0.31.2.md) · [v0.31.1](docs/releases/v0.31.1.md) · [v0.31.0](docs/releases/v0.31.0.md) · [v0.30.1](docs/releases/v0.30.1.md) · [v0.30.0](docs/releases/v0.30.0.md) · [v0.29.1](docs/releases/v0.29.1.md) · [v0.29.0](docs/releases/v0.29.0.md) · [v0.28.1](docs/releases/v0.28.1.md) · [v0.28.0](docs/releases/v0.28.0.md) · [v0.27.1](docs/releases/v0.27.1.md) · [v0.27.0](docs/releases/v0.27.0.md) · [v0.26.0](docs/releases/v0.26.0.md) · [v0.25.0](docs/releases/v0.25.0.md) · [v0.24.0](docs/releases/v0.24.0.md) · [v0.23.0](docs/releases/v0.23.0.md) · [v0.22.0](docs/releases/v0.22.0.md) · [v0.21.0](docs/releases/v0.21.0.md) · [v0.20.0](docs/releases/v0.20.0.md) · [v0.19.0](docs/releases/v0.19.0.md) · [v0.18.0](docs/releases/v0.18.0.md) · [v0.17.0](docs/releases/v0.17.0.md) · [v0.16.0](docs/releases/v0.16.0.md) · [v0.15.0](docs/releases/v0.15.0.md) · [v0.14.0](docs/releases/v0.14.0.md) · [v0.13.0](docs/releases/v0.13.0.md) · [v0.12.0](docs/releases/v0.12.0.md) · [v0.11.0](docs/releases/v0.11.0.md) · [v0.10.0](docs/releases/v0.10.0.md) · [v0.9.0](docs/releases/v0.9.0.md) · [v0.8.1](docs/releases/v0.8.1.md)
 
 ---
 

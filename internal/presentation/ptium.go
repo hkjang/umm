@@ -142,15 +142,25 @@ func (c *Client) ApplySource(ctx context.Context, deckID, source string, dryRun 
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
-	raw, err := json.Marshal(body)
+	// A read carries no body. Sending "null" with a JSON content type on a GET
+	// is the kind of thing a strict server or a proxy in front of one rejects,
+	// and there is nothing to send.
+	var reader io.Reader
+	hasBody := body != nil
+	if hasBody {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(raw)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, reader)
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(raw))
-	if err != nil {
-		return err
+	if hasBody {
+		request.Header.Set("Content-Type", "application/json")
 	}
-	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	if c.APIKey != "" {
 		// Bearer rather than X-API-Key: Ptium accepts either for a ptium_* key
@@ -218,4 +228,33 @@ func fallbackTitle(title string) string {
 		return "umm"
 	}
 	return textutil.LimitUTF8Bytes(title, 200)
+}
+
+// Template is one of the designs a deck can be generated into.
+type Template struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind,omitempty"`
+}
+
+// data is the array itself, not an object wrapping one. Checked against a
+// running Ptium rather than guessed: the guess parsed cleanly against a stub
+// and failed on the first real connection test, with an unmarshal error an
+// administrator could do nothing with.
+type templateEnvelope struct {
+	Data []Template `json:"data"`
+}
+
+// Templates lists the designs this Ptium offers.
+//
+// Also what the connection test calls. It is an authenticated read, so a reply
+// proves three things at once — the address answers, it is a Ptium, and the
+// credential is accepted — which is what an administrator actually wants to
+// know before someone tries to make a deck and gets a 401 they cannot read.
+func (c *Client) Templates(ctx context.Context) ([]Template, error) {
+	var envelope templateEnvelope
+	if err := c.do(ctx, http.MethodGet, "/api/v1/templates", nil, &envelope); err != nil {
+		return nil, err
+	}
+	return envelope.Data, nil
 }

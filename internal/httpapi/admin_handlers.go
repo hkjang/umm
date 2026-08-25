@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/intelligence"
+	"github.com/hkjang/umm/internal/presentation"
 	"github.com/hkjang/umm/internal/store"
 )
 
@@ -535,6 +536,66 @@ func (s *Server) embeddingQuality(w http.ResponseWriter, r *http.Request) {
 // is wrong, the model name is wrong, or the model works but is not semantic.
 // This separates the first two, which are the ones an administrator can fix from
 // this screen.
+// testPtium checks that the configured Ptium answers and accepts the key.
+//
+// It lists templates, which is an authenticated read: a reply proves the
+// address answers, that it is a Ptium, and that the credential works — all
+// three at once. Without this the first sign of a wrong address or a rejected
+// key is someone trying to make a deck and being handed a status code.
+//
+// The templates come back with the result so the settings screen can offer
+// them by name rather than asking an administrator to paste a UUID.
+func (s *Server) testPtium(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		BaseURL        string `json:"base_url"`
+		APIKey         string `json:"api_key"`
+		TimeoutSeconds int    `json:"timeout_seconds"`
+	}
+	if decodeJSON(w, r, &body) != nil {
+		writeError(w, 400, "Ptium 정보가 올바르지 않습니다.")
+		return
+	}
+
+	// A saved key arrives masked, because the settings screen never sends the
+	// stored secret back. Fall back to the stored one so testing an unchanged
+	// connection does not require retyping it.
+	var stored presentation.Config
+	hasStored := s.Store.GetSetting(r.Context(), "ptium", &stored) == nil
+	key := body.APIKey
+	if hasStored && (key == "" || key == secretMask) {
+		key = s.Store.DecryptSetting(stored.APIKey)
+	}
+	base := strings.TrimSpace(body.BaseURL)
+	if base == "" && hasStored {
+		base = stored.BaseURL
+	}
+	timeout := body.TimeoutSeconds
+	if timeout <= 0 {
+		timeout = stored.TimeoutSeconds
+	}
+
+	client, err := presentation.NewClient(base, key, time.Duration(timeout)*time.Second)
+	if err != nil {
+		if errors.Is(err, presentation.ErrNotConfigured) {
+			writeError(w, 400, "Ptium 주소를 입력해 주세요.")
+			return
+		}
+		writeError(w, 400, "Ptium 주소가 올바르지 않습니다: "+err.Error())
+		return
+	}
+
+	templates, err := client.Templates(r.Context())
+	if err != nil {
+		writeError(w, 400, "Ptium 연결 실패: "+err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok":        true,
+		"message":   fmt.Sprintf("Ptium에 연결했습니다. 템플릿 %d개를 찾았습니다.", len(templates)),
+		"templates": templates,
+	})
+}
+
 func (s *Server) testEmbeddingGateway(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		BaseURL          string `json:"base_url"`
