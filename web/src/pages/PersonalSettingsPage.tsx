@@ -220,7 +220,7 @@ export default function PersonalSettingsPage() {
     setHookOpened(true);
   };
   return (
-    <main className="settings-page">
+    <div className="settings-page">
       <Stack maw={980} mx="auto" gap="xl">
         <div>
           <Text size="sm" c="grape.7" fw={700}>
@@ -675,6 +675,6 @@ export default function PersonalSettingsPage() {
           )}
         </Stack>
       </Modal>
-    </main>
+    </div>
   );
 }

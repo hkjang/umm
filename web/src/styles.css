@@ -376,6 +376,34 @@ textarea,
   text-transform: uppercase;
   margin-bottom: 8px;
 }
+/* Out of the way until someone tabs to it, then in plain sight.
+   
+   Moved rather than hidden with display:none or visibility:hidden, because both
+   of those take an element out of the tab order — which would remove the only
+   thing this link is for. */
+.skip-to-content {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 1000;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: #4b3a5e;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+  transform: translateY(-160%);
+  transition: transform 120ms ease;
+}
+.skip-to-content:focus {
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .skip-to-content {
+    transition: none;
+  }
+}
+
 .note-actions {
   position: absolute;
   right: 9px;

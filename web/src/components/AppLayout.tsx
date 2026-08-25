@@ -90,6 +90,30 @@ export default function AppLayout() {
       navbar={{ width: 238, breakpoint: 'sm', collapsed: { mobile: !opened, desktop: isAdmin } }}
       padding={0}
     >
+      {/*
+        The first thing Tab reaches, and hidden until it is reached.
+
+        Counted from a fresh page: five header controls and seven sidebar links
+        stand between the start of the document and the page's own content, and
+        someone working from the keyboard walked all twelve on every single
+        page before arriving at what they came for. This is one press instead.
+
+        It moves focus to <main> rather than only scrolling to it, so the next
+        Tab continues from the content and not from the header again.
+      */}
+      <a
+        className="skip-to-content"
+        href="#main-content"
+        onClick={(event) => {
+          event.preventDefault();
+          const main = document.querySelector('main');
+          if (!main) return;
+          main.setAttribute('tabindex', '-1');
+          main.focus();
+        }}
+      >
+        {t('본문으로 건너뛰기')}
+      </a>
       {!isAdmin && (
         <AppShell.Header className="app-header">
           <Group h="100%" px={{ base: 'md', sm: 'lg' }} justify="space-between">

@@ -139,12 +139,12 @@ export default function TodayPage() {
     : [];
   if (!data && !error)
     return (
-      <main className="today-page">
+      <div className="today-page">
         <Loader color="grape" />
-      </main>
+      </div>
     );
   return (
-    <main className="today-page">
+    <div className="today-page">
       <Stack maw={1180} mx="auto" gap="xl">
         <Group justify="space-between" align="flex-end">
           <div>
@@ -465,7 +465,7 @@ export default function TodayPage() {
           </>
         )}
       </Stack>
-    </main>
+    </div>
   );
 }
 

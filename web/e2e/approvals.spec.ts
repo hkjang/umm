@@ -61,7 +61,7 @@ test.describe('검토 · 승인', () => {
     await expect(page.getByText('제품 결정')).toBeVisible();
 
     // And none of the values it is stored as.
-    const body = (await page.locator('main.settings-page').textContent()) ?? '';
+    const body = (await page.locator('.settings-page').textContent()) ?? '';
     for (const raw of ['pending', 'approved', 'export', 'space_share']) {
       expect(body, `the stored value ${raw} reached the screen`).not.toContain(raw);
     }

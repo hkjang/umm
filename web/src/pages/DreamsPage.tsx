@@ -313,7 +313,7 @@ export default function DreamsPage() {
     }
   };
   return (
-    <main className="settings-page">
+    <div className="settings-page">
       <Stack maw={900} mx="auto" gap="xl">
         <Group justify="space-between" align="flex-end">
           <Group>
@@ -573,6 +573,6 @@ export default function DreamsPage() {
           </Group>
         </Stack>
       </Modal>
-    </main>
+    </div>
   );
 }
