@@ -66,7 +66,7 @@ test.describe('개인 API 키', () => {
     await expect(page.getByText('아직 사용된 적 없음')).toBeVisible();
 
     // And none of the values the state is stored as.
-    const body = (await page.locator('main.settings-page').textContent()) ?? '';
+    const body = (await page.locator('.settings-page').textContent()) ?? '';
     for (const raw of ['active', 'overlap', 'revoked']) {
       expect(body, `the stored value ${raw} reached the screen`).not.toContain(raw);
     }

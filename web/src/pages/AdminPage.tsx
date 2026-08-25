@@ -381,7 +381,7 @@ export default function AdminPage() {
     }
   };
   return (
-    <main className="admin-layout">
+    <div className="admin-layout">
       <aside className="admin-menu nav-scroll" aria-label={t('관리자 메뉴')}>
         <Stack h="100%">
           <Group className="admin-brand" px="sm" pt={60}>
@@ -1136,7 +1136,7 @@ export default function AdminPage() {
           </Group>
         </Stack>
       </Modal>
-    </main>
+    </div>
   );
 }
 

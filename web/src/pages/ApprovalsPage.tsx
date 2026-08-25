@@ -54,7 +54,7 @@ export default function ApprovalsPage() {
     await load();
   };
   return (
-    <main className="settings-page">
+    <div className="settings-page">
       <Stack maw={900} mx="auto" gap="xl">
         <div>
           <Text size="sm" fw={700} c="grape.7">
@@ -136,6 +136,6 @@ export default function ApprovalsPage() {
           ))
         )}
       </Stack>
-    </main>
+    </div>
   );
 }

@@ -1583,7 +1583,7 @@ function CanvasInner() {
       )}
       {listView ? (
         <ScrollArea className="canvas-linear-view" type="auto">
-          <main aria-label={t('생각 선형 목록')}>
+          <section aria-label={t('생각 선형 목록')}>
             <Group justify="space-between" mb="lg">
               <div>
                 <Title order={2}>{t('생각 목록')}</Title>
@@ -1644,7 +1644,7 @@ function CanvasInner() {
                 </Card>
               ))}
             </Stack>
-          </main>
+          </section>
         </ScrollArea>
       ) : (
         <ReactFlow

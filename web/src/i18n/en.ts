@@ -366,6 +366,7 @@ export const en: Dictionary = {
   '이 Dream을 숨기고 스타일 선호도에 반영했습니다.': 'Hidden, and your style preference was updated.',
   '피드백 반영': 'Feedback recorded',
   검토함: 'Inbox',
+  '본문으로 건너뛰기': 'Skip to content',
   '사용 중': 'In use',
   '교체 중': 'Being replaced',
   폐기됨: 'Revoked',
