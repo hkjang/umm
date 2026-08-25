@@ -28,6 +28,13 @@ const marked = {
   hasMore: false,
 };
 
+/** Sets the account's language and reloads, the way the preferences screen does. */
+async function setLanguage(page: import('@playwright/test').Page, locale: 'ko' | 'en') {
+  await page.request.put('/api/v1/preferences', { data: { locale } });
+  await page.evaluate((value) => localStorage.setItem('umm:locale', value), locale);
+  await page.reload();
+}
+
 /** The dimmed line that carries the date and the space name. */
 const dateLine = (page: import('@playwright/test').Page) =>
   page.evaluate(() => {
@@ -36,7 +43,7 @@ const dateLine = (page: import('@playwright/test').Page) =>
   });
 
 test.describe('결정 기록', () => {
-  test.skip('dates follow the language chosen in umm, not the browser', async ({ page }) => {
+  test('dates follow the language chosen in umm, not the browser', async ({ page }) => {
     await signIn(page, { locale: 'ko' });
     await page.route('**/api/v1/turning-points*', (route) => route.fulfill({ json: marked }));
 
@@ -47,17 +54,22 @@ test.describe('결정 기록', () => {
     // another's.
     expect(await dateLine(page)).toBe('2026. 8. 25.');
 
-    await signIn(page, { locale: 'en' });
-    await page.goto('/decisions');
+    // The language is an account setting — auth-context writes it into local
+    // storage on every load, so it cannot be switched in the browser alone.
+    // Changed here with the one request that changes it rather than by signing
+    // in again, and put back below: signing in a second and third time inside
+    // one test is several page loads of extra work in a suite that runs on one
+    // worker, and this test is not about signing in.
+    await setLanguage(page, 'en');
     await expect(page.getByText('격주로 줄여 보자')).toBeVisible();
+
     const english = await dateLine(page);
     expect(english).not.toBe('2026. 8. 25.');
     expect(english).toBe('8/25/2026');
 
-    // The language is an account preference, so it outlives this test. signIn
-    // pins it for anything that signs in afterwards, but leaving the account in
-    // English means anything that does not is quietly reading a different app
-    // than it expects — which is the trap the helper's own comment describes.
-    await signIn(page, { locale: 'ko' });
+    // Left as it was found. The setting outlives this test, and every test after
+    // it in the same database would otherwise be reading a different app than it
+    // expects — the trap the signIn helper's own comment describes.
+    await setLanguage(page, 'ko');
   });
 });
