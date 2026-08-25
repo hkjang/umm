@@ -5,6 +5,7 @@ import './styles.css';
 import { createRoot } from 'react-dom/client';
 import { MantineProvider, createTheme } from '@mantine/core';
 import { BrowserRouter } from 'react-router-dom';
+import { UnsavedWorkProvider } from './unsaved-work';
 import { AuthProvider } from './auth-context';
 import { TranslationProvider } from './i18n';
 import App from './App';
@@ -29,7 +30,11 @@ createRoot(document.getElementById('root')!).render(
       <AppNotifications />
       <BrowserRouter>
         <AuthProvider>
-          <App />
+          {/* Above the router's outlet so the shell can ask a page whether it
+              has work that navigating away would throw out. */}
+          <UnsavedWorkProvider>
+            <App />
+          </UnsavedWorkProvider>
         </AuthProvider>
       </BrowserRouter>
     </TranslationProvider>

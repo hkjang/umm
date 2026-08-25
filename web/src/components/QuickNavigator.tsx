@@ -24,11 +24,12 @@ import {
   IconSearch,
   IconSparkles,
 } from '@tabler/icons-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api, type NoteSearchResult, type Space } from '../api';
 import { useAuth } from '../auth-context';
 import { useTranslation } from '../i18n';
+import { useUnsavedWork } from '../unsaved-work';
 import { showError } from '../ui-notifications';
 
 interface QuickItem {
@@ -203,12 +204,28 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
 
   useEffect(() => setActiveIndex(0), [query, opened]);
 
+  /*
+   * Jumping somewhere else is leaving too.
+   *
+   * Guarding only the sidebar would mean the quick navigator — the fastest way
+   * out of a page — was the one that lost unsaved work without asking.
+   */
+  const { confirmLeaving } = useUnsavedWork();
+  const goTo = useCallback(
+    (to: string) => {
+      void confirmLeaving().then((proceed) => {
+        if (proceed) navigate(to);
+      });
+    },
+    [confirmLeaving, navigate],
+  );
+
   const select = (item?: QuickItem) => {
     if (!item) return;
     setOpened(false);
     setQuery('');
     setNotes([]);
-    if (item.to) navigate(item.to);
+    if (item.to) goTo(item.to);
     item.action?.();
   };
 
@@ -231,13 +248,13 @@ export default function QuickNavigator({ admin = false }: { admin?: boolean }) {
         const destination = destinations[Number(event.key) - 1];
         if (destination?.to) {
           event.preventDefault();
-          navigate(destination.to);
+          goTo(destination.to);
         }
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [destinations, navigate]);
+  }, [destinations, goTo]);
 
   const shortcuts = [
     [`${mod} + K`, t('빠른 이동 열기')],
