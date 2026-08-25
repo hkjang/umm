@@ -50,6 +50,23 @@ func TestBriefSaysWhatItCouldNotCheckIntegration(t *testing.T) {
 	db, userID := briefUser(t)
 	restore := useOfflineEmbedding(t, db)
 	defer restore()
+
+	// Two thoughts, because that is where the property starts to hold. A
+	// duplicate is a pair, so on an account with fewer than two there is no
+	// unexamined pair to mistake for an all-clear — and saying a check was
+	// skipped would describe a gap that does not exist. That case is covered by
+	// TestTheBriefOnlyReportsASkippedCheckThatHadSomethingToExamineIntegration.
+	ctx := context.Background()
+	space, err := db.CreateSpace(ctx, userID, "확인하지 못한 것")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"겹칠 수도 있는 생각 하나", "겹칠 수도 있는 생각 둘"} {
+		if _, err = db.CreateNote(ctx, userID, Note{SpaceID: space.ID, AuthorID: userID, Content: content}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	brief := briefFor(t, db, userID)
 
 	if len(brief.Duplicates) != 0 {

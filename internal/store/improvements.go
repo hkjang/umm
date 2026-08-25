@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -366,6 +367,23 @@ func (s *Store) TodayReview(ctx context.Context, userID uuid.UUID) (TodayReview,
 			done++
 		}
 	}
+	// Doing all four things the guide asks for is finishing the guide.
+	//
+	// It used to end only when someone found the quiet grey "안내 마치기" link,
+	// so a person who had done every step still met the card every morning: it
+	// was measured sitting at 100% and occupying 517px above every piece of real
+	// work on the page. A checklist with nothing left to check is not guidance,
+	// it is furniture.
+	if completedAt == nil && done == len(steps) {
+		finished, finishErr := s.finishOnboarding(ctx, userID)
+		if finishErr != nil {
+			// Not worth failing the whole page over; the card simply stays one
+			// more load, which is what it did before this existed.
+			slog.Warn("could not close the finished onboarding guide", "user_id", userID, "error", finishErr)
+		} else {
+			completedAt = finished
+		}
+	}
 	out.Onboarding = OnboardingProgress{CompletedAt: completedAt, Percent: done * 100 / len(steps), Steps: steps}
 
 	// The tiles are counts, so they have to count.
@@ -450,8 +468,22 @@ func (s *Store) UpdateReview(ctx context.Context, userID, noteID uuid.UUID, snoo
 }
 
 func (s *Store) CompleteOnboarding(ctx context.Context, userID uuid.UUID) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE user_preferences SET onboarding_completed_at=COALESCE(onboarding_completed_at,now()),updated_at=now() WHERE user_id=$1`, userID)
+	_, err := s.finishOnboarding(ctx, userID)
 	return err
+}
+
+// finishOnboarding marks the guide done and reports when it was, so a caller
+// that has just finished it can say so without inventing its own clock and
+// without a second round trip. COALESCE keeps the original moment: finishing
+// twice does not move the date.
+func (s *Store) finishOnboarding(ctx context.Context, userID uuid.UUID) (*time.Time, error) {
+	var at time.Time
+	err := s.Pool.QueryRow(ctx, `UPDATE user_preferences SET onboarding_completed_at=COALESCE(onboarding_completed_at,now()),updated_at=now()
+		WHERE user_id=$1 RETURNING onboarding_completed_at`, userID).Scan(&at)
+	if err != nil {
+		return nil, err
+	}
+	return &at, nil
 }
 
 func scanComment(row pgx.Row) (Comment, error) {

@@ -170,65 +170,75 @@ export default function TodayPage() {
             </Button>
           </Alert>
         )}
+        {/*
+          While the guide is unfinished it leads the page, because both blocks
+          below it are addressed to someone who has already done what it asks.
+          A brief has nothing to report on an empty space, and asking a memory
+          that holds nothing can only answer that it found nothing — measured on
+          a fresh account, that ask box sat above the guide offering a question
+          box to someone with no thoughts to question. The guide closes itself
+          the moment its last step lands, so leading with it is a state a person
+          passes through rather than one they live in.
+        */}
+        {data && !data.onboarding.completedAt && (
+          <Card className="onboarding-card" radius="xl" p={{ base: 'lg', sm: 'xl' }} withBorder>
+            <Group justify="space-between" align="flex-start">
+              <div>
+                <Badge color="grape" variant="light">
+                  {t('시작 안내')}
+                </Badge>
+                <Title order={2} fz="xl" mt="sm">
+                  {t('umm을 내 생각 습관에 연결하기')}
+                </Title>
+                <Text c="dimmed" mt={4}>
+                  {t('실제 기능을 한 번씩 써보며 익히는 짧은 안내입니다.')}
+                </Text>
+              </div>
+              <ThemeIcon size={48} radius="xl" color="grape" variant="light">
+                <IconSparkles />
+              </ThemeIcon>
+            </Group>
+            <Progress
+              value={data.onboarding.percent}
+              color="grape"
+              mt="xl"
+              size="sm"
+              aria-label={t('온보딩 {percent}% 완료', { percent: data.onboarding.percent })}
+            />
+            <SimpleGrid cols={{ base: 1, sm: 2 }} mt="lg">
+              {data.onboarding.steps.map((step) => (
+                <button
+                  type="button"
+                  className="onboarding-step"
+                  data-done={step.done || undefined}
+                  key={step.key}
+                  onClick={() => (step.key === 'collaborate' ? navigate('/dreams') : openCanvas())}
+                >
+                  <ThemeIcon color={step.done ? 'green' : 'gray'} variant="light" radius="xl">
+                    {step.done ? <IconCheck size={17} /> : <IconArrowRight size={17} />}
+                  </ThemeIcon>
+                  <div>
+                    <Text fw={650} ta="left">
+                      {step.label}
+                    </Text>
+                    <Text size="xs" c="dimmed" ta="left">
+                      {step.description}
+                    </Text>
+                  </div>
+                </button>
+              ))}
+            </SimpleGrid>
+            <Group justify="flex-end" mt="lg">
+              <Button variant="subtle" color="gray" onClick={() => void complete()}>
+                {t('안내 마치기')}
+              </Button>
+            </Group>
+          </Card>
+        )}
         {brief && !brief.quiet && <MorningBriefCard brief={brief} onOpen={openCanvas} />}
         <AskMemory onOpen={openCanvas} />
         {data && (
           <>
-            {!data.onboarding.completedAt && (
-              <Card className="onboarding-card" radius="xl" p={{ base: 'lg', sm: 'xl' }} withBorder>
-                <Group justify="space-between" align="flex-start">
-                  <div>
-                    <Badge color="grape" variant="light">
-                      {t('시작 안내')}
-                    </Badge>
-                    <Title order={2} fz="xl" mt="sm">
-                      {t('umm을 내 생각 습관에 연결하기')}
-                    </Title>
-                    <Text c="dimmed" mt={4}>
-                      {t('실제 기능을 한 번씩 써보며 익히는 짧은 안내입니다.')}
-                    </Text>
-                  </div>
-                  <ThemeIcon size={48} radius="xl" color="grape" variant="light">
-                    <IconSparkles />
-                  </ThemeIcon>
-                </Group>
-                <Progress
-                  value={data.onboarding.percent}
-                  color="grape"
-                  mt="xl"
-                  size="sm"
-                  aria-label={t('온보딩 {percent}% 완료', { percent: data.onboarding.percent })}
-                />
-                <SimpleGrid cols={{ base: 1, sm: 2 }} mt="lg">
-                  {data.onboarding.steps.map((step) => (
-                    <button
-                      type="button"
-                      className="onboarding-step"
-                      data-done={step.done || undefined}
-                      key={step.key}
-                      onClick={() => (step.key === 'collaborate' ? navigate('/dreams') : openCanvas())}
-                    >
-                      <ThemeIcon color={step.done ? 'green' : 'gray'} variant="light" radius="xl">
-                        {step.done ? <IconCheck size={17} /> : <IconArrowRight size={17} />}
-                      </ThemeIcon>
-                      <div>
-                        <Text fw={650} ta="left">
-                          {step.label}
-                        </Text>
-                        <Text size="xs" c="dimmed" ta="left">
-                          {step.description}
-                        </Text>
-                      </div>
-                    </button>
-                  ))}
-                </SimpleGrid>
-                <Group justify="flex-end" mt="lg">
-                  <Button variant="subtle" color="gray" onClick={() => void complete()}>
-                    {t('안내 마치기')}
-                  </Button>
-                </Group>
-              </Card>
-            )}
             <SimpleGrid cols={{ base: 2, sm: 4 }}>
               {summaries.map(({ label, value, Icon, color }) => (
                 <Paper key={label} withBorder radius="lg" p="lg">
@@ -256,9 +266,13 @@ export default function TodayPage() {
                       <Title id="review-title" order={2} fz="xl">
                         {t('다시 볼 생각')}
                       </Title>
-                      <Text size="sm" c="dimmed">
-                        {t('오래되었거나 직접 다시 보기로 한 메모입니다.')}
-                      </Text>
+                      <SectionNote
+                        description={t('오래되었거나 직접 다시 보기로 한 메모입니다.')}
+                        shown={data.review.length}
+                        total={data.counts.review || 0}
+                        hint={t('검토하거나 미루면 다음 생각이 올라옵니다.')}
+                        mb={0}
+                      />
                     </div>
                   </Group>
                   {data.review.length === 0 ? (
@@ -325,9 +339,11 @@ export default function TodayPage() {
                   <Title id="orphan-title" order={2} fz="xl">
                     {t('연결을 기다리는 생각')}
                   </Title>
-                  <Text size="sm" c="dimmed" mb="md">
-                    {t('아직 다른 생각과 선으로 연결되지 않았습니다.')}
-                  </Text>
+                  <SectionNote
+                    description={t('아직 다른 생각과 선으로 연결되지 않았습니다.')}
+                    shown={data.orphans.length}
+                    total={data.counts.orphans || 0}
+                  />
                   {data.orphans.length === 0 ? (
                     <Empty icon={IconLink} title={t('모든 생각이 연결되어 있어요')} />
                   ) : (
@@ -364,9 +380,12 @@ export default function TodayPage() {
                       <Title id="dream-title" order={2} fz="xl">
                         {t('Dream 검토함')}
                       </Title>
-                      <Text size="sm" c="dimmed">
-                        {t('근거와 함께 도착한 새 관점입니다.')}
-                      </Text>
+                      <SectionNote
+                        description={t('근거와 함께 도착한 새 관점입니다.')}
+                        shown={data.dreams.length}
+                        total={data.counts.dreams || 0}
+                        mb={0}
+                      />
                     </div>
                     <Button size="xs" variant="subtle" onClick={() => navigate('/dreams')}>
                       {t('전체')}
@@ -409,9 +428,11 @@ export default function TodayPage() {
                   <Title id="activity-title" order={2} fz="xl">
                     {t('함께한 활동')}
                   </Title>
-                  <Text size="sm" c="dimmed" mb="md">
-                    {t('공유 공간의 최근 댓글입니다.')}
-                  </Text>
+                  <SectionNote
+                    description={t('공유 공간의 최근 댓글입니다.')}
+                    shown={data.activity.length}
+                    total={data.counts.activity || 0}
+                  />
                   {data.activity.length === 0 ? (
                     <Empty icon={IconMessageCircle} title={t('새 협업 활동이 없습니다')} />
                   ) : (
@@ -445,6 +466,50 @@ export default function TodayPage() {
         )}
       </Stack>
     </main>
+  );
+}
+
+/**
+ * The line under a section heading: what the section is, and what it is holding
+ * back.
+ *
+ * The tiles above report true totals while every list below them is capped —
+ * eight for the review queue, six for unconnected thoughts, five for dreams,
+ * eight for activity. Measured on a worked-in account, the tile read 12 beside
+ * 다시 볼 생각 and eight cards followed it, with nothing on the page to
+ * reconcile the two. The four left out were not lost; reviewing the visible
+ * ones brings them up. But a person cannot know that from a number that
+ * disagrees with what they can count, and a review queue you believe you have
+ * cleared is worse than one you know you have not.
+ */
+function SectionNote({
+  description,
+  shown,
+  total,
+  hint,
+  mb = 'md',
+}: {
+  description: string;
+  shown: number;
+  total: number;
+  hint?: string;
+  mb?: string | number;
+}) {
+  const { t } = useTranslation();
+  if (total <= shown)
+    return (
+      <Text size="sm" c="dimmed" mb={mb}>
+        {description}
+      </Text>
+    );
+  return (
+    <Text size="sm" c="dimmed" mb={mb}>
+      {description}{' '}
+      <Text component="span" inherit c="grape.7" fw={650}>
+        {t('{total}개 중 {shown}개를 보여드립니다.', { total, shown })}
+      </Text>
+      {hint ? ` ${hint}` : ''}
+    </Text>
   );
 }
 
