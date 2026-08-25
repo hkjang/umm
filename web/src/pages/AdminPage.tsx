@@ -9,6 +9,7 @@ import {
   Code,
   Divider,
   Group,
+  Modal,
   NumberInput,
   Paper,
   PasswordInput,
@@ -48,6 +49,7 @@ import {
   IconUsers,
 } from '@tabler/icons-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { useUnsavedWork } from '../unsaved-work';
 import { api, json, type GatewayCandidate } from '../api';
 import { msg, useTranslation } from '../i18n';
 
@@ -180,6 +182,47 @@ export default function AdminPage() {
     () => Object.keys(settings).filter((key) => settingChanged(settings[key], savedSettings[key])),
     [savedSettings, settings],
   );
+  /*
+   * Nothing was stopping an administrator walking away from work they had not
+   * saved.
+   *
+   * Typing into a settings field and then clicking anything in the sidebar
+   * discarded it silently: no warning on the way out, and no trace of it on the
+   * way back — the field simply read what it had before. Worse than losing the
+   * edit is not being told, because the card had shown the new value the whole
+   * time it was being typed.
+   *
+   * Moving between admin sections is not leaving: the edits are kept and stay
+   * marked, so only navigation out of /admin is worth interrupting.
+   */
+  /*
+   * Somebody about to walk away from unsaved work is asked first.
+   *
+   * The question is registered rather than asked here, because the click that
+   * loses the work happens in the shell's sidebar, not on this page. Moving
+   * between admin sections is not leaving — those edits are kept and stay
+   * marked — so only navigation out of /admin reaches this at all.
+   */
+  const { guard } = useUnsavedWork();
+  const [leaving, setLeaving] = useState<((proceed: boolean) => void) | null>(null);
+  useEffect(() => {
+    if (dirtySections.length === 0) {
+      guard(null);
+      return;
+    }
+    guard(() => new Promise<boolean>((resolve) => setLeaving(() => resolve)));
+    return () => guard(null);
+  }, [dirtySections.length, guard]);
+
+  // Closing the tab or reloading is the same loss by a different door, and only
+  // the browser can interrupt that one.
+  useEffect(() => {
+    if (dirtySections.length === 0) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirtySections.length]);
+
   useEffect(() => {
     if (location.pathname !== `/admin/${section}`) navigate(`/admin/${section}`, { replace: true });
   }, [location.pathname, navigate, section]);
@@ -1052,8 +1095,55 @@ export default function AdminPage() {
           )}
         </Stack>
       </section>
+
+      <Modal
+        opened={leaving !== null}
+        onClose={() => {
+          leaving?.(false);
+          setLeaving(null);
+        }}
+        title={t('저장하지 않은 변경사항이 있습니다')}
+        centered
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            {t('{sections}에서 바꾼 내용이 아직 저장되지 않았습니다. 지금 나가면 그대로 사라집니다.', {
+              sections: dirtySections.map((key) => sectionTitle(key, t)).join(', '),
+            })}
+          </Text>
+          <Group justify="flex-end" gap="xs">
+            {/* Staying is the first button and the one that keeps the work, so
+                a person who is not reading closely does the recoverable thing. */}
+            <Button
+              variant="default"
+              onClick={() => {
+                leaving?.(false);
+                setLeaving(null);
+              }}
+            >
+              {t('여기 남기')}
+            </Button>
+            <Button
+              color="red"
+              variant="light"
+              onClick={() => {
+                leaving?.(true);
+                setLeaving(null);
+              }}
+            >
+              {t('버리고 나가기')}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </main>
   );
+}
+
+/** The name a section is called in the menu, so a warning names what it means. */
+function sectionTitle(key: string, t: (value: string) => string): string {
+  const found = menu.find(([name]) => name === key);
+  return found ? t(found[1]) : key;
 }
 
 function SettingCard({

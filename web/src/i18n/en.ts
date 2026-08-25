@@ -860,6 +860,11 @@ export const en: Dictionary = {
   '진행 중': 'Exploring',
   채택: 'Taken',
   '접어 둠': 'Set aside',
+  '저장하지 않은 변경사항이 있습니다': 'There are unsaved changes',
+  '{sections}에서 바꾼 내용이 아직 저장되지 않았습니다. 지금 나가면 그대로 사라집니다.':
+    'Changes in {sections} have not been saved. Leaving now discards them.',
+  '여기 남기': 'Stay here',
+  '버리고 나가기': 'Discard and leave',
   '링크 열기': 'Open a link',
   '생각 제목': 'Thought title',
   '이 생각의 이름': 'A name for this thought',

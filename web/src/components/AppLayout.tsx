@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import {
   AppShell,
   Avatar,
@@ -27,6 +28,7 @@ import {
   IconUser,
 } from '@tabler/icons-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useUnsavedWork } from '../unsaved-work';
 import { useAuth } from '../auth-context';
 import { msg, useTranslation } from '../i18n';
 import AppearanceMenu from './AppearanceMenu';
@@ -53,6 +55,26 @@ export default function AppLayout() {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
+  const { confirmLeaving } = useUnsavedWork();
+
+  /*
+   * Leaving a page has to ask first when the page has work to lose.
+   *
+   * A NavLink navigates the moment it is clicked, and the question is
+   * asynchronous, so the click is stopped and the navigation happens after the
+   * answer rather than being undone afterwards.
+   */
+  const leaveFor = useCallback(
+    (to: string) => (event: { preventDefault: () => void }) => {
+      event.preventDefault();
+      void confirmLeaving().then((proceed) => {
+        if (!proceed) return;
+        close();
+        navigate(to);
+      });
+    },
+    [confirmLeaving, close, navigate],
+  );
   const isAdmin = location.pathname.startsWith('/admin');
   const isLinkActive = (to: string) =>
     to === '/'
@@ -73,7 +95,7 @@ export default function AppLayout() {
           <Group h="100%" px={{ base: 'md', sm: 'lg' }} justify="space-between">
             <Group>
               <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label={t('메뉴 열기')} />
-              <UnstyledButton onClick={() => navigate('/')}>
+              <UnstyledButton onClick={leaveFor('/')}>
                 <Group gap="sm">
                   <div className="brand-mark">um</div>
                   <Text fw={720} fz="lg" visibleFrom="xs">
@@ -106,11 +128,11 @@ export default function AppLayout() {
                 </Menu.Target>
                 <Menu.Dropdown>
                   <Menu.Label>{t('내 계정')}</Menu.Label>
-                  <Menu.Item leftSection={<IconUser size={16} />} onClick={() => navigate('/settings')}>
+                  <Menu.Item leftSection={<IconUser size={16} />} onClick={leaveFor('/settings')}>
                     {t('개인화 및 키 관리')}
                   </Menu.Item>
                   {user?.role === 'admin' && (
-                    <Menu.Item leftSection={<IconSettings size={16} />} onClick={() => navigate('/admin/overview')}>
+                    <Menu.Item leftSection={<IconSettings size={16} />} onClick={leaveFor('/admin/overview')}>
                       {t('서비스 관리자')}
                     </Menu.Item>
                   )}
@@ -151,7 +173,7 @@ export default function AppLayout() {
                 leftSection={<Icon size={19} />}
                 active={isLinkActive(to)}
                 aria-current={isLinkActive(to) ? 'page' : undefined}
-                onClick={close}
+                onClick={leaveFor(to)}
               />
             ))}
             {user?.role === 'admin' && (
@@ -165,7 +187,7 @@ export default function AppLayout() {
                   to="/admin/overview"
                   label={t('서비스 관리자')}
                   leftSection={<IconLayoutDashboard size={19} />}
-                  onClick={close}
+                  onClick={leaveFor('/admin/overview')}
                 />
               </>
             )}
@@ -196,6 +218,7 @@ export default function AppLayout() {
               variant="subtle"
               color={isLinkActive(to) ? 'grape' : 'gray'}
               aria-current={isLinkActive(to) ? 'page' : undefined}
+              onClick={leaveFor(to)}
               px="xs"
               leftSection={<Icon size={19} />}
             >
@@ -214,7 +237,7 @@ export default function AppLayout() {
           variant="white"
           color="dark"
           leftSection={<IconArrowLeft size={18} />}
-          onClick={() => navigate('/')}
+          onClick={leaveFor('/')}
         >
           {t('내 공간')}
         </Button>
