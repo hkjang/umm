@@ -1461,6 +1461,50 @@ paths:
                             properties:
                               name: { type: string }
                               likelyEmbedding: { type: boolean }
+  /admin/ptium/test:
+    post:
+      operationId: post_admin_ptium_test
+      tags: [Admin]
+      summary: Check that Ptium answers and accepts the key
+      description: |
+        Lists Ptium's templates, which is an authenticated read: a reply proves
+        the address answers, that it is a Ptium, and that the credential works —
+        all three at once. Without it the first sign of a wrong address or a
+        rejected key is someone trying to make a deck and being handed a status
+        code they cannot act on.
+
+        An omitted or masked api_key falls back to the stored one, so an
+        administrator can test an unchanged connection without retyping the
+        secret. The templates come back with the result so the settings screen
+        can offer them by name rather than asking for a pasted UUID.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                base_url: { type: string }
+                api_key: { type: string }
+                timeout_seconds: { type: integer }
+      responses:
+        '200':
+          description: Ptium answered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  message: { type: string }
+                  templates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+                        kind: { type: string }
+        '400': { description: No address, a malformed one, or Ptium refused }
   /admin/ai-gateway/test:
     post:
       operationId: post_admin_ai_gateway_test

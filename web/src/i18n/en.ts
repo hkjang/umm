@@ -860,6 +860,25 @@ export const en: Dictionary = {
   '진행 중': 'Exploring',
   채택: 'Taken',
   '접어 둠': 'Set aside',
+  'Ptium 서버 주소입니다. 예: http://ptium.internal:8080':
+    'The address of the Ptium server. For example http://ptium.internal:8080',
+  'Ptium 발표 자료': 'Ptium presentations',
+  'Ptium 연결': 'Ptium connection',
+  'Ptium 연결 실패': 'Could not reach Ptium',
+  'Ptium에 연결했습니다.': 'Connected to Ptium.',
+  'Ptium에서 발급한 ptium_ 로 시작하는 키입니다. presentations 읽기·쓰기 권한이 필요합니다.':
+    'A key issued by Ptium, beginning ptium_. It needs presentations read and write.',
+  'Ptium이 덱을 만들 때 쓰는 언어 코드입니다.': 'The language code Ptium builds the deck in.',
+  '덱을 컴파일하는 데 걸리는 시간입니다.': 'How long compiling a deck may take.',
+  '비워 두면 Ptium의 기본 디자인을 씁니다.': "Left empty, Ptium's own default design is used.",
+  '비워 두면 Ptium의 기본 디자인을 씁니다. 연결 테스트를 하면 목록에서 고를 수 있습니다.':
+    "Left empty, Ptium's own default design is used. Test the connection to pick one from a list.",
+  '생각을 발표 자료로 만들 Ptium 서버입니다. 비워 두면 이 기능이 꺼집니다. umm은 Ptium에 생각을 그대로 보내며, 모델에게 다시 쓰게 하지 않습니다.':
+    'The Ptium that turns thoughts into presentations. Left empty, the feature is off. umm sends the thoughts as they were written and never asks a model to rewrite them.',
+  언어: 'Language',
+  템플릿: 'Template',
+  '템플릿 ID': 'Template ID',
+  'Ptium 기본 디자인': "Ptium's default design",
   '슬라이드 {count}장 바뀜': '{count} slides changed',
   '이 발표가 인용한 생각이 그 뒤에 바뀌었습니다. 다시 만들면 반영됩니다.':
     'A thought this talk quotes has been rewritten since. Making it again brings it up to date.',

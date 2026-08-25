@@ -39,6 +39,7 @@ import {
   IconPlugConnected,
   IconRefresh,
   IconSearch,
+  IconPresentation,
   IconRobot,
   IconRoute,
   IconSettings,
@@ -111,6 +112,7 @@ const menu = [
   ['oidc', 'Keycloak SSO', IconPlugConnected],
   ['dream', 'Dream Layer', IconBrain],
   ['ai_gateway', 'AI Gateway', IconRobot],
+  ['ptium', msg('Ptium 발표 자료'), IconPresentation],
   ['intelligence', msg('유사도 기준'), IconAdjustments],
   ['ai_evals', msg('AI 품질 평가'), IconFlask],
   ['security', msg('키 · 권한'), IconShield],
@@ -220,6 +222,35 @@ export default function AdminPage() {
   // Probing before saving separates the two failures an administrator can fix
   // here — wrong address, wrong model name — from the third, a working model
   // that is not semantic, which the quality panel answers.
+  // Templates the last successful test found, so the template can be chosen by
+  // name instead of an administrator pasting a UUID from another service.
+  const [ptiumTemplates, setPtiumTemplates] = useState<{ id: string; name: string; kind?: string }[]>([]);
+  const testPtium = async () => {
+    const ptium = settings.ptium || {};
+    setBusy('ptium-test');
+    try {
+      const result = await api<{
+        ok: boolean;
+        message?: string;
+        templates?: { id: string; name: string; kind?: string }[];
+      }>(
+        '/admin/ptium/test',
+        json('POST', {
+          base_url: ptium.base_url || '',
+          api_key: ptium.api_key || '',
+          timeout_seconds: ptium.timeout_seconds || 0,
+        }),
+      );
+      setPtiumTemplates(result.templates ?? []);
+      setMessage(result.message || t('Ptium에 연결했습니다.'));
+    } catch (cause) {
+      setPtiumTemplates([]);
+      setMessage(cause instanceof Error ? cause.message : t('Ptium 연결 실패'));
+    } finally {
+      setBusy('');
+    }
+  };
+
   const testGateway = async () => {
     const gateway = settings.ai_gateway || {};
     setBusy('gateway-test');
@@ -502,6 +533,84 @@ export default function AdminPage() {
               update={(k, v) => update('dream', k, v)}
               save={() => save('dream')}
             />
+          )}
+          {section === 'ptium' && settings.ptium && (
+            <SettingCard
+              dirty={settingChanged(settings.ptium, savedSettings.ptium)}
+              title={t('Ptium 연결')}
+              description={t(
+                '생각을 발표 자료로 만들 Ptium 서버입니다. 비워 두면 이 기능이 꺼집니다. umm은 Ptium에 생각을 그대로 보내며, 모델에게 다시 쓰게 하지 않습니다.',
+              )}
+              onSave={() => save('ptium')}
+              actions={
+                <Button
+                  size="xs"
+                  variant="light"
+                  leftSection={<IconPlugConnected size={14} />}
+                  loading={busy === 'ptium-test'}
+                  onClick={() => void testPtium()}
+                >
+                  {t('연결 테스트')}
+                </Button>
+              }
+            >
+              <TextInput
+                label="Base URL"
+                description={t('Ptium 서버 주소입니다. 예: http://ptium.internal:8080')}
+                placeholder="http://ptium.internal:8080"
+                value={settings.ptium.base_url || ''}
+                onChange={(e) => update('ptium', 'base_url', e.currentTarget.value)}
+              />
+              <PasswordInput
+                label="API Key"
+                description={t(
+                  'Ptium에서 발급한 ptium_ 로 시작하는 키입니다. presentations 읽기·쓰기 권한이 필요합니다.',
+                )}
+                value={settings.ptium.api_key || ''}
+                onChange={(e) => update('ptium', 'api_key', e.currentTarget.value)}
+              />
+              {/* Offered by name once a test has found them. A UUID pasted from
+                  another service is the kind of setting that looks saved and
+                  turns out to name nothing. */}
+              {ptiumTemplates.length > 0 ? (
+                <Select
+                  label={t('템플릿')}
+                  description={t('비워 두면 Ptium의 기본 디자인을 씁니다.')}
+                  placeholder={t('Ptium 기본 디자인')}
+                  clearable
+                  data={ptiumTemplates.map((template) => ({ value: template.id, label: template.name }))}
+                  value={settings.ptium.template_id || null}
+                  onChange={(value) => update('ptium', 'template_id', value || '')}
+                />
+              ) : (
+                <TextInput
+                  label={t('템플릿 ID')}
+                  description={t(
+                    '비워 두면 Ptium의 기본 디자인을 씁니다. 연결 테스트를 하면 목록에서 고를 수 있습니다.',
+                  )}
+                  value={settings.ptium.template_id || ''}
+                  onChange={(e) => update('ptium', 'template_id', e.currentTarget.value)}
+                />
+              )}
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                <TextInput
+                  label={t('언어')}
+                  description={t('Ptium이 덱을 만들 때 쓰는 언어 코드입니다.')}
+                  placeholder="ko"
+                  value={settings.ptium.language || ''}
+                  onChange={(e) => update('ptium', 'language', e.currentTarget.value)}
+                />
+                <NumberInput
+                  label="Timeout"
+                  description={t('덱을 컴파일하는 데 걸리는 시간입니다.')}
+                  suffix={t(' 초')}
+                  min={5}
+                  max={300}
+                  value={settings.ptium.timeout_seconds}
+                  onChange={(v) => update('ptium', 'timeout_seconds', v)}
+                />
+              </SimpleGrid>
+            </SettingCard>
           )}
           {section === 'ai_gateway' && settings.ai_gateway && (
             <SettingCard

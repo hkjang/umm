@@ -451,3 +451,113 @@ func TestBothViewsOfADeckAgreeOnWhatChangedIntegration(t *testing.T) {
 		t.Fatalf("the two views disagree: space says %d, note says %d", fromSpace, fromNote)
 	}
 }
+
+// An administrator has to be able to connect Ptium from the screen, and to
+// find out whether it worked without making a deck to see.
+//
+// The test lists Ptium's templates, which is an authenticated read: an answer
+// proves the address responds, that it is a Ptium, and that the credential is
+// accepted, all at once. Both the failures a person can act on from that screen
+// are told apart from each other here.
+func TestConnectingPtiumFromTheAdminScreenIntegration(t *testing.T) {
+	h := presentationAPI(t)
+
+	// Stands in for Ptium. The shape is the one a real Ptium returns — data is
+	// the array itself, not an object wrapping one, which is what the first
+	// version of this got wrong and only a live connection revealed.
+	var seenAuth string
+	ptium := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		if seenAuth != "Bearer ptium_good" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"title":"Unauthorized","detail":"API 키가 올바르지 않습니다"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"t1","name":"Ptium Plum Wash","kind":"builtin"}],"meta":{"count":1}}`))
+	}))
+	defer ptium.Close()
+
+	router := chi.NewRouter()
+	server := &Server{Store: h.db}
+	router.Post("/admin/ptium/test", server.testPtium)
+	handler := (&auth.Service{Store: h.db}).Middleware(auth.Require(router))
+
+	call := func(body string) (int, string) {
+		request := httptest.NewRequest(http.MethodPost, "/admin/ptium/test", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.AddCookie(h.cookie)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder.Code, recorder.Body.String()
+	}
+
+	// No address is its own answer: "fill this in", not "it broke".
+	if code, body := call(`{}`); code != 400 || !strings.Contains(body, "주소를 입력") {
+		t.Fatalf("empty address: %d %s", code, body)
+	}
+	// A malformed address is a different fix again.
+	if code, body := call(`{"base_url":"ptium.internal"}`); code != 400 || !strings.Contains(body, "올바르지 않습니다") {
+		t.Fatalf("malformed address: %d %s", code, body)
+	}
+	// A refused key surfaces what Ptium said rather than a bare status.
+	code, body := call(`{"base_url":"` + ptium.URL + `","api_key":"ptium_wrong","timeout_seconds":10}`)
+	if code != 400 || !strings.Contains(body, "API 키가 올바르지 않습니다") {
+		t.Fatalf("wrong key: %d %s", code, body)
+	}
+
+	code, body = call(`{"base_url":"` + ptium.URL + `","api_key":"ptium_good","timeout_seconds":10}`)
+	if code != 200 {
+		t.Fatalf("a working connection was refused: %d %s", code, body)
+	}
+	// The templates come back so the screen can offer them by name instead of
+	// asking someone to paste a UUID from another service.
+	if !strings.Contains(body, "Ptium Plum Wash") || !strings.Contains(body, `"t1"`) {
+		t.Fatalf("templates were not returned: %s", body)
+	}
+	if seenAuth != "Bearer ptium_good" {
+		t.Fatalf("the credential reached Ptium as %q", seenAuth)
+	}
+}
+
+// The screen never sends a stored secret back, so testing a connection nobody
+// has changed must not require retyping the key.
+func TestTestingAnUnchangedPtiumUsesTheStoredKeyIntegration(t *testing.T) {
+	h := presentationAPI(t)
+	ctx := context.Background()
+
+	var seenAuth string
+	ptium := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer ptium.Close()
+
+	if _, err := h.db.Pool.Exec(ctx,
+		`INSERT INTO app_settings(key,value) VALUES('ptium', jsonb_build_object('base_url',$1::text,'api_key','ptium_stored','timeout_seconds',30))
+		 ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`, ptium.URL); err != nil {
+		t.Fatal(err)
+	}
+
+	router := chi.NewRouter()
+	router.Post("/admin/ptium/test", (&Server{Store: h.db}).testPtium)
+	handler := (&auth.Service{Store: h.db}).Middleware(auth.Require(router))
+
+	// The masked value is exactly what the screen sends back for an untouched
+	// secret field.
+	request := httptest.NewRequest(http.MethodPost, "/admin/ptium/test",
+		strings.NewReader(`{"base_url":"","api_key":"`+secretMask+`","timeout_seconds":0}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(h.cookie)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != 200 {
+		t.Fatalf("testing an unchanged connection failed: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if seenAuth != "Bearer ptium_stored" {
+		t.Fatalf("the stored key was not used: %q", seenAuth)
+	}
+}
