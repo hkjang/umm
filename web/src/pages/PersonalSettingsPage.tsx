@@ -79,6 +79,23 @@ function EdgePreview({ style }: { style: EdgeStyle }) {
   );
 }
 
+/**
+ * The word for a key's state, rather than the value it is stored as.
+ *
+ * The webhook list directly below this one already says 활성 and 중지 in the
+ * reader's language. The key list said `active`, `overlap` and `revoked` — the
+ * same idea, on the same screen, in the other convention.
+ *
+ * Written out rather than looked up in a map, because a dynamic key never
+ * reaches the translation extractor and would ship untranslated.
+ */
+function keyStatusLabel(status: string, t: (key: string) => string): string {
+  if (status === 'active') return t('사용 중');
+  if (status === 'overlap') return t('교체 중');
+  if (status === 'revoked') return t('폐기됨');
+  return status;
+}
+
 export default function PersonalSettingsPage() {
   const { meta } = useAuth();
   const { t, formatDate } = useTranslation();
@@ -410,11 +427,39 @@ export default function PersonalSettingsPage() {
                           color={key.status === 'active' ? 'green' : key.status === 'overlap' ? 'yellow' : 'gray'}
                           variant="light"
                         >
-                          {key.status}
+                          {keyStatusLabel(key.status, t)}
                         </Badge>
                       </Group>
+                      {/*
+                        The date a key stops working, not the date it was made.
+                        
+                        This line used to read `umm_key_… · 2026. 8. 26.` — the
+                        creation date, unlabelled, while the response carried an
+                        expiry three months out that appeared nowhere. A key you
+                        forgot about is exactly the one whose expiry you need,
+                        and the page was showing the one date you can least act
+                        on.
+                        
+                        During a rotation it matters more still: the old key
+                        keeps working for a day and then stops. The badge said
+                        `overlap` and nothing said until when, so the deadline
+                        the whole rotation is about was the one thing missing.
+                      */}
                       <Text size="sm" c="dimmed" mt={4}>
-                        umm_key_{key.prefix}_•••• · {formatDate(key.createdAt, { dateStyle: 'medium' })}
+                        umm_key_{key.prefix}_••••
+                        {key.status === 'overlap' && key.overlapUntil
+                          ? ` · ${t('{date}까지만 동작합니다', {
+                              date: formatDate(key.overlapUntil, { dateStyle: 'medium', timeStyle: 'short' }),
+                            })}`
+                          : key.status === 'revoked'
+                            ? ''
+                            : key.expiresAt
+                              ? ` · ${t('만료 {date}', { date: formatDate(key.expiresAt, { dateStyle: 'medium' }) })}`
+                              : ''}
+                        {' · '}
+                        {key.lastUsedAt
+                          ? t('마지막 사용 {date}', { date: formatDate(key.lastUsedAt, { dateStyle: 'medium' }) })
+                          : t('아직 사용된 적 없음')}
                       </Text>
                     </div>
                     <Group gap="xs">
