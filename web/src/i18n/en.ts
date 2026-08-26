@@ -525,6 +525,26 @@ export const en: Dictionary = {
   '키 · 권한': 'Keys & permissions',
   '검토 프로세스': 'Approval process',
   '감사 로그': 'Audit log',
+  '지금 데이터로 미리 보기': 'Preview against current data',
+  '지금 값으로 재보기': 'Measure these values',
+  '저장하지 않고 위 두 기준이 지금 있는 생각에 무엇을 할지 재봅니다.':
+    'Measures what the two bands above would do to the thoughts already here, without saving them.',
+  '가장 큰 공간 {spaces}개 · 생각 {notes}개 중 임베딩된 {embedded}개로 재봤습니다.':
+    'Measured on the {spaces} largest spaces — {embedded} of {notes} thoughts have a vector.',
+  '지금 임베딩은 의미 비교에 적합하지 않다고 판정돼 있습니다. 캔버스는 위치로 묶으므로 군집 기준은 아무 일도 하지 않습니다.':
+    'The active embedding is judged unfit to compare meaning. The canvas groups by position, so the cluster band does nothing.',
+  '임베딩된 생각이 없어 두 기준 모두 아직 아무것도 판정하지 않습니다.':
+    'Nothing here has been embedded yet, so neither band decides anything.',
+  지금: 'Now',
+  바꾸면: 'If changed',
+  '연관 생각이 하나도 없는 카드': 'Cards with no related thought',
+  '카드당 연관 생각 (중앙값)': 'Related per card (median)',
+  '가장 많은 카드': 'The most on one card',
+  '묶음 수': 'Groups',
+  '묶인 생각': 'Thoughts grouped',
+  '가장 큰 묶음': 'Largest group',
+  '혼자 남는 생각': 'Thoughts left alone',
+  '지금 데이터로 미리 보지 못했습니다.': 'Could not measure against the current data.',
   '웹훅 상태': 'Webhook health',
   '실패한 것만': 'Only failing',
   '실패한 웹훅이 없습니다.': 'No webhook is failing.',

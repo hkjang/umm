@@ -1687,6 +1687,22 @@ paths:
         '200': { description: The new owner, and whether the previous one kept access }
         '400': { description: An inbox, an inactive recipient, or already the owner }
         '404': { description: No such space or user }
+  /admin/intelligence/preview:
+    get:
+      operationId: get_admin_intelligence_preview
+      tags: [Admin]
+      summary: What a proposed pair of bands would do to the thoughts already stored
+      description: >-
+        Measures the bands in force and the proposed ones against the same
+        sample of the largest spaces. Writes nothing. Omitting a parameter
+        previews the value currently in force; a value outside 0-4 is refused
+        rather than replaced.
+      parameters:
+        - { in: query, name: related_band, schema: { type: number, minimum: 0, maximum: 4 } }
+        - { in: query, name: cluster_band, schema: { type: number, minimum: 0, maximum: 4 } }
+      responses:
+        '200': { description: Current and proposed outcomes over the same sampled notes }
+        '400': { description: A band outside the range the settings accept }
   /admin/webhooks:
     get:
       operationId: get_admin_webhooks
