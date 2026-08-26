@@ -112,4 +112,21 @@ test.describe('검토 · 승인', () => {
     await expect(page.getByRole('button', { name: '승인' })).toHaveCount(1);
     await expect(page.getByRole('button', { name: '반려' })).toHaveCount(1);
   });
+
+  // "Nothing waiting" is only true once the list has arrived.
+  //
+  // There was no catch on the load at all, so a failure left the array empty
+  // and this page told a reviewer there was nothing waiting for them. On the
+  // screen that holds up other people's work, that is the wrong thing to be
+  // wrong about.
+  test('does not say nothing is waiting when it could not look', async ({ page }) => {
+    await signIn(page);
+    await page.route('**/api/v1/approvals', (route) => route.fulfill({ status: 500, json: { detail: 'nope' } }));
+    await page.goto('/approvals');
+
+    await expect(
+      page.getByText('검토 요청을 불러오지 못했습니다. 기다리는 요청이 없는지 알 수 없습니다.'),
+    ).toBeVisible();
+    await expect(page.getByText('현재 검토 요청이 없습니다.')).toHaveCount(0);
+  });
 });

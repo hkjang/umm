@@ -44,6 +44,7 @@ function statusLabel(status: string, t: (key: string) => string): string {
 
 export default function ApprovalsPage() {
   const { user } = useAuth();
+  const [failed, setFailed] = useState(false);
   /*
    * Whether this person may actually decide this request.
    *
@@ -65,7 +66,20 @@ export default function ApprovalsPage() {
   const { t, formatDate } = useTranslation();
   const [requests, setRequests] = useState<Request[]>([]);
   const [comments, setComments] = useState<Record<string, string>>({});
-  const load = () => api<{ requests: Request[] }>('/approvals').then((v) => setRequests(v.requests));
+  /*
+   * "No requests right now" is only true once the list has arrived.
+   *
+   * There was no catch here at all: a failed load left the array empty and this
+   * page told a reviewer there was nothing waiting for them. On the screen that
+   * holds up other people's work, that is the wrong thing to be wrong about.
+   */
+  const load = () =>
+    api<{ requests: Request[] }>('/approvals')
+      .then((v) => {
+        setRequests(v.requests);
+        setFailed(false);
+      })
+      .catch(() => setFailed(true));
   useEffect(() => {
     void load();
   }, []);
@@ -87,7 +101,16 @@ export default function ApprovalsPage() {
             )}
           </Text>
         </div>
-        {requests.length === 0 ? (
+        {failed ? (
+          <Card p="xl" withBorder radius="lg">
+            <Group justify="space-between" align="center" wrap="nowrap">
+              <Text c="red">{t('검토 요청을 불러오지 못했습니다. 기다리는 요청이 없는지 알 수 없습니다.')}</Text>
+              <Button size="xs" variant="light" onClick={() => void load()}>
+                {t('다시 시도')}
+              </Button>
+            </Group>
+          </Card>
+        ) : requests.length === 0 ? (
           <Card p="xl" withBorder radius="lg">
             <Text c="dimmed">{t('현재 검토 요청이 없습니다.')}</Text>
           </Card>

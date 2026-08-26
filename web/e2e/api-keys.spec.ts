@@ -71,4 +71,21 @@ test.describe('개인 API 키', () => {
       expect(body, `the stored value ${raw} reached the screen`).not.toContain(raw);
     }
   });
+
+  // An empty key list reads as "you have not made any keys". On a screen about
+  // credentials, saying that when the request merely failed is the wrong way to
+  // be wrong — and one failing request used to empty the others too, because
+  // all three were fetched with Promise.all and the failure swallowed.
+  test('does not say there are no keys when it could not look', async ({ page }) => {
+    await signIn(page);
+    await page.route('**/api/v1/api-keys', (route) =>
+      route.request().method() === 'GET' ? route.fulfill({ status: 500, json: { detail: 'nope' } }) : route.continue(),
+    );
+    await page.goto('/settings');
+
+    await expect(page.getByText('키 목록을 불러오지 못했습니다. 키가 없는 것인지 알 수 없습니다.')).toBeVisible();
+    await expect(page.getByText('아직 만든 키가 없습니다.')).toHaveCount(0);
+    // The webhook section loaded fine and says so rather than being blanked too.
+    await expect(page.getByText('웹훅 목록을 불러오지 못했습니다. 웹훅이 없는 것인지 알 수 없습니다.')).toHaveCount(0);
+  });
 });

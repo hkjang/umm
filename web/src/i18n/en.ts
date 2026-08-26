@@ -423,6 +423,8 @@ export const en: Dictionary = {
   '관리자가 승인 절차를 켠 작업만 이곳에 나타납니다. 설정하지 않은 작업에는 승인 단계가 추가되지 않습니다.':
     'Only actions an administrator put behind approval appear here. Everything else proceeds without a review step.',
   '현재 검토 요청이 없습니다.': 'No review requests right now.',
+  '검토 요청을 불러오지 못했습니다. 기다리는 요청이 없는지 알 수 없습니다.':
+    'Could not load review requests, so whether any are waiting is unknown.',
   승인: 'Approve',
   반려: 'Reject',
 
@@ -484,6 +486,8 @@ export const en: Dictionary = {
   '권한을 최소로 부여하고 정기적으로 회전하세요.': 'Grant the least permission you need, and rotate regularly.',
   '새 키': 'New key',
   '아직 만든 키가 없습니다.': 'No keys yet.',
+  '키 목록을 불러오지 못했습니다. 키가 없는 것인지 알 수 없습니다.':
+    'Could not load your keys, so whether you have any is unknown.',
   회전: 'Rotate',
   폐기: 'Revoke',
   'MCP 엔드포인트는': 'The MCP endpoint is',
@@ -493,6 +497,8 @@ export const en: Dictionary = {
     'Deliver thought and collaboration events to your automation over HTTPS.',
   '새 웹훅': 'New webhook',
   '등록한 웹훅이 없습니다.': 'No webhooks registered.',
+  '웹훅 목록을 불러오지 못했습니다. 웹훅이 없는 것인지 알 수 없습니다.':
+    'Could not load your webhooks, so whether you have any is unknown.',
   시험: 'Test',
   '키 회전': 'Rotate key',
   '내부·사설 주소로의 요청은 SSRF 보호를 위해 차단합니다. 수신 측은':
