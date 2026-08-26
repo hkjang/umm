@@ -34,6 +34,16 @@ export type PostItData = {
   onDelete: (id: string) => void;
   onRestore: (id: string) => void;
   onComments: (note: ThoughtNote) => void;
+  /**
+   * Whether this space can be written to at all.
+   *
+   * A member who may only read was shown the same card as its owner: an
+   * editable thought, a capture bar, a note menu. The first sign that the space
+   * was read-only came after typing into it, when the text reverted to the
+   * server's copy and a notice explained the write had failed. Telling someone
+   * afterwards that their writing could not be kept is the wrong moment.
+   */
+  readOnly?: boolean;
 };
 export type PostItNodeType = Node<PostItData, 'postit'>;
 
@@ -273,8 +283,9 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
             cardRef.current?.focus();
           }
         }}
-        placeholder={t('지금 떠오르는 생각을 적어보세요')}
-        autoFocus={note.content === ''}
+        readOnly={data.readOnly}
+        placeholder={data.readOnly ? t('읽기 전용으로 공유된 생각입니다') : t('지금 떠오르는 생각을 적어보세요')}
+        autoFocus={!data.readOnly && note.content === ''}
       />
       {!!data.relatedCount && (
         <button className="related-chip nodrag" type="button" onClick={() => data.onGather(note.id)}>

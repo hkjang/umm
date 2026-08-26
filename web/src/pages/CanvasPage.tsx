@@ -205,6 +205,19 @@ function CanvasInner() {
   const { user } = useAuth();
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [activeSpace, setActiveSpace] = useState('');
+  /**
+   * Whether this space may be written to.
+   *
+   * The server sends what the person asking may do with each space, because a
+   * screen cannot work it out: the owner is obvious, but a member who may edit
+   * and one who may only read look the same from here. Unknown is treated as
+   * writable, so a space whose permission has not arrived behaves as it always
+   * did rather than locking someone out of their own canvas.
+   */
+  const readOnly = useMemo(() => {
+    const space = spaces.find((s) => s.id === activeSpace);
+    return space?.permission === 'view';
+  }, [spaces, activeSpace]);
   const [notes, setNotes] = useState<ThoughtNote[]>([]);
   const [rawEdges, setRawEdges] = useState<ThoughtEdge[]>([]);
   // The canvas holds post-its at working zoom and cluster shapes below it, so
@@ -798,6 +811,7 @@ function CanvasInner() {
           onDelete: remove,
           onRestore: restore,
           onComments: openComments,
+          readOnly,
         },
       }));
 
@@ -2134,33 +2148,46 @@ function CanvasInner() {
           </div>
         </div>
       )}
-      <Paper className="quick-capture" radius="xl" p={7}>
-        <TextInput
-          id="quick-thought"
-          aria-label={t('새 생각')}
-          value={capture}
-          onChange={(e) => setCapture(e.currentTarget.value)}
-          onKeyDown={captureKey}
-          placeholder={t('생각을 입력하고 Enter로 붙이세요')}
-          variant="unstyled"
-          px="sm"
-          rightSection={
-            <ActionIcon
-              variant="filled"
-              color="dark"
-              radius="xl"
-              disabled={!capture.trim()}
-              onClick={() => {
-                const center = flow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
-                void createAt(capture, center.x - 120, center.y - 80);
-              }}
-              aria-label={t('생각 붙이기')}
-            >
-              <IconArrowRight size={18} />
-            </ActionIcon>
-          }
-        />
-      </Paper>
+      {/* A space you may only read says so once, here, rather than letting you
+          find out by typing into it. The bar below is left in place and
+          disabled: removing it would leave the canvas looking ordinary and the
+          absence unexplained. */}
+      {readOnly && (
+        <Paper className="quick-capture" radius="xl" px="lg" py="xs">
+          <Text size="sm" c="dimmed">
+            {t('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')}
+          </Text>
+        </Paper>
+      )}
+      {!readOnly && (
+        <Paper className="quick-capture" radius="xl" p={7}>
+          <TextInput
+            id="quick-thought"
+            aria-label={t('새 생각')}
+            value={capture}
+            onChange={(e) => setCapture(e.currentTarget.value)}
+            onKeyDown={captureKey}
+            placeholder={t('생각을 입력하고 Enter로 붙이세요')}
+            variant="unstyled"
+            px="sm"
+            rightSection={
+              <ActionIcon
+                variant="filled"
+                color="dark"
+                radius="xl"
+                disabled={!capture.trim()}
+                onClick={() => {
+                  const center = flow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
+                  void createAt(capture, center.x - 120, center.y - 80);
+                }}
+                aria-label={t('생각 붙이기')}
+              >
+                <IconArrowRight size={18} />
+              </ActionIcon>
+            }
+          />
+        </Paper>
+      )}
       {morningDream && (
         <div className="morning-overlay">
           <Paper radius="xl" p={{ base: 'xl', sm: 40 }} maw={520} mx="md" className="glass" ta="center">

@@ -66,6 +66,13 @@ type Space struct {
 	// IsInbox marks where this person's unfiled captures land. It is an ordinary
 	// space in every other respect.
 	IsInbox bool `json:"isInbox"`
+	// Permission is what the person who asked may do here: manage, edit or view.
+	//
+	// Sent because a screen cannot work it out. The owner is obvious from
+	// OwnerID, but a member who may edit and a member who may only read look
+	// identical from the outside — so a canvas had no way to know it was showing
+	// a space its reader could not write to, and offered them the editor anyway.
+	Permission string `json:"permission"`
 }
 
 type Note struct {
@@ -544,7 +551,16 @@ func (s *Store) EnsureDefaultSpace(ctx context.Context, userID uuid.UUID) (Space
 }
 
 func (s *Store) ListSpaces(ctx context.Context, userID uuid.UUID) ([]Space, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT s.id,s.owner_id,s.name,s.color,s.ai_excluded,s.is_inbox FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id WHERE s.owner_id=$1 OR m.user_id=$1 ORDER BY s.name`, userID)
+	// The owner may do everything; otherwise it is whatever the membership says.
+	// Taken from the same row the listing is built from, so the two can never
+	// describe different things.
+	rows, err := s.Pool.Query(ctx, `
+		SELECT DISTINCT s.id,s.owner_id,s.name,s.color,s.ai_excluded,s.is_inbox,
+		       CASE WHEN s.owner_id=$1 THEN 'manage' ELSE COALESCE(m.permission,'view') END
+		FROM spaces s
+		LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$1
+		WHERE s.owner_id=$1 OR m.user_id=$1
+		ORDER BY s.name`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -552,7 +568,7 @@ func (s *Store) ListSpaces(ctx context.Context, userID uuid.UUID) ([]Space, erro
 	out := []Space{}
 	for rows.Next() {
 		var v Space
-		if err := rows.Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded, &v.IsInbox); err != nil {
+		if err := rows.Scan(&v.ID, &v.OwnerID, &v.Name, &v.Color, &v.AIExcluded, &v.IsInbox, &v.Permission); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
