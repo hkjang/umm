@@ -405,3 +405,57 @@ describe("telling umm's own file apart", () => {
     expect(readMarkdownDocument(cut).isExport).toBe(false);
   });
 });
+
+describe('retrying what did not import', () => {
+  // The draft used to be plain text, so a second attempt put the thoughts in a
+  // fresh grid, in the default colour, as plain thoughts, in no line — and a
+  // large one hit the cap again, because a draft with no banner is not an
+  // export. Making a whole space importable made partial failure likely enough
+  // that this stopped being theoretical.
+  it('writes a failed export back as an export', () => {
+    const doc = readMarkdownDocument(ummExport);
+    const draft = formatImportedThoughts(doc.thoughts.slice(0, 2), {
+      banner: doc.banner,
+      connections: doc.connections,
+      lines: doc.lines,
+    });
+    const again = readMarkdownDocument(draft);
+    expect(again.isExport).toBe(true);
+    expect(again.thoughts).toEqual(doc.thoughts.slice(0, 2));
+    expect(again.connections).toEqual(doc.connections);
+    expect(again.lines).toEqual(doc.lines);
+  });
+
+  // A connection reaching a thought that imported successfully cannot be
+  // restored by retrying: that thought exists now under a new id the draft has
+  // no way to name. Writing it against the old id would be worse than dropping
+  // it.
+  it('drops a connection whose other end is not being retried', () => {
+    const doc = readMarkdownDocument(ummExport);
+    const draft = formatImportedThoughts([doc.thoughts[0]], {
+      banner: doc.banner,
+      connections: doc.connections,
+      lines: doc.lines,
+    });
+    expect(readMarkdownDocument(draft).connections).toEqual([]);
+    // The thought itself still comes back whole.
+    expect(readMarkdownDocument(draft).thoughts).toEqual([doc.thoughts[0]]);
+  });
+
+  it('keeps only the lines the retried thoughts belonged to', () => {
+    const doc = readMarkdownDocument(ummExport);
+    const draft = formatImportedThoughts([doc.thoughts[1]], { banner: doc.banner, lines: doc.lines });
+    expect(readMarkdownDocument(draft).lines).toEqual([]);
+  });
+
+  // Someone else's Markdown has no banner and no history, and inventing one
+  // would claim a provenance the text does not have.
+  it('leaves an ordinary draft plain', () => {
+    const thoughts = [
+      { title: 'One', content: 'body' },
+      { title: '', content: 'loose' },
+    ];
+    expect(formatImportedThoughts(thoughts)).toBe('# One\n\nbody\n\n---\n\nloose');
+    expect(readMarkdownDocument(formatImportedThoughts(thoughts)).isExport).toBe(false);
+  });
+});

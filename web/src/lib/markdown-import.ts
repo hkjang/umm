@@ -45,6 +45,8 @@ export interface ImportedDocument {
   lines: ImportedLine[];
   /** Whether this is a file umm wrote, rather than anyone's Markdown. */
   isExport: boolean;
+  /** The banner line itself, so a draft rebuilt from this stays an export. */
+  banner?: string;
 }
 
 export interface ImportThoughtsResult {
@@ -181,6 +183,7 @@ export function readMarkdownDocument(source: string): ImportedDocument {
   // Set once the banner is seen, and stays set: a document may hold several
   // exports one after another, which is exactly what picking two files makes.
   let ummExport = false;
+  let banner: string | undefined;
   const thoughts: ImportedThought[] = [];
   const connections: ImportedConnection[] = [];
   const linesOfThinking: ImportedLine[] = [];
@@ -196,6 +199,7 @@ export function readMarkdownDocument(source: string): ImportedDocument {
       // The banner is umm describing the file, not a thought in it. It also
       // marks everything after it as umm's own writing.
       ummExport = true;
+      banner ??= content.trim();
       continue;
     }
 
@@ -245,6 +249,7 @@ export function readMarkdownDocument(source: string): ImportedDocument {
     connections,
     lines: linesOfThinking,
     isExport: ummExport,
+    banner,
   };
 }
 
@@ -258,15 +263,71 @@ export function splitMarkdownThoughts(source: string): ImportedThought[] {
   return readMarkdownDocument(source).thoughts;
 }
 
-/** Rebuilds a retryable Markdown draft from thoughts that were not imported. */
-export function formatImportedThoughts(thoughts: ImportedThought[]) {
-  return thoughts
-    .map((thought) => {
-      if (!thought.title) return thought.content;
-      if (thought.content === thought.title) return `# ${thought.title}`;
-      return `# ${thought.title}\n\n${thought.content}`;
-    })
-    .join('\n\n---\n\n');
+/**
+ * Rebuilds a retryable Markdown draft from thoughts that were not imported.
+ *
+ * When the thoughts came out of an export, the draft is written back as one.
+ * Anything else and a retry quietly downgrades what it restores: the draft was
+ * plain text, so the second attempt put the thoughts in a fresh grid, in the
+ * default colour, as plain thoughts, in no line of thinking — and a large one
+ * hit the import cap again, because a draft with no banner is not an export.
+ *
+ * A connection is only written when both of its ends are being retried. One
+ * that reached a thought which imported successfully cannot be restored this
+ * way at all: that thought exists now under a new id the draft has no way to
+ * name. Rewriting it against the old id would be worse than dropping it, so it
+ * is dropped.
+ */
+export function formatImportedThoughts(
+  thoughts: ImportedThought[],
+  context?: { banner?: string; connections?: ImportedConnection[]; lines?: ImportedLine[] },
+) {
+  const plain = () =>
+    thoughts
+      .map((thought) => {
+        if (!thought.title) return thought.content;
+        if (thought.content === thought.title) return `# ${thought.title}`;
+        return `# ${thought.title}\n\n${thought.content}`;
+      })
+      .join('\n\n---\n\n');
+
+  if (!context?.banner || !thoughts.some((thought) => thought.sourceId)) return plain();
+
+  const sections = thoughts.map((thought) => {
+    const heading = `## ${thought.title || untitledThought}`;
+    const metadata: string[] = [];
+    if (thought.sourceId) metadata.push(`- id: \`${thought.sourceId}\``);
+    if (thought.kind) metadata.push(`- type: \`${thought.kind}\``);
+    if (thought.color) metadata.push(`- color: \`${thought.color}\``);
+    if (thought.x !== undefined && thought.y !== undefined) metadata.push(`- canvas: \`${thought.x}, ${thought.y}\``);
+    if (thought.line) metadata.push(`- line: \`${thought.line}\``);
+    const body = [heading, '', thought.content];
+    if (metadata.length > 0) body.push('', ...metadata);
+    return body.join('\n');
+  });
+
+  const retried = new Set(thoughts.map((thought) => thought.sourceId).filter(Boolean));
+  const kept = (context.connections ?? []).filter(
+    (connection) => retried.has(connection.from) && retried.has(connection.to),
+  );
+  if (kept.length > 0) {
+    sections.push(
+      ['## Connections', '', ...kept.map((c) => `- \`${c.from}\` --${c.relation}--> \`${c.to}\``)].join('\n'),
+    );
+  }
+  const names = new Set(thoughts.map((thought) => thought.line).filter(Boolean));
+  const lines = (context.lines ?? []).filter((line) => names.has(line.name));
+  if (lines.length > 0) {
+    sections.push(
+      [
+        '## Lines of thinking',
+        '',
+        ...lines.map((line) => `- **${line.name}** — ${line.status}${line.resolution ? `: ${line.resolution}` : ''}`),
+      ].join('\n'),
+    );
+  }
+
+  return [context.banner, ...sections].join('\n\n');
 }
 
 /** Lays imported thoughts out in a readable grid starting at the given origin. */
