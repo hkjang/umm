@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { formatImportedThoughts, importLayout, maxImportedThoughts, splitMarkdownThoughts } from './markdown-import';
+import {
+  formatImportedThoughts,
+  importLayout,
+  maxImportedThoughts,
+  readMarkdownDocument,
+  splitMarkdownThoughts,
+} from './markdown-import';
 
 describe('splitMarkdownThoughts', () => {
   it('cuts a document at its headings and keeps them as titles', () => {
@@ -120,9 +126,27 @@ describe("reading umm's own export", () => {
   // holding exactly what the person wrote.
   it('restores the space it was taken from', () => {
     expect(splitMarkdownThoughts(ummExport)).toEqual([
-      { title: '', content: '이어진 생각의 본문' },
-      { title: '제목이 있는 생각', content: '제목이 있는 생각의 본문' },
-      { title: '', content: '제목이 없는 생각의 본문' },
+      {
+        title: '',
+        content: '이어진 생각의 본문',
+        sourceId: 'bfe3a64a-dfc4-4f41-af41-b95afb511003',
+        x: 0,
+        y: 0,
+      },
+      {
+        title: '제목이 있는 생각',
+        content: '제목이 있는 생각의 본문',
+        sourceId: 'f2543505-ca63-49a0-ba05-bd9d1cd37f13',
+        x: 0,
+        y: 0,
+      },
+      {
+        title: '',
+        content: '제목이 없는 생각의 본문',
+        sourceId: '87e9d59d-a13c-4efb-a252-7ff79ed99993',
+        x: 0,
+        y: 0,
+      },
     ]);
   });
 
@@ -208,12 +232,16 @@ describe("reading umm's own export", () => {
   // position it was meant to strip.
   it('reads an export that was appended after something already typed', () => {
     const typedFirst = ['# 오늘 떠오른 것', '', '먼저 적어 둔 생각'].join('\n') + '\n\n---\n\n' + ummExport;
-    expect(splitMarkdownThoughts(typedFirst)).toEqual([
-      { title: '오늘 떠오른 것', content: '먼저 적어 둔 생각' },
-      { title: '', content: '이어진 생각의 본문' },
-      { title: '제목이 있는 생각', content: '제목이 있는 생각의 본문' },
-      { title: '', content: '제목이 없는 생각의 본문' },
+    const restored = splitMarkdownThoughts(typedFirst);
+    // What was typed has no history and gains none; what came from the export
+    // keeps its own.
+    expect(restored[0]).toEqual({ title: '오늘 떠오른 것', content: '먼저 적어 둔 생각' });
+    expect(restored.slice(1).map((thought) => [thought.title, thought.content])).toEqual([
+      ['', '이어진 생각의 본문'],
+      ['제목이 있는 생각', '제목이 있는 생각의 본문'],
+      ['', '제목이 없는 생각의 본문'],
     ]);
+    expect(restored.slice(1).every((thought) => thought.sourceId !== undefined)).toBe(true);
   });
 
   // Picking two files joins them with a rule, which is two exports in one
@@ -236,5 +264,73 @@ describe("reading umm's own export", () => {
   // must add nothing rather than adding the banner.
   it('imports nothing from an export with no thoughts in it', () => {
     expect(splitMarkdownThoughts('# 빈 공간\n\nExported from umm at 2026-08-26T16:01:02+09:00.\n')).toEqual([]);
+  });
+});
+
+describe('restoring a space rather than a list of sentences', () => {
+  // Where a thought sits is part of what it says on this canvas, so an export
+  // that comes back in a fresh grid has lost something people built by hand.
+  it('brings each thought back to where it was', () => {
+    const { thoughts } = readMarkdownDocument(ummExport);
+    expect(thoughts.map((thought) => [thought.x, thought.y])).toEqual([
+      [0, 0],
+      [0, 0],
+      [0, 0],
+    ]);
+  });
+
+  it('remembers what each thought used to be called', () => {
+    const { thoughts } = readMarkdownDocument(ummExport);
+    expect(thoughts.map((thought) => thought.sourceId)).toEqual([
+      'bfe3a64a-dfc4-4f41-af41-b95afb511003',
+      'f2543505-ca63-49a0-ba05-bd9d1cd37f13',
+      '87e9d59d-a13c-4efb-a252-7ff79ed99993',
+    ]);
+  });
+
+  // The connections were being read as a section to skip. They are the other
+  // half of what a space is.
+  it('reads the connections between them', () => {
+    expect(readMarkdownDocument(ummExport).connections).toEqual([
+      {
+        from: 'f2543505-ca63-49a0-ba05-bd9d1cd37f13',
+        to: 'bfe3a64a-dfc4-4f41-af41-b95afb511003',
+        relation: 'related',
+      },
+    ]);
+  });
+
+  // The ids in the Connections section have to be ids the thoughts actually
+  // carry, or nothing can be joined back up.
+  it('names connections by ids the thoughts carry', () => {
+    const { thoughts, connections } = readMarkdownDocument(ummExport);
+    const ids = new Set(thoughts.map((thought) => thought.sourceId));
+    for (const connection of connections) {
+      expect(ids.has(connection.from)).toBe(true);
+      expect(ids.has(connection.to)).toBe(true);
+    }
+  });
+
+  // Someone else's Markdown has no history, and inventing one would put their
+  // thoughts at coordinates they never chose.
+  it('carries nothing for a document that is not an export', () => {
+    const { thoughts, connections } = readMarkdownDocument('# One\n\nbody\n\n## Two\n\nmore');
+    expect(connections).toEqual([]);
+    for (const thought of thoughts) {
+      expect(thought.sourceId).toBeUndefined();
+      expect(thought.x).toBeUndefined();
+      expect(thought.y).toBeUndefined();
+    }
+  });
+
+  it('reads the connections of both exports when two are picked at once', () => {
+    const both = [ummExport, ummExport].join('\n\n---\n\n');
+    expect(readMarkdownDocument(both).connections).toHaveLength(2);
+  });
+
+  it('still answers the thoughts-only question the same way', () => {
+    expect(splitMarkdownThoughts(ummExport).map((thought) => thought.content)).toEqual(
+      readMarkdownDocument(ummExport).thoughts.map((thought) => thought.content),
+    );
   });
 });

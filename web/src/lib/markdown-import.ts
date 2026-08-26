@@ -1,6 +1,27 @@
 export interface ImportedThought {
   title: string;
   content: string;
+  /**
+   * Where this thought was, and what it was called, in the space it came from.
+   *
+   * Only umm's own export carries these. A thought imported from anyone else's
+   * Markdown has never been anywhere, so it is laid out in a grid like before.
+   */
+  sourceId?: string;
+  x?: number;
+  y?: number;
+}
+
+/** A connection between two thoughts, named by the ids the export wrote. */
+export interface ImportedConnection {
+  from: string;
+  to: string;
+  relation: string;
+}
+
+export interface ImportedDocument {
+  thoughts: ImportedThought[];
+  connections: ImportedConnection[];
 }
 
 export interface ImportThoughtsResult {
@@ -40,6 +61,13 @@ const headingLine = /^#{1,6}\s+\S/;
 const exportBanner = /^Exported from umm at\s+\S+$/;
 const exportMetadata = /^-\s+(?:id|type|source|canvas|line):\s+`/;
 const exportSections = new Set(['Connections', 'Lines of thinking']);
+/** `- id: `uuid`` under a thought: where it lived before. */
+const exportedID = /^-\s+id:\s+`([^`]+)`/m;
+/** `- canvas: `x, y`` under a thought: where it sat on the canvas. */
+const exportedCanvas = /^-\s+canvas:\s+`\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*`/m;
+/** A line of the Connections section: `` `a` --relates--> `b` ``. */
+const exportedConnection = /^-\s+`([^`]+)`\s*--([a-z_-]+)-->\s*`([^`]+)`/;
+
 /** The heading the exporter writes for a thought that has no title. */
 const untitledThought = 'Thought';
 
@@ -79,7 +107,7 @@ const thematicBreak = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
  * line separated blocks, so a plain list of paragraphs still imports as
  * separate thoughts instead of one wall of text.
  */
-export function splitMarkdownThoughts(source: string): ImportedThought[] {
+export function readMarkdownDocument(source: string): ImportedDocument {
   const lines = source.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
   const structured = lines.some((line) => headingLine.test(line) || thematicBreak.test(line));
   const blocks: string[][] = [];
@@ -122,12 +150,14 @@ export function splitMarkdownThoughts(source: string): ImportedThought[] {
   // exports one after another, which is exactly what picking two files makes.
   let ummExport = false;
   const thoughts: ImportedThought[] = [];
+  const connections: ImportedConnection[] = [];
   for (const block of blocks) {
     const body = block.join('\n').trim();
     if (!body) continue;
     const [first, ...rest] = body.split('\n');
     let title = headingLine.test(first) ? first.replace(/^#{1,6}\s+/, '').trim() : '';
     let content = title ? rest.join('\n').trim() : body;
+    let carried: Partial<ImportedThought> = {};
 
     if (isExportBanner(content)) {
       // The banner is umm describing the file, not a thought in it. It also
@@ -139,7 +169,20 @@ export function splitMarkdownThoughts(source: string): ImportedThought[] {
     if (ummExport) {
       // The connections and the lines of thinking describe the space rather
       // than being thoughts someone had in it.
+      if (title === 'Connections') {
+        // Kept rather than dropped: the thoughts come back without them, and
+        // on this canvas what a thought is joined to is half of what it means.
+        for (const line of content.split('\n')) {
+          const found = exportedConnection.exec(line.trim());
+          if (found) connections.push({ from: found[1], to: found[3], relation: found[2] });
+        }
+        continue;
+      }
       if (exportSections.has(title)) continue;
+      const id = exportedID.exec(content)?.[1];
+      const canvas = exportedCanvas.exec(content);
+      if (id) carried = { sourceId: id };
+      if (canvas) carried = { ...carried, x: Number(canvas[1]), y: Number(canvas[2]) };
       content = withoutExportMetadata(content);
       // A thought that had no title gets one from the exporter; giving it back
       // would name every restored thought "Thought".
@@ -149,9 +192,19 @@ export function splitMarkdownThoughts(source: string): ImportedThought[] {
 
     // A heading with nothing under it still carries an idea, so keep the
     // heading itself as the content rather than dropping the section.
-    thoughts.push({ title, content: content || title });
+    thoughts.push({ title, content: content || title, ...carried });
   }
-  return thoughts.filter((thought) => thought.content !== '');
+  return { thoughts: thoughts.filter((thought) => thought.content !== ''), connections };
+}
+
+/**
+ * The thoughts alone, for callers that have no use for the connections.
+ *
+ * Kept as its own name because most of the codebase — and every test written
+ * before umm could read its own export — asks only this question.
+ */
+export function splitMarkdownThoughts(source: string): ImportedThought[] {
+  return readMarkdownDocument(source).thoughts;
 }
 
 /** Rebuilds a retryable Markdown draft from thoughts that were not imported. */

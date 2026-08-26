@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TranslationProvider } from '../i18n';
 import { setLocale } from '../i18n/translate';
-import { maxImportedThoughts, type ImportedThought } from '../lib/markdown-import';
+import { maxImportedThoughts, type ImportedDocument } from '../lib/markdown-import';
 import ImportThoughtsModal from './ImportThoughtsModal';
 
 describe('ImportThoughtsModal', () => {
@@ -19,7 +19,7 @@ describe('ImportThoughtsModal', () => {
 
   it('keeps only failed thoughts in the draft after a partial import', async () => {
     const onClose = vi.fn();
-    const onImport = vi.fn(async (thoughts: ImportedThought[]) => ({ created: 1, failed: [thoughts[1]] }));
+    const onImport = vi.fn(async ({ thoughts }: ImportedDocument) => ({ created: 1, failed: [thoughts[1]] }));
     render(
       <MantineProvider>
         <TranslationProvider>
