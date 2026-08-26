@@ -77,4 +77,44 @@ test.describe('read-only space', () => {
     await expect(page.getByPlaceholder('생각을 입력하고 Enter로 붙이세요')).toBeVisible();
     await expect(page.getByText('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')).toHaveCount(0);
   });
+
+  /**
+   * The note menu offers what works and nothing else.
+   *
+   * Every write in it is refused by the API for a read-only member — colour,
+   * naming, marking as a question, holding back from Dream, restoring an
+   * earlier version, deleting. Listing actions that cannot happen is a worse
+   * answer than a shorter menu.
+   *
+   * Connections and comments stay, because both genuinely work: a read-only
+   * member may comment, and not being able to change something should not stop
+   * you talking about it.
+   */
+  test('the note menu drops what a reader cannot do', async ({ page }) => {
+    await signIn(page);
+    await openSpaceWithPermission(page, 'view');
+
+    const card = page.locator('.postit').first();
+    await card.hover();
+    await card.getByRole('button', { name: '메모 메뉴' }).click();
+
+    await expect(page.getByRole('menuitem', { name: '연결과 갈래' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: '댓글과 멘션' })).toBeVisible();
+    for (const gone of ['색상', '제목 붙이기', '질문으로 표시', '이전 버전 복원', '지우기']) {
+      await expect(page.getByRole('menuitem', { name: gone }), `${gone} is still offered`).toHaveCount(0);
+    }
+  });
+
+  test('the owner keeps the whole menu', async ({ page }) => {
+    await signIn(page);
+    await openSpaceWithPermission(page, 'manage');
+
+    const card = page.locator('.postit').first();
+    await card.hover();
+    await card.getByRole('button', { name: '메모 메뉴' }).click();
+
+    for (const item of ['색상', '제목 붙이기', '질문으로 표시', '연결과 갈래', '댓글과 멘션', '지우기']) {
+      await expect(page.getByRole('menuitem', { name: item }), `${item} went missing`).toBeVisible();
+    }
+  });
 });
