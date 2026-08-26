@@ -125,7 +125,11 @@ func (s *Server) updateWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	p := principal(r)
 	command, err := s.Store.Pool.Exec(r.Context(), `UPDATE webhook_subscriptions SET name=$3,url=$4,events=$5,active=$6,failure_count=CASE WHEN $6 AND NOT active THEN 0 ELSE failure_count END,last_error=CASE WHEN $6 AND NOT active THEN '' ELSE last_error END,updated_at=now() WHERE id=$1 AND owner_id=$2`, id, p.User.ID, body.Name, body.URL, body.Events, body.Active)
-	if err != nil || command.RowsAffected() == 0 {
+	if err != nil {
+		writeError(w, 500, "웹훅을 수정하지 못했습니다.")
+		return
+	}
+	if command.RowsAffected() == 0 {
 		writeError(w, 404, "웹훅을 찾을 수 없습니다.")
 		return
 	}
@@ -143,7 +147,14 @@ func (s *Server) deleteWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	p := principal(r)
 	command, err := s.Store.Pool.Exec(r.Context(), `DELETE FROM webhook_subscriptions WHERE id=$1 AND owner_id=$2`, id, p.User.ID)
-	if err != nil || command.RowsAffected() == 0 {
+	if err != nil {
+		// Saying a webhook cannot be found when the truth is that deleting it
+		// failed tells someone their notes have stopped going somewhere they
+		// are still going.
+		writeError(w, 500, "웹훅을 삭제하지 못했습니다.")
+		return
+	}
+	if command.RowsAffected() == 0 {
 		writeError(w, 404, "웹훅을 찾을 수 없습니다.")
 		return
 	}
@@ -196,7 +207,11 @@ func (s *Server) rotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	p := principal(r)
 	command, err := s.Store.Pool.Exec(r.Context(), `UPDATE webhook_subscriptions SET secret_ciphertext=$3,updated_at=now() WHERE id=$1 AND owner_id=$2`, id, p.User.ID, ciphertext)
-	if err != nil || command.RowsAffected() == 0 {
+	if err != nil {
+		writeError(w, 500, "웹훅 비밀키를 교체하지 못했습니다.")
+		return
+	}
+	if command.RowsAffected() == 0 {
 		writeError(w, 404, "웹훅을 찾을 수 없습니다.")
 		return
 	}

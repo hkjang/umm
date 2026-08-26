@@ -388,7 +388,11 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		teamID = &t
 	}
 	cmd, err := s.Store.Pool.Exec(r.Context(), `UPDATE users SET role=$2,active=$3,team_id=$4,updated_at=now() WHERE id=$1`, id, body.Role, body.Active, teamID)
-	if err != nil || cmd.RowsAffected() == 0 {
+	if err != nil {
+		writeError(w, 500, "사용자를 수정하지 못했습니다.")
+		return
+	}
+	if cmd.RowsAffected() == 0 {
 		writeError(w, 404, "사용자를 찾을 수 없습니다.")
 		return
 	}

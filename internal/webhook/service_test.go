@@ -447,3 +447,128 @@ func TestFinishFailurePersistsBoundedUTF8Integration(t *testing.T) {
 		t.Fatalf("delivery error must be valid UTF-8 within 500 bytes: len=%d valid=%v", len(deliveryError), utf8.ValidString(deliveryError))
 	}
 }
+
+// Deleting a webhook has to stop what was already on its way.
+//
+// The three cases above all check the same shape: a delivery survives, and the
+// dispatcher refuses it because the authorization behind it went away. Deleting
+// the subscription is a different mechanism — the delivery rows go with it,
+// through the foreign key — and it is the one a person actually performs when
+// they mean "stop sending my notes there". Nothing held it.
+//
+// A schema rewrite that dropped the cascade would leave queued deliveries with
+// a subscription that no longer exists, and revoking would stop meaning what
+// the button says. This fails first instead.
+func TestDeletingAWebhookDropsWhatWasAlreadyQueuedIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not configured")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cipher, err := cryptoutil.New(bytes.Repeat([]byte{0x62}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := cipher.Encrypt("revoked-webhook-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ownerID, spaceID, subscriptionID := uuid.New(), uuid.New(), uuid.New()
+	ownerName := "webhook_revoke_" + ownerID.String()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, ownerID, ownerName); err != nil {
+		t.Fatal(err)
+	}
+	// Cleaned up by hand rather than by deleting the user and hoping it
+	// cascades: this package's tests share one database, and a subscription
+	// left behind makes the next Enqueue queue one delivery more than the test
+	// doing it expects. That is how this test first broke two of its
+	// neighbours.
+	defer func() {
+		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM webhook_subscriptions WHERE id=$1`, subscriptionID)
+		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM spaces WHERE id=$1`, spaceID)
+		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, ownerID)
+	}()
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'웹훅 끊기')`, spaceID, ownerID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO webhook_subscriptions(id,owner_id,name,url,secret_ciphertext,events)
+		VALUES($1,$2,'끊을 웹훅','https://example.com/webhook',$3,ARRAY['note.created'])`,
+		subscriptionID, ownerID, ciphertext); err != nil {
+		t.Fatal(err)
+	}
+
+	service := New(db, cipher)
+	queued, err := service.Enqueue(ctx, Event{
+		ID: uuid.New(), Type: "note.created", SpaceID: spaceID, ActorID: ownerID,
+		Data: map[string]any{"body": "보내지면 안 되는 생각"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued != 1 {
+		t.Fatalf("queued %d deliveries, want 1; the rest of this test would prove nothing", queued)
+	}
+
+	// It really is about to be sent: this is the condition the dispatcher
+	// selects on. Asked of this subscription rather than by claiming the next
+	// delivery in the database, because the tests here share one and claiming
+	// would take whichever was due first, whoever it belonged to.
+	due := func() int {
+		t.Helper()
+		var n int
+		if err = db.Pool.QueryRow(ctx, `
+			SELECT count(*) FROM webhook_deliveries
+			WHERE subscription_id=$1 AND status='queued' AND next_attempt_at<=now()`, subscriptionID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if due() != 1 {
+		t.Fatalf("the queued delivery was not waiting to be sent: %d due", due())
+	}
+
+	// Exactly what the delete button runs.
+	command, err := db.Pool.Exec(ctx, `DELETE FROM webhook_subscriptions WHERE id=$1 AND owner_id=$2`, subscriptionID, ownerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.RowsAffected() != 1 {
+		t.Fatalf("deleting the webhook affected %d rows, want 1", command.RowsAffected())
+	}
+
+	var left int
+	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM webhook_deliveries WHERE subscription_id=$1`, subscriptionID).Scan(&left); err != nil {
+		t.Fatal(err)
+	}
+	if left != 0 {
+		t.Errorf("%d deliveries are still queued for a webhook that was deleted", left)
+	}
+
+	// And nothing of theirs is waiting to be sent any more.
+	if n := due(); n != 0 {
+		t.Errorf("%d deliveries are still waiting to be sent for a deleted webhook", n)
+	}
+
+	// A later event does not queue for it either.
+	queued, err = service.Enqueue(ctx, Event{
+		ID: uuid.New(), Type: "note.created", SpaceID: spaceID, ActorID: ownerID,
+		Data: map[string]any{"body": "그 뒤에 적은 생각"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued != 0 {
+		t.Errorf("a deleted webhook was still queued %d deliveries", queued)
+	}
+}
