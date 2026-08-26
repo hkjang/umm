@@ -212,4 +212,31 @@ test.describe('read-only space', () => {
     // And still able to say something, which is the whole point of view.
     await expect(page.getByRole('textbox', { name: '댓글' })).toBeVisible();
   });
+
+  // The other side of the same rule: edit may resolve.
+  //
+  // The read-only case above proves resolve is hidden. On its own that would
+  // also pass if resolve were hidden from everyone, which would be a different
+  // bug in the other direction.
+  test('a member who may edit can still resolve a discussion', async ({ page }) => {
+    await signIn(page);
+    const spaceId = await openSpaceWithPermission(page, 'edit');
+    await page.evaluate(async (id) => {
+      const notes = await (await fetch(`/api/v1/spaces/${id}/notes`)).json();
+      await fetch(`/api/v1/notes/${notes.notes[0].id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: '편집자가 볼 의견' }),
+      });
+    }, spaceId);
+    await page.reload();
+
+    const menu = await openNoteMenu(page);
+    await menu.getByRole('menuitem', { name: '댓글' }).click();
+    await expect(page.getByText('편집자가 볼 의견')).toBeVisible();
+
+    await page.getByRole('button', { name: '댓글 메뉴' }).click();
+    const commentMenu = page.getByRole('menu');
+    await expect(commentMenu.getByRole('menuitem', { name: '해결 표시' })).toBeVisible();
+  });
 });
