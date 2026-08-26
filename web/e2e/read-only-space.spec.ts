@@ -171,4 +171,45 @@ test.describe('read-only space', () => {
     await openSpaceWithPermission(page, 'manage');
     await expect(page.getByRole('button', { name: '연결 추천 받기' })).toBeVisible();
   });
+
+  // The comment menu offered everything to everybody.
+  //
+  // Resolving a discussion needs edit or better, and deleting someone else's
+  // comment needs manage — but the menu showed both to a member shared in to
+  // read, who found out by being refused. This is the same thing the capture
+  // bar and the note menu were fixed for; the comments panel had been missed.
+  test('the comment menu drops what a reader cannot do', async ({ page }) => {
+    await signIn(page);
+    const spaceId = await openSpaceWithPermission(page, 'view');
+    // A comment written by someone else — here, the owner, before the
+    // permission is stubbed down to view for this browser.
+    await page.evaluate(async (id) => {
+      const notes = await (await fetch(`/api/v1/spaces/${id}/notes`)).json();
+      await fetch(`/api/v1/notes/${notes.notes[0].id}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body: '주인이 남긴 의견' }),
+      });
+    }, spaceId);
+    await page.reload();
+    await expect(page.getByText('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')).toBeVisible();
+
+    const menu = await openNoteMenu(page);
+    await menu.getByRole('menuitem', { name: '댓글' }).click();
+    await expect(page.getByText('주인이 남긴 의견')).toBeVisible();
+
+    // The comment is this person's own, so deleting it is theirs to do — that
+    // is true at any permission. Resolving the discussion is not: it needs edit
+    // or better, and used to be offered anyway.
+    await page.getByRole('button', { name: '댓글 메뉴' }).click();
+    const commentMenu = page.getByRole('menu');
+    await expect(commentMenu).toBeVisible();
+    await expect(commentMenu.getByRole('menuitem', { name: '삭제' })).toBeVisible();
+    await expect(commentMenu.getByRole('menuitem', { name: '해결 표시' })).toHaveCount(0);
+    await expect(commentMenu.getByRole('menuitem', { name: '다시 열기' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    // And still able to say something, which is the whole point of view.
+    await expect(page.getByRole('textbox', { name: '댓글' })).toBeVisible();
+  });
 });
