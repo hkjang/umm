@@ -278,4 +278,64 @@ test.describe('read-only space', () => {
     await expect(page.getByRole('button', { name: '갈래 메뉴' })).toHaveCount(0);
     await expect(page.getByRole('textbox', { name: '새 갈래 이름' })).toHaveCount(0);
   });
+
+  // Arranging is a write, and it used to report success at doing it.
+  //
+  // Tidying the canvas moves notes and saves each one. A reader was offered
+  // every arrangement — the three in the toolbar, two more in the menu, and the
+  // related chip on a card — and clicking one moved the notes on screen, said
+  // how many had been moved, and then had every save refused. A success message
+  // for something that did not happen is worse than a refusal.
+  test('does not offer to rearrange a space it cannot write to', async ({ page }) => {
+    await signIn(page);
+    await openSpaceWithPermission(page, 'view');
+    await expect(page.getByText('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')).toBeVisible();
+
+    for (const label of ['생각 군집', '겹침 정리', 'Thought Gravity']) {
+      await expect(page.getByRole('button', { name: label })).toHaveCount(0);
+    }
+  });
+
+  test('still offers the arrangements where the layout can be saved', async ({ page }) => {
+    await signIn(page);
+    await openSpaceWithPermission(page, 'manage');
+    for (const label of ['생각 군집', '겹침 정리', 'Thought Gravity']) {
+      await expect(page.getByRole('button', { name: label })).toBeVisible();
+    }
+  });
+
+  // A key press is an offer too.
+  //
+  // Delete has no button to hide, so the confirmation was the offer: a reader
+  // selecting a thought and pressing Delete was asked whether to delete it, and
+  // the server refused afterwards. The question itself was the false promise.
+  test('pressing Delete does not offer to delete a thought a reader cannot delete', async ({ page }) => {
+    await signIn(page);
+    const spaceId = await openSpaceWithPermission(page, 'view');
+    await expect(page.getByText('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')).toBeVisible();
+
+    let asked = false;
+    page.on('dialog', (dialog) => {
+      asked = true;
+      void dialog.dismiss();
+    });
+
+    // Selected for real. Clicking the card lands on its textarea and selects
+    // nothing, so the handler returned before it ever reached the guard — the
+    // first version of this test passed with the guard removed.
+    await page.locator('.react-flow__pane').click({ position: { x: 12, y: 12 } });
+    await page.keyboard.press('Control+a');
+    await expect(page.locator('.react-flow__node.selected')).toHaveCount(1);
+
+    await page.keyboard.press('Delete');
+    await page.waitForTimeout(500);
+
+    expect(asked).toBe(false);
+    // And the thought is still there, on the server as well as the screen.
+    const left = await page.evaluate(
+      async (id) => (await (await fetch(`/api/v1/spaces/${id}/notes`)).json()).notes.length,
+      spaceId,
+    );
+    expect(left).toBe(1);
+  });
 });

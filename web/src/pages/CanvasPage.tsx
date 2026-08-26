@@ -523,6 +523,16 @@ function CanvasInner() {
    */
   const applyPlacements = useCallback(
     (placements: Placement[]) => {
+      /*
+       * Arranging is a write, and every arrangement goes through here.
+       *
+       * The buttons that start one are hidden in a space this person may only
+       * read, but this is the guard that holds: the next arrangement someone
+       * adds gets it without having to remember. Without it a reader saw the
+       * notes move, was told how many had been moved, and then watched every
+       * save be refused — a success message for something that did not happen.
+       */
+      if (readOnly) return 0;
       const current = notesRef.current;
       const moves = placements
         .map((placement) => {
@@ -543,7 +553,7 @@ function CanvasInner() {
       setNodes((all) => all.map((n) => (byID.has(n.id) ? { ...n, position: byID.get(n.id)! } : n)));
       return moves.length;
     },
-    [persist, setNodes],
+    [persist, setNodes, readOnly],
   );
 
   const gravity = useCallback(
@@ -591,7 +601,9 @@ function CanvasInner() {
       // Gathering is a deliberate act: it pulls the related thoughts around this
       // one. Opening the panel is not, which is why they are separate now.
       const related = await openNotePanel(id);
-      const source = flow.getNode(id);
+      // Seeing what a thought is related to is reading; pulling those thoughts
+      // around it is not. A reader keeps the first half.
+      const source = readOnly ? undefined : flow.getNode(id);
       if (source) {
         related.forEach((item, index) => {
           const angle = (index / Math.max(1, related.length)) * Math.PI * 2;
@@ -602,7 +614,7 @@ function CanvasInner() {
         });
       }
     },
-    [flow, persist, openNotePanel],
+    [flow, persist, openNotePanel, readOnly],
   );
   const openComments = useCallback(async (note: ThoughtNote) => {
     setCommentNote(note);
@@ -1333,7 +1345,11 @@ function CanvasInner() {
         document.getElementById('thought-search')?.focus();
         return;
       }
-      if (!editing && (event.key === 'Delete' || event.key === 'Backspace')) {
+      if (!editing && !readOnly && (event.key === 'Delete' || event.key === 'Backspace')) {
+        // Guarded here rather than at the confirmation, because the question
+        // itself is the offer: asking someone whether to delete three thoughts
+        // they are not allowed to delete is the same false promise as a button
+        // that fails.
         const selected = flow
           .getNodes()
           .filter((node) => node.selected)
@@ -1361,7 +1377,10 @@ function CanvasInner() {
         setNodes((all) => all.map((node) => ({ ...node, selected: false })));
         return;
       }
-      if (!editing && mod && key === 'z') {
+      if (!editing && !readOnly && mod && key === 'z') {
+        // Undo replays positions through the same save. Nothing should be in
+        // the stack for a reader now that arranging is refused, but a stack
+        // that is empty by accident is not a guard.
         event.preventDefault();
         const action = event.shiftKey ? redo.current.pop() : undo.current.pop();
         if (!action) return;
@@ -1375,7 +1394,11 @@ function CanvasInner() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [flow, persist, remove, setNodes]);
+    // readOnly belongs here for the same reason it belongs in the effect that
+    // builds the cards: the permission arrives after this binds, and a handler
+    // holding the old answer keeps offering to delete in a space that has since
+    // turned out to be read-only.
+  }, [flow, persist, remove, setNodes, readOnly]);
 
   // The web app manifest registers umm as a share target, so another app can
   // hand a link or a snippet straight to the capture box. The parameters are
@@ -2118,39 +2141,43 @@ function CanvasInner() {
               </Menu.Dropdown>
             </Menu>
             <div className="canvas-tool-divider" aria-hidden="true" />
-            <Tooltip label={t('관련 생각 군집 모으기')}>
-              <ActionIcon
-                className="canvas-action"
-                variant="subtle"
-                color="blue"
-                onClick={() => void clusterThoughts()}
-                aria-label={t('생각 군집')}
-              >
-                <IconLayoutGrid size={20} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label={t('겹친 생각만 펼치기')}>
-              <ActionIcon
-                className="canvas-action"
-                variant="subtle"
-                color="teal"
-                onClick={() => spreadThoughts()}
-                aria-label={t('겹침 정리')}
-              >
-                <IconArrowsMaximize size={20} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label={t('직접 연결한 생각 모으기')}>
-              <ActionIcon
-                className="canvas-action"
-                variant="subtle"
-                color="grape"
-                onClick={() => gravity()}
-                aria-label="Thought Gravity"
-              >
-                <IconFocusCentered size={20} />
-              </ActionIcon>
-            </Tooltip>
+            {!readOnly && (
+              <>
+                <Tooltip label={t('관련 생각 군집 모으기')}>
+                  <ActionIcon
+                    className="canvas-action"
+                    variant="subtle"
+                    color="blue"
+                    onClick={() => void clusterThoughts()}
+                    aria-label={t('생각 군집')}
+                  >
+                    <IconLayoutGrid size={20} />
+                  </ActionIcon>
+                </Tooltip>
+                <Tooltip label={t('겹친 생각만 펼치기')}>
+                  <ActionIcon
+                    className="canvas-action"
+                    variant="subtle"
+                    color="teal"
+                    onClick={() => spreadThoughts()}
+                    aria-label={t('겹침 정리')}
+                  >
+                    <IconArrowsMaximize size={20} />
+                  </ActionIcon>
+                </Tooltip>
+                <Tooltip label={t('직접 연결한 생각 모으기')}>
+                  <ActionIcon
+                    className="canvas-action"
+                    variant="subtle"
+                    color="grape"
+                    onClick={() => gravity()}
+                    aria-label="Thought Gravity"
+                  >
+                    <IconFocusCentered size={20} />
+                  </ActionIcon>
+                </Tooltip>
+              </>
+            )}
           </Group>
           <Menu shadow="md" position="bottom-end">
             <Menu.Target>
@@ -2211,12 +2238,16 @@ function CanvasInner() {
                   ))}
                 </Menu.Sub.Dropdown>
               </Menu.Sub>
-              <Menu.Item leftSection={<IconLayoutGrid size={17} />} onClick={() => void clusterThoughts()}>
-                {t('생각 군집 모으기')}
-              </Menu.Item>
-              <Menu.Item leftSection={<IconFocusCentered size={17} />} onClick={() => gravity()}>
-                {t('연결한 생각 모으기')}
-              </Menu.Item>
+              {!readOnly && (
+                <>
+                  <Menu.Item leftSection={<IconLayoutGrid size={17} />} onClick={() => void clusterThoughts()}>
+                    {t('생각 군집 모으기')}
+                  </Menu.Item>
+                  <Menu.Item leftSection={<IconFocusCentered size={17} />} onClick={() => gravity()}>
+                    {t('연결한 생각 모으기')}
+                  </Menu.Item>
+                </>
+              )}
             </Menu.Dropdown>
           </Menu>
         </Group>
