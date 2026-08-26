@@ -995,7 +995,7 @@ function CanvasInner() {
   // real work and one rejected note cannot lose the rest of the batch.
   const importThoughts = useCallback(
     async (parsed: ImportedDocument, onProgress: (done: number) => void): Promise<ImportThoughtsResult> => {
-      const { thoughts, connections } = parsed;
+      const { thoughts, connections, lines } = parsed;
       if (thoughts.length === 0) return { created: 0, failed: [] };
       if (!activeSpace) return { created: 0, failed: thoughts };
       const viewport = flow.screenToFlowPosition({ x: 140, y: 180 });
@@ -1055,20 +1055,60 @@ function CanvasInner() {
           // A refused connection is not worth losing the import over.
         }
       }
-      if (connected > 0) await loadCanvas(true);
+      // The lines of thinking, and how each of them ended.
+      //
+      // A thought that was tried and set aside reads exactly like a current one
+      // once the label is gone, and the reason it was set aside is the half
+      // people lose first. Restoring the thoughts without them hands back the
+      // decisions and drops every why.
+      let revived = 0;
+      for (const line of lines) {
+        const members = thoughts
+          .filter((thought) => thought.line === line.name && thought.sourceId)
+          .map((thought) => restored.get(thought.sourceId as string))
+          .filter((id): id is string => !!id);
+        try {
+          const branch = await api<Branch>(`/spaces/${activeSpace}/branches`, {
+            ...json('POST', { name: line.name }),
+            silent: true,
+          });
+          for (const noteID of members) {
+            await api(`/notes/${noteID}/branch`, { ...json('PUT', { branchId: branch.id }), silent: true });
+          }
+          // Resolved last: a line is closed with the thoughts already in it, the
+          // same order a person would do it in.
+          if (line.status === 'adopted' || line.status === 'abandoned') {
+            await api(`/branches/${branch.id}/resolve`, {
+              ...json('POST', { status: line.status, resolution: line.resolution }),
+              silent: true,
+            });
+          }
+          revived += 1;
+        } catch {
+          // A line that cannot be rebuilt must not cost the thoughts already in.
+        }
+      }
+      if (connected > 0 || revived > 0) {
+        await loadCanvas(true);
+        if (revived > 0) await loadBranches();
+      }
       if (created.length > 0) {
         for (const note of created) durableNotesRef.current[note.id] = note;
         syncNotes([...Object.values(notesRef.current), ...created]);
         showSuccess(
-          connected > 0
-            ? t('{count}개의 생각과 {links}개의 연결을 되살렸습니다.', { count: created.length, links: connected })
+          connected > 0 || revived > 0
+            ? t('{count}개의 생각과 {links}개의 연결, {lines}개의 갈래를 되살렸습니다.', {
+                count: created.length,
+                links: connected,
+                lines: revived,
+              })
             : t('{count}개의 생각을 캔버스에 붙였습니다.', { count: created.length }),
           t('가져오기 완료'),
         );
       }
       return { created: created.length, failed };
     },
-    [activeSpace, flow, t, loadCanvas],
+    [activeSpace, flow, t, loadCanvas, loadBranches],
   );
 
   const onPaneDoubleClick = useCallback(

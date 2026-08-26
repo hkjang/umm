@@ -33,6 +33,17 @@ test.describe('exporting a space and importing it back', () => {
       const left = await post(`/api/v1/spaces/${space.id}/notes`, { content: `${name}-왼쪽`, x: 40, y: 60 });
       const right = await post(`/api/v1/spaces/${space.id}/notes`, { content: `${name}-오른쪽`, x: 980, y: 720 });
       await post(`/api/v1/spaces/${space.id}/edges`, { source: left.id, target: right.id, relation: 'related' });
+      // A direction that was followed and then set aside, with the reason.
+      const branch = await post(`/api/v1/spaces/${space.id}/branches`, { name: `${name}-갈래` });
+      await fetch(`/api/v1/notes/${left.id}/branch`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branchId: branch.id }),
+      });
+      await post(`/api/v1/branches/${branch.id}/resolve`, {
+        status: 'abandoned',
+        resolution: `${name}-포기한 이유`,
+      });
       return space.id as string;
     }, marker);
 
@@ -44,6 +55,7 @@ test.describe('exporting a space and importing it back', () => {
     // would read it as anyone's Markdown and this test would quietly weaken.
     expect(exported).toContain('Exported from umm at ');
     expect(exported).toContain('## Connections');
+    expect(exported).toContain('## Lines of thinking');
 
     // A different space, so nothing here can be the original showing through.
     const destination = await page.evaluate(async (name) => {
@@ -63,7 +75,7 @@ test.describe('exporting a space and importing it back', () => {
     await page.getByRole('button', { name: '내보내기' }).click();
     await page.getByRole('menuitem', { name: '마크다운 가져오기' }).click();
     await page.getByRole('textbox', { name: '가져올 내용' }).fill(exported);
-    // Two thoughts, not four: the banner and the two describing sections are
+    // Two thoughts, not five: the banner and the two describing sections are
     // umm writing about the space, not thoughts in it.
     await expect(page.getByText('2개의 생각을 가져옵니다.')).toBeVisible();
     await page.getByRole('button', { name: '가져오기', exact: true }).click();
@@ -121,5 +133,19 @@ test.describe('exporting a space and importing it back', () => {
     }, destination);
     expect(restored.edges[0].source).toBe(ids[`${marker}-왼쪽`]);
     expect(restored.edges[0].target).toBe(ids[`${marker}-오른쪽`]);
+
+    // And the line of thinking, with the thought that belonged to it and — the
+    // part people lose first — the reason it was set aside.
+    const revived = await page.evaluate(
+      async (id) => await (await fetch(`/api/v1/spaces/${id}/branches`)).json(),
+      destination,
+    );
+    expect(revived.branches).toHaveLength(1);
+    expect(revived.branches[0].name).toBe(`${marker}-갈래`);
+    expect(revived.branches[0].status).toBe('abandoned');
+    expect(revived.branches[0].resolution).toBe(`${marker}-포기한 이유`);
+    expect(revived.assignments[ids[`${marker}-왼쪽`]]).toBe(revived.branches[0].id);
+    // The thought that was never in the line must not be dragged into it.
+    expect(revived.assignments[ids[`${marker}-오른쪽`]]).toBeUndefined();
   });
 });

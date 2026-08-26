@@ -132,6 +132,7 @@ describe("reading umm's own export", () => {
         sourceId: 'bfe3a64a-dfc4-4f41-af41-b95afb511003',
         x: 0,
         y: 0,
+        line: '되돌리기 실험',
       },
       {
         title: '제목이 있는 생각',
@@ -332,5 +333,32 @@ describe('restoring a space rather than a list of sentences', () => {
     expect(splitMarkdownThoughts(ummExport).map((thought) => thought.content)).toEqual(
       readMarkdownDocument(ummExport).thoughts.map((thought) => thought.content),
     );
+  });
+});
+
+describe('the lines of thinking in an export', () => {
+  // The status and the reason are the half people lose first: a thought that
+  // was tried and set aside reads exactly like a current one once the label is
+  // gone.
+  it('reads each line with how it ended and why', () => {
+    expect(readMarkdownDocument(ummExport).lines).toEqual([
+      { name: '되돌리기 실험', status: 'adopted', resolution: '되돌아왔습니다' },
+    ]);
+  });
+
+  it('says which line each thought belonged to, and leaves the others alone', () => {
+    const { thoughts } = readMarkdownDocument(ummExport);
+    expect(thoughts.map((thought) => thought.line)).toEqual(['되돌리기 실험', undefined, undefined]);
+  });
+
+  // A line still being followed has no resolution to write, and reading one in
+  // would invent a reason nobody gave.
+  it('reads a line that has not ended yet', () => {
+    const open = ummExport.replace('- **되돌리기 실험** — adopted: 되돌아왔습니다', '- **아직 가는 중** — open');
+    expect(readMarkdownDocument(open).lines).toEqual([{ name: '아직 가는 중', status: 'open', resolution: '' }]);
+  });
+
+  it('carries no lines for a document that is not an export', () => {
+    expect(readMarkdownDocument('# One\n\n- **not a line** — open').lines).toEqual([]);
   });
 });
