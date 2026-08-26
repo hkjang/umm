@@ -373,6 +373,19 @@ describe('the lines of thinking in an export', () => {
     expect(readMarkdownDocument(asked).thoughts[0].kind).toBe('question');
   });
 
+  // Colour is a choice on a colour-coded canvas, not decoration.
+  it('says what colour each one was', () => {
+    const blue = ummExport.replace(
+      '- source: `user`\n- canvas: `0, 0`\n- line:',
+      '- source: `user`\n- color: `blue`\n- canvas: `0, 0`\n- line:',
+    );
+    const read = readMarkdownDocument(blue).thoughts;
+    expect(read[0].color).toBe('blue');
+    expect(read[1].color).toBeUndefined();
+    // And the colour line does not survive into the body.
+    expect(read[0].content).toBe('이어진 생각의 본문');
+  });
+
   it('carries no lines for a document that is not an export', () => {
     expect(readMarkdownDocument('# One\n\n- **not a line** — open').lines).toEqual([]);
   });

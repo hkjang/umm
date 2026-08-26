@@ -118,7 +118,7 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 		if title == "" {
 			title = "Thought"
 		}
-		fmt.Fprintf(&out, "## %s\n\n%s\n\n- id: `%s`\n- type: `%s`\n- source: `%s`\n- canvas: `%.0f, %.0f`\n", title, n.Content, n.ID, n.Kind, n.Source, n.X, n.Y)
+		fmt.Fprintf(&out, "## %s\n\n%s\n\n- id: `%s`\n- type: `%s`\n- source: `%s`\n- color: `%s`\n- canvas: `%.0f, %.0f`\n", title, n.Content, n.ID, n.Kind, n.Source, n.Color, n.X, n.Y)
 		if branch, ok := byID[assignments[n.ID]]; ok {
 			fmt.Fprintf(&out, "- line: `%s` (%s)\n", branch.Name, branch.Status)
 		}

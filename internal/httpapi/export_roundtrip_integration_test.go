@@ -124,7 +124,7 @@ func TestMarkdownExportKeepsTheShapeTheImporterReadsIntegration(t *testing.T) {
 	// carries a line of bookkeeping nobody wrote. Adding a key to the exporter
 	// has to be a deliberate act that updates the reader too, so this fails on
 	// an unknown key rather than letting it through.
-	known := map[string]bool{"id": true, "type": true, "source": true, "canvas": true, "line": true}
+	known := map[string]bool{"id": true, "type": true, "source": true, "color": true, "canvas": true, "line": true}
 	for key := range known {
 		if !strings.Contains(body, "- "+key+": `") {
 			t.Errorf("the export no longer writes %q; the importer strips exactly these keys", key)
