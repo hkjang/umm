@@ -390,3 +390,18 @@ describe('the lines of thinking in an export', () => {
     expect(readMarkdownDocument('# One\n\n- **not a line** — open').lines).toEqual([]);
   });
 });
+
+describe("telling umm's own file apart", () => {
+  it("says so for an export and not for anyone else's Markdown", () => {
+    expect(readMarkdownDocument(ummExport).isExport).toBe(true);
+    expect(readMarkdownDocument('# One\n\nbody\n\n## Two\n\nmore').isExport).toBe(false);
+  });
+
+  // The piece of a split export that does not carry the banner is not an
+  // export as far as the reader is concerned, which is exactly why splitting
+  // one is the wrong advice to give anybody.
+  it('does not claim a piece cut out of an export is one', () => {
+    const cut = ummExport.slice(ummExport.indexOf('## 제목이 있는 생각'));
+    expect(readMarkdownDocument(cut).isExport).toBe(false);
+  });
+});
