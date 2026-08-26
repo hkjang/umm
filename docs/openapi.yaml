@@ -1639,7 +1639,54 @@ paths:
       parameters:
         - { $ref: '#/components/parameters/Cursor' }
         - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 300, default: 100 } }
-      responses: { '200': { description: Audit events and opaque next cursor } }
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 300, default: 100 } }
+        - { in: query, name: actor, schema: { type: string }, description: Username, or "system" for entries with no actor }
+        - { in: query, name: action, schema: { type: string }, description: One of the actions the log holds }
+        - { in: query, name: resourceType, schema: { type: string } }
+        - { in: query, name: resourceId, schema: { type: string } }
+        - { in: query, name: from, schema: { type: string, format: date-time } }
+        - { in: query, name: to, schema: { type: string, format: date-time } }
+      responses: { '200': { description: Audit events, the actions in use, and an opaque next cursor } }
+  /admin/spaces:
+    get:
+      operationId: get_admin_spaces
+      tags: [Admin]
+      summary: List spaces with their owner, members and thought count
+      parameters:
+        - { $ref: '#/components/parameters/Cursor' }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { in: query, name: owner, schema: { type: string }, description: Restrict to one owner by username }
+        - { in: query, name: ownerInactive, schema: { type: boolean }, description: Only spaces owned by a deactivated account }
+      responses: { '200': { description: Spaces and opaque next cursor } }
+  /admin/spaces/{spaceId}/members:
+    get:
+      operationId: get_admin_space_members
+      tags: [Admin]
+      summary: Who can reach one space, and with what permission
+      parameters:
+        - { $ref: '#/components/parameters/SpaceID' }
+      responses: { '200': { description: The owner and every member } }
+  /admin/spaces/{spaceId}/owner:
+    put:
+      operationId: put_admin_space_owner
+      tags: [Admin]
+      summary: Hand a space to another active user
+      parameters:
+        - { $ref: '#/components/parameters/SpaceID' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties: { userId: { type: string, format: uuid } }
+      responses:
+        '200': { description: The new owner, and whether the previous one kept access }
+        '400': { description: An inbox, an inactive recipient, or already the owner }
+        '404': { description: No such space or user }
 components:
   securitySchemes:
     cookieAuth: { type: apiKey, in: cookie, name: umm_session }

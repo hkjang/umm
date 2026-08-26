@@ -120,8 +120,25 @@ const menu = [
   ['security', msg('키 · 권한'), IconShield],
   ['workflow', msg('검토 프로세스'), IconRoute],
   ['users', msg('사용자'), IconUsers],
+  ['spaces', msg('공간과 참여자'), IconUsers],
   ['audit', msg('감사 로그'), IconAdjustments],
 ] as const;
+interface AdminSpace {
+  id: string;
+  name: string;
+  isInbox: boolean;
+  owner: string;
+  ownerId: string;
+  ownerActive: boolean;
+  members: number;
+  notes: number;
+}
+interface SpaceMember {
+  id: string;
+  username: string;
+  active: boolean;
+  permission: string;
+}
 type AdminSection = (typeof menu)[number][0];
 const adminSections = new Set<AdminSection>(menu.map(([key]) => key));
 const maxTokenLimit = 256 * 1024;
@@ -145,6 +162,10 @@ export default function AdminPage() {
   const [auditCursor, setAuditCursor] = useState('');
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditActions, setAuditActions] = useState<string[]>([]);
+  const [spaces, setSpaces] = useState<AdminSpace[]>([]);
+  const [spacesOrphanOnly, setSpacesOrphanOnly] = useState(false);
+  const [spacesLoading, setSpacesLoading] = useState(false);
+  const [spaceMembers, setSpaceMembers] = useState<Record<string, SpaceMember[]>>({});
   const [auditFilter, setAuditFilter] = useState({ actor: '', action: '', resourceId: '' });
   const [keyStatus, setKeyStatus] = useState<Record<string, number | string>>({});
   const [evals, setEvals] = useState<EvalCase[]>([]);
@@ -236,6 +257,13 @@ export default function AdminPage() {
     contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     setMessage('');
     setError('');
+  }, [section]);
+  useEffect(() => {
+    // Fetched when the section is opened rather than with everything else: a
+    // list of every space is not worth loading for someone who came to change
+    // a setting.
+    if (section === 'spaces' && spaces.length === 0) void loadSpaces();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section]);
   useEffect(() => {
     if (dirtySections.length === 0) return;
@@ -388,6 +416,54 @@ export default function AdminPage() {
       setError(reason instanceof Error ? reason.message : t('감사 로그를 불러오지 못했습니다.'));
     } finally {
       setAuditLoading(false);
+    }
+  };
+  const loadSpaces = async (orphanOnly = spacesOrphanOnly) => {
+    setSpacesLoading(true);
+    setError('');
+    try {
+      const query = new URLSearchParams({ limit: '50' });
+      if (orphanOnly) query.set('ownerInactive', 'true');
+      const value = await api<{ spaces: AdminSpace[] }>(`/admin/spaces?${query}`);
+      setSpaces(value.spaces);
+      setSpaceMembers({});
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('공간 목록을 불러오지 못했습니다.'));
+    } finally {
+      setSpacesLoading(false);
+    }
+  };
+  const loadSpaceMembers = async (spaceId: string) => {
+    if (spaceMembers[spaceId]) return;
+    try {
+      const value = await api<{ members: SpaceMember[] }>(`/admin/spaces/${spaceId}/members`);
+      setSpaceMembers((all) => ({ ...all, [spaceId]: value.members }));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('공간 참여자를 불러오지 못했습니다.'));
+    }
+  };
+  const transferSpace = async (space: AdminSpace, userId: string) => {
+    const target = users.find((u) => u.id === userId);
+    if (!target) return;
+    if (
+      !window.confirm(
+        t('“{space}”의 소유자를 {user}(으)로 바꿉니다. 계속할까요?', { space: space.name, user: target.username }),
+      )
+    )
+      return;
+    try {
+      const result = await api<{ previousKeptAccess: boolean }>(
+        `/admin/spaces/${space.id}/owner`,
+        json('PUT', { userId }),
+      );
+      setMessage(
+        result.previousKeptAccess
+          ? t('소유자를 바꿨습니다. 이전 소유자는 관리 권한으로 남았습니다.')
+          : t('소유자를 바꿨습니다. 이전 소유자는 비활성이라 접근 권한을 남기지 않았습니다.'),
+      );
+      await loadSpaces();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('공간 소유자를 바꾸지 못했습니다.'));
     }
   };
   const loadMoreAudit = async () => {
@@ -1126,6 +1202,22 @@ export default function AdminPage() {
             </SettingCard>
           )}
           {section === 'users' && <Users users={users} update={updateUser} />}{' '}
+          {section === 'spaces' && (
+            <SpacesPanel
+              spaces={spaces}
+              loading={spacesLoading}
+              orphanOnly={spacesOrphanOnly}
+              members={spaceMembers}
+              users={users}
+              onOrphanOnly={(next) => {
+                setSpacesOrphanOnly(next);
+                void loadSpaces(next);
+              }}
+              onReload={() => void loadSpaces()}
+              onExpand={loadSpaceMembers}
+              onTransfer={transferSpace}
+            />
+          )}
           {section === 'audit' && (
             <AuditTable
               entries={audit}
@@ -2080,6 +2172,165 @@ function AuditTable({
             {t('이전 로그 더 불러오기')}
           </Button>
         </Group>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Spaces, and who can reach them.
+ *
+ * The reason this exists is the row with a struck-through owner: someone left,
+ * their account was deactivated, and everything they owned stayed theirs. The
+ * metrics screen counted those spaces and said nothing was wrong.
+ */
+function SpacesPanel({
+  spaces,
+  loading,
+  orphanOnly,
+  members,
+  users,
+  onOrphanOnly,
+  onReload,
+  onExpand,
+  onTransfer,
+}: {
+  spaces: AdminSpace[];
+  loading: boolean;
+  orphanOnly: boolean;
+  members: Record<string, SpaceMember[]>;
+  users: AdminUser[];
+  onOrphanOnly: (next: boolean) => void;
+  onReload: () => void;
+  onExpand: (spaceId: string) => Promise<void>;
+  onTransfer: (space: AdminSpace, userId: string) => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState('');
+  const [target, setTarget] = useState<Record<string, string>>({});
+  const active = users.filter((u) => u.active !== false);
+  return (
+    <Card radius="lg" withBorder p="xl">
+      <Group align="center" gap="sm" mb="lg" wrap="wrap">
+        <Switch
+          label={t('떠난 사람이 소유한 공간만')}
+          checked={orphanOnly}
+          onChange={(e) => onOrphanOnly(e.currentTarget.checked)}
+        />
+        <Button variant="light" loading={loading} onClick={onReload}>
+          {t('새로 고침')}
+        </Button>
+      </Group>
+      {spaces.length === 0 && !loading ? (
+        <Text c="dimmed">{orphanOnly ? t('떠난 사람이 소유한 공간이 없습니다.') : t('공간이 없습니다.')}</Text>
+      ) : (
+        <Table.ScrollContainer minWidth={820}>
+          <Table verticalSpacing="sm" striped>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t('공간')}</Table.Th>
+                <Table.Th>{t('소유자')}</Table.Th>
+                <Table.Th>{t('참여자')}</Table.Th>
+                <Table.Th>{t('생각')}</Table.Th>
+                <Table.Th>{t('소유자 넘기기')}</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {spaces.map((space) => (
+                <>
+                  <Table.Tr key={space.id}>
+                    <Table.Td>
+                      <Group gap="xs">
+                        <Text fw={600}>{space.name}</Text>
+                        {space.isInbox && (
+                          <Badge size="xs" variant="light" color="gray">
+                            {t('수집함')}
+                          </Badge>
+                        )}
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Group gap="xs">
+                        <Text>{space.owner}</Text>
+                        {!space.ownerActive && (
+                          <Badge size="xs" color="red" variant="light">
+                            {t('비활성')}
+                          </Badge>
+                        )}
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        onClick={() => {
+                          const next = open === space.id ? '' : space.id;
+                          setOpen(next);
+                          if (next) void onExpand(space.id);
+                        }}
+                      >
+                        {space.members}
+                      </Button>
+                    </Table.Td>
+                    <Table.Td>{space.notes}</Table.Td>
+                    <Table.Td>
+                      {space.isInbox ? (
+                        <Text size="xs" c="dimmed">
+                          {t('개인 공간')}
+                        </Text>
+                      ) : (
+                        <Group gap="xs" wrap="nowrap">
+                          <Select
+                            size="xs"
+                            placeholder={t('사람 고르기')}
+                            searchable
+                            w={170}
+                            data={active.map((u) => ({ value: u.id, label: u.username }))}
+                            value={target[space.id] || null}
+                            onChange={(v) => setTarget((all) => ({ ...all, [space.id]: v || '' }))}
+                          />
+                          <Button
+                            size="xs"
+                            disabled={!target[space.id]}
+                            onClick={() => void onTransfer(space, target[space.id])}
+                          >
+                            {t('넘기기')}
+                          </Button>
+                        </Group>
+                      )}
+                    </Table.Td>
+                  </Table.Tr>
+                  {open === space.id && (
+                    <Table.Tr key={space.id + '-members'}>
+                      <Table.Td colSpan={5}>
+                        <Stack gap={4} pl="md">
+                          {(members[space.id] || []).map((member) => (
+                            <Group key={member.id} gap="xs">
+                              <Text size="sm">{member.username}</Text>
+                              <Badge size="xs" variant="light">
+                                {member.permission}
+                              </Badge>
+                              {!member.active && (
+                                <Badge size="xs" color="red" variant="light">
+                                  {t('비활성')}
+                                </Badge>
+                              )}
+                            </Group>
+                          ))}
+                          {!members[space.id] && (
+                            <Text size="sm" c="dimmed">
+                              {t('불러오는 중…')}
+                            </Text>
+                          )}
+                        </Stack>
+                      </Table.Td>
+                    </Table.Tr>
+                  )}
+                </>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
       )}
     </Card>
   );
