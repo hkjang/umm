@@ -54,4 +54,26 @@ test.describe('logged-in devices', () => {
     expect(await page.evaluate(async () => (await fetch('/api/v1/me')).status)).toBe(200);
     await other.close();
   });
+
+  // Not knowing and knowing there is nobody are different answers.
+  //
+  // A failed load was shown as an empty list, and an empty list on this screen
+  // reads as "no one else is signed in" — asked quietly, so nothing said
+  // otherwise. Someone checking whether anybody else has their account would
+  // have been told no.
+  test('says it could not look rather than that nobody is there', async ({ page }) => {
+    await signIn(page);
+    await page.route('**/api/v1/sessions', (route) =>
+      route.request().method() === 'GET' ? route.fulfill({ status: 500, json: { detail: 'nope' } }) : route.continue(),
+    );
+    await page.goto('/settings');
+    await expect(page.getByRole('heading', { name: '로그인한 기기' })).toBeVisible();
+
+    await expect(
+      page.getByText('로그인한 기기를 불러오지 못했습니다. 다른 기기가 있는지 확인할 수 없습니다.'),
+    ).toBeVisible();
+    await expect(page.getByText('로그인 기기가 이 브라우저뿐입니다.')).toHaveCount(0);
+    // And it does not offer to end logins it could not see.
+    await expect(page.getByRole('button', { name: '다른 기기 모두 로그아웃' })).toBeDisabled();
+  });
 });

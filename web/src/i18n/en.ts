@@ -506,6 +506,8 @@ export const en: Dictionary = {
   '다른 기기의 로그인을 모두 종료할까요?': 'End every other sign-in?',
   '{count}개의 다른 로그인을 종료했습니다.': 'Ended {count} other sign-ins.',
   '로그인 기기가 이 브라우저뿐입니다.': 'This browser is your only sign-in.',
+  '로그인한 기기를 불러오지 못했습니다. 다른 기기가 있는지 확인할 수 없습니다.':
+    'Could not load your signed-in devices, so whether any others are signed in is unknown.',
   '알 수 없는 기기': 'Unknown device',
 
   // Administration ----------------------------------------------------------

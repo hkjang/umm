@@ -1,4 +1,4 @@
-import { Badge, Button, Card, Divider, Group, Paper, Stack, Text, Title } from '@mantine/core';
+import { Alert, Badge, Button, Card, Divider, Group, Paper, Stack, Text, Title } from '@mantine/core';
 import { IconDeviceLaptop, IconLogout } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { api } from '../api';
@@ -54,11 +54,27 @@ export default function SessionsCard() {
   const { t, formatDate } = useTranslation();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [busy, setBusy] = useState('');
+  /*
+   * A failed load used to be shown as an empty list, and an empty list here
+   * reads as "no one else is signed in" — on the one screen someone opens to
+   * find out whether anybody else is. It asked quietly, too, so nothing said
+   * otherwise.
+   *
+   * Not knowing and knowing there is nobody are different answers, and only one
+   * of them is reassuring.
+   */
+  const [failed, setFailed] = useState(false);
 
   const load = () =>
     api<{ sessions: Session[] }>('/sessions', { silent: true })
-      .then((value) => setSessions(value.sessions))
-      .catch(() => setSessions([]));
+      .then((value) => {
+        setSessions(value.sessions);
+        setFailed(false);
+      })
+      .catch(() => {
+        setSessions([]);
+        setFailed(true);
+      });
 
   useEffect(() => {
     void load();
@@ -112,7 +128,7 @@ export default function SessionsCard() {
           variant="light"
           color="red"
           leftSection={<IconLogout size={17} />}
-          disabled={others.length === 0}
+          disabled={failed || others.length === 0}
           loading={busy === 'others'}
           onClick={() => void revokeOthers()}
         >
@@ -120,7 +136,16 @@ export default function SessionsCard() {
         </Button>
       </Group>
       <Divider my="lg" />
-      {sessions.length <= 1 ? (
+      {failed ? (
+        <Alert color="red">
+          <Group justify="space-between" align="center" wrap="nowrap">
+            <Text size="sm">{t('로그인한 기기를 불러오지 못했습니다. 다른 기기가 있는지 확인할 수 없습니다.')}</Text>
+            <Button size="xs" variant="light" onClick={() => void load()}>
+              {t('다시 시도')}
+            </Button>
+          </Group>
+        </Alert>
+      ) : sessions.length <= 1 ? (
         <Text c="dimmed">{t('로그인 기기가 이 브라우저뿐입니다.')}</Text>
       ) : (
         <Stack gap="sm">
