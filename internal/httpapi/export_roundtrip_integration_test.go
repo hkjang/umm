@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -116,9 +117,24 @@ func TestMarkdownExportKeepsTheShapeTheImporterReadsIntegration(t *testing.T) {
 	}
 
 	// The metadata keys the importer strips off each thought.
-	for _, key := range []string{"- id: `", "- type: `", "- source: `", "- canvas: `", "- line: `"} {
-		if !strings.Contains(body, key) {
+	//
+	// Both directions matter, and the second is the one that bites. The importer
+	// strips a fixed list of keys, so a key added here that it does not know
+	// about is not stripped — it stays in the body, and every restored thought
+	// carries a line of bookkeeping nobody wrote. Adding a key to the exporter
+	// has to be a deliberate act that updates the reader too, so this fails on
+	// an unknown key rather than letting it through.
+	known := map[string]bool{"id": true, "type": true, "source": true, "canvas": true, "line": true}
+	for key := range known {
+		if !strings.Contains(body, "- "+key+": `") {
 			t.Errorf("the export no longer writes %q; the importer strips exactly these keys", key)
+		}
+	}
+	metadataKey := regexp.MustCompile("(?m)^-\\s+([a-zA-Z]+):\\s+`")
+	for _, match := range metadataKey.FindAllStringSubmatch(body, -1) {
+		if !known[match[1]] {
+			t.Errorf("the export writes %q, which web/src/lib/markdown-import.ts does not strip; "+
+				"a restored thought would carry it in its body", match[1])
 		}
 	}
 	// The sections the importer skips rather than importing as thoughts.

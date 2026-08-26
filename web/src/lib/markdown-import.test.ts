@@ -133,6 +133,7 @@ describe("reading umm's own export", () => {
         x: 0,
         y: 0,
         line: '되돌리기 실험',
+        kind: 'thought',
       },
       {
         title: '제목이 있는 생각',
@@ -140,6 +141,7 @@ describe("reading umm's own export", () => {
         sourceId: 'f2543505-ca63-49a0-ba05-bd9d1cd37f13',
         x: 0,
         y: 0,
+        kind: 'thought',
       },
       {
         title: '',
@@ -147,6 +149,7 @@ describe("reading umm's own export", () => {
         sourceId: '87e9d59d-a13c-4efb-a252-7ff79ed99993',
         x: 0,
         y: 0,
+        kind: 'thought',
       },
     ]);
   });
@@ -356,6 +359,18 @@ describe('the lines of thinking in an export', () => {
   it('reads a line that has not ended yet', () => {
     const open = ummExport.replace('- **되돌리기 실험** — adopted: 되돌아왔습니다', '- **아직 가는 중** — open');
     expect(readMarkdownDocument(open).lines).toEqual([{ name: '아직 가는 중', status: 'open', resolution: '' }]);
+  });
+
+  // The export has always written the kind and the importer has always thrown
+  // it away, so every restored question came back a plain thought.
+  it('says what sort of thought each one was', () => {
+    expect(readMarkdownDocument(ummExport).thoughts.map((thought) => thought.kind)).toEqual([
+      'thought',
+      'thought',
+      'thought',
+    ]);
+    const asked = ummExport.replace('- type: `thought`', '- type: `question`');
+    expect(readMarkdownDocument(asked).thoughts[0].kind).toBe('question');
   });
 
   it('carries no lines for a document that is not an export', () => {

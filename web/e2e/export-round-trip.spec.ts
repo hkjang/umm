@@ -31,7 +31,13 @@ test.describe('exporting a space and importing it back', () => {
         ).json();
       const space = await post('/api/v1/spaces', { name });
       const left = await post(`/api/v1/spaces/${space.id}/notes`, { content: `${name}-왼쪽`, x: 40, y: 60 });
-      const right = await post(`/api/v1/spaces/${space.id}/notes`, { content: `${name}-오른쪽`, x: 980, y: 720 });
+      // Not a plain thought: a question is kept apart on purpose.
+      const right = await post(`/api/v1/spaces/${space.id}/notes`, {
+        content: `${name}-오른쪽`,
+        x: 980,
+        y: 720,
+        kind: 'question',
+      });
       await post(`/api/v1/spaces/${space.id}/edges`, { source: left.id, target: right.id, relation: 'related' });
       // A direction that was followed and then set aside, with the reason.
       const branch = await post(`/api/v1/spaces/${space.id}/branches`, { name: `${name}-갈래` });
@@ -124,13 +130,18 @@ test.describe('exporting a space and importing it back', () => {
 
     // And the connection, pointing the same way, between the restored copies.
     expect(restored.edges).toHaveLength(1);
-    const ids = await page.evaluate(async (id) => {
+    const byContent = await page.evaluate(async (id) => {
       const result = await (await fetch(`/api/v1/spaces/${id}/notes`)).json();
-      return Object.fromEntries(result.notes.map((n: { id: string; content: string }) => [n.content, n.id])) as Record<
-        string,
-        string
-      >;
+      return Object.fromEntries(
+        result.notes.map((n: { id: string; content: string; kind: string }) => [n.content, { id: n.id, kind: n.kind }]),
+      ) as Record<string, { id: string; kind: string }>;
     }, destination);
+    const ids = Object.fromEntries(Object.entries(byContent).map(([content, n]) => [content, n.id]));
+
+    // A question comes back a question. The distinction is the whole reason it
+    // was marked one.
+    expect(byContent[`${marker}-오른쪽`].kind).toBe('question');
+    expect(byContent[`${marker}-왼쪽`].kind).toBe('thought');
     expect(restored.edges[0].source).toBe(ids[`${marker}-왼쪽`]);
     expect(restored.edges[0].target).toBe(ids[`${marker}-오른쪽`]);
 

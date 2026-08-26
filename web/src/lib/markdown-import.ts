@@ -12,6 +12,8 @@ export interface ImportedThought {
   y?: number;
   /** The name of the line of thinking this thought belonged to. */
   line?: string;
+  /** What sort of thought it was: a question stays a question. */
+  kind?: string;
 }
 
 /**
@@ -82,6 +84,8 @@ const exportSections = new Set(['Connections', 'Lines of thinking']);
 const exportedID = /^-\s+id:\s+`([^`]+)`/m;
 /** `- canvas: `x, y`` under a thought: where it sat on the canvas. */
 const exportedCanvas = /^-\s+canvas:\s+`\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*`/m;
+/** `- type: `question`` under a thought: a question is not a plain thought. */
+const exportedKind = /^-\s+type:\s+`([^`]+)`/m;
 /** `- line: `name` (status)` under a thought: the line it belonged to. */
 const exportedLineLabel = /^-\s+line:\s+`([^`]+)`/m;
 /** A line of the Lines of thinking section: `- **name** — status: why`. */
@@ -212,9 +216,11 @@ export function readMarkdownDocument(source: string): ImportedDocument {
       const id = exportedID.exec(content)?.[1];
       const canvas = exportedCanvas.exec(content);
       const line = exportedLineLabel.exec(content)?.[1];
+      const kind = exportedKind.exec(content)?.[1];
       if (id) carried = { sourceId: id };
       if (canvas) carried = { ...carried, x: Number(canvas[1]), y: Number(canvas[2]) };
       if (line) carried = { ...carried, line };
+      if (kind) carried = { ...carried, kind };
       content = withoutExportMetadata(content);
       // A thought that had no title gets one from the exporter; giving it back
       // would name every restored thought "Thought".
