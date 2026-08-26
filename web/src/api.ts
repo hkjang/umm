@@ -35,6 +35,8 @@ export interface Space {
   aiExcluded: boolean;
   /** Where unfiled captures land. An ordinary space in every other respect. */
   isInbox: boolean;
+  /** What the person asking may do here. Absent from older servers. */
+  permission?: 'manage' | 'edit' | 'view';
 }
 
 /** What a thought is. The server rejects anything outside this. */
