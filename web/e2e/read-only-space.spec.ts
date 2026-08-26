@@ -338,4 +338,69 @@ test.describe('read-only space', () => {
     );
     expect(left).toBe(1);
   });
+
+  // Everything above found one control at a time: the capture bar, the note
+  // menu, connections, the comment menu, the lines panel, the arrangements, the
+  // Delete key. Each was found by someone thinking of it.
+  //
+  // This one does not need to be thought of. It watches the wire: a reader
+  // opening menus and panels and pressing keys must not cause a single write.
+  // A control added tomorrow that saves something fails here without anyone
+  // remembering to check it.
+  //
+  // Writing a comment is deliberately not exercised — it is the one thing a
+  // reader may do, and it has its own test.
+  test('browsing a read-only space sends no writes at all', async ({ page }) => {
+    await signIn(page);
+
+    // Say yes to anything it asks. A confirmation that is dismissed would stop
+    // an unguarded action before it wrote, and the watch would see nothing —
+    // the test has to follow through to catch anything.
+    page.on('dialog', (dialog) => void dialog.accept());
+
+    const writes: string[] = [];
+    await page.route('**/api/v1/**', async (route) => {
+      const request = route.request();
+      const method = request.method();
+      const path = new URL(request.url()).pathname;
+      // Preferences and locale are the person's own, not the space's.
+      const personal = /\/(preferences|me|auth|sessions|dreams)\b/.test(path);
+      if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && !personal) {
+        writes.push(`${method} ${path}`);
+      }
+      await route.continue();
+    });
+
+    const spaceId = await openSpaceWithPermission(page, 'view');
+    await expect(page.getByText('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')).toBeVisible();
+    // The space and its thought were created before the watch mattered; only
+    // what browsing does from here counts.
+    writes.length = 0;
+
+    // The keys first, while the canvas is still clear: an open side panel
+    // covers the pane and the click cannot land.
+    await page.locator('.react-flow__pane').click({ position: { x: 12, y: 12 } });
+    await page.keyboard.press('Control+a');
+    await expect(page.locator('.react-flow__node.selected')).toHaveCount(1);
+    await page.keyboard.press('Delete');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+Shift+z');
+    await page.waitForTimeout(400);
+    // Checked here as well as at the end: an unguarded Delete removes the card,
+    // and every later step then fails on a missing element instead of saying
+    // what actually went wrong.
+    expect(writes, `a reader's keys wrote to the space: ${writes.join(', ')}`).toEqual([]);
+
+    // Then look at everything a reader can open.
+    const menu = await openNoteMenu(page);
+    await menu.getByRole('menuitem', { name: '연결과 갈래' }).click();
+    await expect(page.getByText('생각의 갈래')).toBeVisible();
+    const again = await openNoteMenu(page);
+    await again.getByRole('menuitem', { name: '댓글과 멘션' }).click();
+    await expect(page.getByRole('textbox', { name: '댓글' })).toBeVisible();
+    await page.waitForTimeout(700);
+
+    expect(writes, `a reader's browsing wrote to the space: ${writes.join(', ')}`).toEqual([]);
+    void spaceId;
+  });
 });
