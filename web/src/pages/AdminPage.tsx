@@ -134,6 +134,25 @@ interface AdminSpace {
   members: number;
   notes: number;
 }
+interface BandOutcome {
+  relatedBand: number;
+  clusterBand: number;
+  withoutRelated: number;
+  medianRelated: number;
+  mostRelated: number;
+  clusters: number;
+  grouped: number;
+  largestCluster: number;
+  ungrouped: number;
+}
+interface BandPreview {
+  spaces: number;
+  notes: number;
+  embedded: number;
+  semantic: boolean;
+  current: BandOutcome;
+  proposed: BandOutcome;
+}
 interface AdminWebhook {
   id: string;
   name: string;
@@ -183,6 +202,9 @@ export default function AdminPage() {
   const [adminWebhooks, setAdminWebhooks] = useState<AdminWebhook[]>([]);
   const [webhooksFailingOnly, setWebhooksFailingOnly] = useState(false);
   const [adminWebhooksLoading, setAdminWebhooksLoading] = useState(false);
+  const [bandPreview, setBandPreview] = useState<BandPreview | null>(null);
+  const [bandPreviewLoading, setBandPreviewLoading] = useState(false);
+  const [bandPreviewError, setBandPreviewError] = useState('');
   const [auditFilter, setAuditFilter] = useState({ actor: '', action: '', resourceId: '' });
   const [keyStatus, setKeyStatus] = useState<Record<string, number | string>>({});
   const [evals, setEvals] = useState<EvalCase[]>([]);
@@ -482,6 +504,23 @@ export default function AdminPage() {
       await loadSpaces();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t('공간 소유자를 바꾸지 못했습니다.'));
+    }
+  };
+  const previewBands = async (related: unknown, cluster: unknown) => {
+    setBandPreviewLoading(true);
+    setBandPreviewError('');
+    try {
+      const query = new URLSearchParams();
+      if (typeof related === 'number') query.set('related_band', String(related));
+      if (typeof cluster === 'number') query.set('cluster_band', String(cluster));
+      setBandPreview(await api<BandPreview>(`/admin/intelligence/preview?${query.toString()}`));
+    } catch (reason) {
+      // The panel says nothing rather than showing the last answer beside new
+      // numbers it does not describe.
+      setBandPreview(null);
+      setBandPreviewError(reason instanceof Error ? reason.message : t('지금 데이터로 미리 보지 못했습니다.'));
+    } finally {
+      setBandPreviewLoading(false);
     }
   };
   const loadAdminWebhooks = async (failingOnly = webhooksFailingOnly) => {
@@ -1016,6 +1055,15 @@ export default function AdminPage() {
                   onChange={(v) => update('intelligence', 'strong_band', v)}
                 />
               </SimpleGrid>
+
+              <BandPreviewCard
+                preview={bandPreview}
+                loading={bandPreviewLoading}
+                error={bandPreviewError}
+                onPreview={() =>
+                  void previewBands(settings.intelligence?.related_band, settings.intelligence?.cluster_band)
+                }
+              />
 
               <Divider label={t('자동 연결')} labelPosition="left" mt="md" />
               <Switch
@@ -2502,6 +2550,117 @@ function WebhookHealthPanel({
             </Table.Tbody>
           </Table>
         </Table.ScrollContainer>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * What the two bands above would do to the thoughts already here.
+ *
+ * A band is standard deviations above the mean of a space's own scores, so what
+ * a given number does depends entirely on the corpus. The only way to find out
+ * used to be to save it and go and look — by which time every canvas in the
+ * installation had already changed, and the person who changed it found out
+ * last.
+ */
+function BandPreviewCard({
+  preview,
+  loading,
+  error,
+  onPreview,
+}: {
+  preview: BandPreview | null;
+  loading: boolean;
+  error: string;
+  onPreview: () => void;
+}) {
+  const { t } = useTranslation();
+  const row = (label: string, current: number, proposed: number, lowerIsBetter = false) => {
+    const moved = proposed !== current;
+    const worse = lowerIsBetter ? proposed > current : proposed < current;
+    return (
+      <Table.Tr key={label}>
+        <Table.Td>{label}</Table.Td>
+        <Table.Td>{current}</Table.Td>
+        <Table.Td c={!moved ? undefined : worse ? 'red' : 'teal'} fw={moved ? 600 : undefined}>
+          {proposed}
+          {moved && ` (${proposed > current ? '+' : ''}${proposed - current})`}
+        </Table.Td>
+      </Table.Tr>
+    );
+  };
+  return (
+    <Card radius="md" withBorder p="md" mt="md">
+      <Group justify="space-between" align="center" wrap="wrap" gap="sm">
+        <Text fw={600}>{t('지금 데이터로 미리 보기')}</Text>
+        <Button variant="light" loading={loading} onClick={onPreview}>
+          {t('지금 값으로 재보기')}
+        </Button>
+      </Group>
+      <Text size="sm" c="dimmed" mt={4}>
+        {t('저장하지 않고 위 두 기준이 지금 있는 생각에 무엇을 할지 재봅니다.')}
+      </Text>
+      {error && (
+        <Alert color="red" variant="light" mt="sm">
+          {error}
+        </Alert>
+      )}
+      {preview && (
+        <>
+          <Text size="sm" c="dimmed" mt="sm">
+            {t('가장 큰 공간 {spaces}개 · 생각 {notes}개 중 임베딩된 {embedded}개로 재봤습니다.', {
+              spaces: preview.spaces,
+              notes: preview.notes,
+              embedded: preview.embedded,
+            })}
+          </Text>
+          {/* Without a semantic backend the canvas groups by position, so the
+              cluster band changes nothing at all. Showing its numbers anyway
+              would describe arithmetic nobody will see. */}
+          {!preview.semantic && (
+            <Alert color="yellow" variant="light" mt="sm">
+              {t(
+                '지금 임베딩은 의미 비교에 적합하지 않다고 판정돼 있습니다. 캔버스는 위치로 묶으므로 군집 기준은 아무 일도 하지 않습니다.',
+              )}
+            </Alert>
+          )}
+          {preview.embedded === 0 ? (
+            <Alert color="yellow" variant="light" mt="sm">
+              {t('임베딩된 생각이 없어 두 기준 모두 아직 아무것도 판정하지 않습니다.')}
+            </Alert>
+          ) : (
+            <Table.ScrollContainer minWidth={520}>
+              <Table verticalSpacing="xs" mt="sm">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th />
+                    <Table.Th>
+                      {t('지금')} ({preview.current.relatedBand} / {preview.current.clusterBand})
+                    </Table.Th>
+                    <Table.Th>
+                      {t('바꾸면')} ({preview.proposed.relatedBand} / {preview.proposed.clusterBand})
+                    </Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {row(
+                    t('연관 생각이 하나도 없는 카드'),
+                    preview.current.withoutRelated,
+                    preview.proposed.withoutRelated,
+                    true,
+                  )}
+                  {row(t('카드당 연관 생각 (중앙값)'), preview.current.medianRelated, preview.proposed.medianRelated)}
+                  {row(t('가장 많은 카드'), preview.current.mostRelated, preview.proposed.mostRelated)}
+                  {row(t('묶음 수'), preview.current.clusters, preview.proposed.clusters)}
+                  {row(t('묶인 생각'), preview.current.grouped, preview.proposed.grouped)}
+                  {row(t('가장 큰 묶음'), preview.current.largestCluster, preview.proposed.largestCluster)}
+                  {row(t('혼자 남는 생각'), preview.current.ungrouped, preview.proposed.ungrouped, true)}
+                </Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          )}
+        </>
       )}
     </Card>
   );
