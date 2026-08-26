@@ -38,6 +38,15 @@ async function openSpaceWithPermission(page: import('@playwright/test').Page, pe
     if (route.request().method() !== 'GET') return route.continue();
     const response = await route.fetch();
     const body = await response.json();
+    // Held back on purpose, so the permission always lands after the notes.
+    //
+    // That is the order that broke: the cards were built while the answer was
+    // unknown — and therefore editable — and nothing rebuilt them when it
+    // arrived. Which request wins is otherwise down to the machine, so this
+    // failed on CI perhaps one run in ten and passed everywhere else, which is
+    // indistinguishable from a flake until you make the order the test's own
+    // decision rather than the network's.
+    await new Promise((resolve) => setTimeout(resolve, 400));
     await route.fulfill({
       json: {
         spaces: (body.spaces ?? []).map((s: { id: string }) => (s.id === spaceId ? { ...s, permission } : s)),

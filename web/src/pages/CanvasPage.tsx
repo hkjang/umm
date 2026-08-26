@@ -878,6 +878,12 @@ function CanvasInner() {
     summarised,
     lens,
     setAsideLines,
+    // Whether the space can be written to arrives with the space list, which is
+    // a separate request from the notes. Leaving it out meant the cards were
+    // built once, while the answer was still unknown and every card therefore
+    // editable, and never rebuilt when it landed: the canvas said "read-only"
+    // in the notice and offered a working editor underneath it.
+    readOnly,
   ]);
   useEffect(() => {
     /*
