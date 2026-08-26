@@ -76,4 +76,40 @@ test.describe('검토 · 승인', () => {
     // rendering fault; saying it plainly is the honest option.
     await expect(page.getByText('이름을 확인할 수 없는 대상')).toBeVisible();
   });
+
+  // A team lead sees their own requests here on purpose — they asked for
+  // something and want to watch it. The buttons were on those too, and the
+  // server refuses: a lead cannot review their own request, or another team's.
+  //
+  // Being offered the approval of your own request is the worst place for a
+  // button that fails.
+  test('does not offer a team lead the approval of their own request', async ({ page }) => {
+    await signIn(page);
+    const lead = '00000000-0000-4000-8000-0000000000f1';
+    const team = '00000000-0000-4000-8000-0000000000f2';
+    await page.route('**/api/v1/me', async (route) => {
+      const response = await route.fetch();
+      const me = await response.json();
+      await route.fulfill({ json: { ...me, id: lead, role: 'team_lead', teamId: team } });
+    });
+    await page.route('**/api/v1/approvals', (route) =>
+      route.fulfill({
+        json: {
+          requests: [
+            { ...requests.requests[0], id: 'a1', requesterId: lead, teamId: team, requesterName: '나' },
+            { ...requests.requests[0], id: 'a2', requesterId: 'someone-else', teamId: team, requesterName: '팀원' },
+            { ...requests.requests[0], id: 'a3', requesterId: 'other', teamId: 'other-team', requesterName: '남의 팀' },
+          ],
+        },
+      }),
+    );
+    await page.goto('/approvals');
+
+    // Three requests are listed; only the teammate's may be decided.
+    await expect(page.getByText('팀원')).toBeVisible();
+    await expect(page.getByText('나', { exact: true })).toBeVisible();
+    await expect(page.getByText('남의 팀')).toBeVisible();
+    await expect(page.getByRole('button', { name: '승인' })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: '반려' })).toHaveCount(1);
+  });
 });

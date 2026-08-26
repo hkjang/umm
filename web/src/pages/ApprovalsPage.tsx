@@ -7,6 +7,8 @@ import { useTranslation } from '../i18n';
 
 interface Request {
   id: string;
+  requesterId: string;
+  teamId?: string;
   requesterName: string;
   resourceType: string;
   resourceName: string;
@@ -42,6 +44,24 @@ function statusLabel(status: string, t: (key: string) => string): string {
 
 export default function ApprovalsPage() {
   const { user } = useAuth();
+  /*
+   * Whether this person may actually decide this request.
+   *
+   * A team lead sees their own requests on this page — the listing includes
+   * them on purpose, so they can watch what they asked for. The buttons were
+   * shown on those too, and the server refuses: a lead cannot review their own
+   * request, or another team's. Being offered the approval of your own request
+   * is the worst possible place for a button that fails.
+   *
+   * The same rule as the server, not a looser one: any difference here shows up
+   * as a refusal someone has to interpret.
+   */
+  const canDecide = (req: Request) => {
+    if (req.status !== 'pending') return false;
+    if (user?.role === 'admin') return true;
+    if (user?.role !== 'team_lead') return false;
+    return req.requesterId !== user.id && !!req.teamId && req.teamId === user.teamId;
+  };
   const { t, formatDate } = useTranslation();
   const [requests, setRequests] = useState<Request[]>([]);
   const [comments, setComments] = useState<Record<string, string>>({});
@@ -97,7 +117,7 @@ export default function ApprovalsPage() {
                     {formatDate(req.createdAt)}
                   </Text>
                 </div>
-                {req.status === 'pending' && (user?.role === 'admin' || user?.role === 'team_lead') && (
+                {canDecide(req) && (
                   <Stack>
                     <TextInput
                       size="sm"
