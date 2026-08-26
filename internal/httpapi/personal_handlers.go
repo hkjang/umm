@@ -275,8 +275,18 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
+	// Revoking and forgetting are the same verb from the outside, because from
+	// the outside they are one intention: be rid of this key. The first press
+	// stops it working; a key that is already revoked no longer needs stopping,
+	// so the second removes the row. A key that still works can never be
+	// removed by one action, which is the part worth protecting.
 	if err := s.Auth.RevokeKey(r.Context(), p.User.ID, id); err != nil {
-		writeError(w, 404, "키를 찾을 수 없습니다.")
+		if err := s.Auth.ForgetRevokedKey(r.Context(), p.User.ID, id); err != nil {
+			writeError(w, 404, "키를 찾을 수 없습니다.")
+			return
+		}
+		s.Store.Audit(r.Context(), &p.User.ID, "api_key.forget", "api_key", id.String(), map[string]any{})
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "api_key.revoke", "api_key", id.String(), map[string]any{})

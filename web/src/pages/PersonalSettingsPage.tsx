@@ -37,6 +37,7 @@ import { api, json, type EdgeStyle, type Preferences } from '../api';
 import { useAuth } from '../auth-context';
 import SessionsCard from '../components/SessionsCard';
 import { useTranslation } from '../i18n';
+import { showError } from '../ui-notifications';
 import { writeLocalStorage } from '../lib/browser-storage';
 
 interface APIKey {
@@ -169,8 +170,11 @@ export default function PersonalSettingsPage() {
       /* 화면 알림에서 안내합니다. */
     }
   };
-  const revoke = async (id: string) => {
-    if (!window.confirm(t('이 키를 즉시 폐기할까요? 이 작업은 되돌릴 수 없습니다.'))) return;
+  const revoke = async (id: string, alreadyRevoked = false) => {
+    const question = alreadyRevoked
+      ? t('이미 폐기된 키입니다. 목록에서 지울까요?')
+      : t('이 키를 즉시 폐기할까요? 이 작업은 되돌릴 수 없습니다.');
+    if (!window.confirm(question)) return;
     try {
       await api(`/api-keys/${id}`, { method: 'DELETE' });
       await load();
@@ -180,7 +184,15 @@ export default function PersonalSettingsPage() {
   };
   const changeScope = async (key: APIKey, scope: string, checked: boolean) => {
     const next = checked ? [...key.scopes, scope] : key.scopes.filter((v) => v !== scope);
-    if (next.length === 0) return;
+    if (next.length === 0) {
+      // It used to return here and leave the box springing back with no reason
+      // given, which looks like the setting refusing to save.
+      showError(
+        t('키에는 권한이 하나 이상 있어야 합니다. 이 키를 쓰지 않으려면 폐기해 주세요.'),
+        t('권한을 바꾸지 못했습니다'),
+      );
+      return;
+    }
     try {
       await api(`/api-keys/${key.id}`, json('PUT', { scopes: next }));
       setKeys((all) => all.map((v) => (v.id === key.id ? { ...v, scopes: next } : v)));
@@ -477,10 +489,15 @@ export default function PersonalSettingsPage() {
                         variant="subtle"
                         color="red"
                         leftSection={<IconTrash size={15} />}
-                        disabled={key.status === 'revoked'}
-                        onClick={() => void revoke(key.id)}
+                        onClick={() => void revoke(key.id, key.status === 'revoked')}
                       >
-                        {t('폐기')}
+                        {/* A revoked key used to leave this disabled, so the row
+                            stayed on the screen for good with nothing left to do
+                            to it — which reads as deletion not working. Revoking
+                            and removing stay two presses: the first stops the
+                            key, and only a key that is already stopped can be
+                            taken off the list. */}
+                        {t(key.status === 'revoked' ? '목록에서 지우기' : '폐기')}
                       </Button>
                     </Group>
                   </Group>
