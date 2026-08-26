@@ -342,12 +342,25 @@ export default function DreamsPage() {
         />
         {error && (
           <Alert color="red" title={t('Dream을 불러오지 못했습니다.')}>
-            {error}
+            <Group justify="space-between" align="center" wrap="nowrap">
+              <Text size="sm">{error}</Text>
+              <Button size="xs" variant="light" color="red" onClick={() => void load()}>
+                {t('다시 시도')}
+              </Button>
+            </Group>
           </Alert>
         )}
+        {/*
+         * The "nothing here yet" card is only true when the answer arrived.
+         *
+         * A failed load emptied the list as well as raising the alert, so the
+         * page said "couldn't load" and, right under it, "you have no Dreams —
+         * keep adding thoughts and they will arrive". The second is friendlier,
+         * larger, and wrong, and it is the one a person believes.
+         */}
         {!dreams ? (
           <Loader />
-        ) : visible.length === 0 ? (
+        ) : visible.length === 0 && !error ? (
           <Stack>
             <Card p={45} radius="lg" withBorder ta="center">
               <IconMoonStars size={38} color="#8c7a9f" />

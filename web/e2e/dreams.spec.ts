@@ -111,4 +111,20 @@ test.describe('Dreams', () => {
     expect(headings).toHaveLength(2);
     expect(new Set(headings).size).toBe(2);
   });
+
+  // "You have no Dreams yet" is only true when the answer arrived.
+  //
+  // A failed load emptied the list as well as raising the alert, so the page
+  // said it could not load and, right below, that there was nothing to review —
+  // keep adding thoughts and they will arrive. The second is friendlier, bigger
+  // and wrong, and it is the one a person believes.
+  test('does not say there are no Dreams when it could not look', async ({ page }) => {
+    await signIn(page);
+    await page.route('**/api/v1/dreams?**', (route) => route.fulfill({ status: 500, json: { detail: 'nope' } }));
+    await page.goto('/dreams');
+
+    await expect(page.getByText('Dream을 불러오지 못했습니다.')).toBeVisible();
+    await expect(page.getByText('검토할 Dream이 없어요')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '다시 시도' })).toBeVisible();
+  });
 });
