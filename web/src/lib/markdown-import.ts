@@ -10,6 +10,22 @@ export interface ImportedThought {
   sourceId?: string;
   x?: number;
   y?: number;
+  /** The name of the line of thinking this thought belonged to. */
+  line?: string;
+}
+
+/**
+ * A line of thinking: a direction someone followed, and how it ended.
+ *
+ * The status and the reason are the half people lose first. A thought that was
+ * tried and set aside reads exactly like a current one once the label is gone,
+ * and losing why at the moment someone restores their record is the worst
+ * possible time for it to go.
+ */
+export interface ImportedLine {
+  name: string;
+  status: string;
+  resolution: string;
 }
 
 /** A connection between two thoughts, named by the ids the export wrote. */
@@ -22,6 +38,7 @@ export interface ImportedConnection {
 export interface ImportedDocument {
   thoughts: ImportedThought[];
   connections: ImportedConnection[];
+  lines: ImportedLine[];
 }
 
 export interface ImportThoughtsResult {
@@ -65,6 +82,11 @@ const exportSections = new Set(['Connections', 'Lines of thinking']);
 const exportedID = /^-\s+id:\s+`([^`]+)`/m;
 /** `- canvas: `x, y`` under a thought: where it sat on the canvas. */
 const exportedCanvas = /^-\s+canvas:\s+`\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*`/m;
+/** `- line: `name` (status)` under a thought: the line it belonged to. */
+const exportedLineLabel = /^-\s+line:\s+`([^`]+)`/m;
+/** A line of the Lines of thinking section: `- **name** — status: why`. */
+const exportedLine = /^-\s+\*\*(.+?)\*\*\s+—\s+([a-z]+)(?::\s*([\s\S]*))?$/;
+
 /** A line of the Connections section: `` `a` --relates--> `b` ``. */
 const exportedConnection = /^-\s+`([^`]+)`\s*--([a-z_-]+)-->\s*`([^`]+)`/;
 
@@ -151,6 +173,7 @@ export function readMarkdownDocument(source: string): ImportedDocument {
   let ummExport = false;
   const thoughts: ImportedThought[] = [];
   const connections: ImportedConnection[] = [];
+  const linesOfThinking: ImportedLine[] = [];
   for (const block of blocks) {
     const body = block.join('\n').trim();
     if (!body) continue;
@@ -178,11 +201,20 @@ export function readMarkdownDocument(source: string): ImportedDocument {
         }
         continue;
       }
+      if (title === 'Lines of thinking') {
+        for (const entry of content.split('\n')) {
+          const found = exportedLine.exec(entry.trim());
+          if (found) linesOfThinking.push({ name: found[1], status: found[2], resolution: (found[3] ?? '').trim() });
+        }
+        continue;
+      }
       if (exportSections.has(title)) continue;
       const id = exportedID.exec(content)?.[1];
       const canvas = exportedCanvas.exec(content);
+      const line = exportedLineLabel.exec(content)?.[1];
       if (id) carried = { sourceId: id };
       if (canvas) carried = { ...carried, x: Number(canvas[1]), y: Number(canvas[2]) };
+      if (line) carried = { ...carried, line };
       content = withoutExportMetadata(content);
       // A thought that had no title gets one from the exporter; giving it back
       // would name every restored thought "Thought".
@@ -194,7 +226,7 @@ export function readMarkdownDocument(source: string): ImportedDocument {
     // heading itself as the content rather than dropping the section.
     thoughts.push({ title, content: content || title, ...carried });
   }
-  return { thoughts: thoughts.filter((thought) => thought.content !== ''), connections };
+  return { thoughts: thoughts.filter((thought) => thought.content !== ''), connections, lines: linesOfThinking };
 }
 
 /**
