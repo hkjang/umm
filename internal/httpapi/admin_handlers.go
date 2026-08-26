@@ -105,15 +105,7 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 // fields separately, so adding a second secret to a section meant remembering
 // two places — and forgetting the read side would return a key in plain text.
 func secretFields(section string) []string {
-	switch section {
-	case "oidc":
-		return []string{"client_secret"}
-	case "ai_gateway":
-		return []string{"api_key", "embedding_api_key"}
-	case "ptium":
-		return []string{"api_key"}
-	}
-	return nil
+	return store.SecretSettingFields(section)
 }
 
 func (s *Server) validateSetting(section string, v map[string]any) error {

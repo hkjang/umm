@@ -434,19 +434,8 @@ func (s *Store) PutSetting(ctx context.Context, key string, value any, actor uui
 	if !AllowedSetting(key) {
 		return errors.New("unknown setting section")
 	}
-	switch key {
-	case "security":
-		return s.putSettingPreserving(ctx, key, value, actor, []string{
-			"login_max_failures",
-			"login_lockout_minutes",
-			"api_rate_per_minute",
-			"ai_rate_per_minute",
-			"ai_daily_limit",
-		})
-	case "oidc":
-		return s.putSettingPreserving(ctx, key, value, actor, []string{"client_secret"})
-	case "ai_gateway":
-		return s.putSettingPreserving(ctx, key, value, actor, []string{"api_key", "embedding_api_key"})
+	if preserved := PreservedSettingFields(key); len(preserved) > 0 {
+		return s.putSettingPreserving(ctx, key, value, actor, preserved)
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -527,6 +516,47 @@ func (s *Store) putSettingPreserving(ctx context.Context, key string, value any,
 		return fmt.Errorf("commit setting update %q: %w", key, err)
 	}
 	return nil
+}
+
+// SecretSettingFields names the values in a section that are stored encrypted.
+//
+// One list, read by everything that cares. The settings screen never sends a
+// saved secret back — it shows a mask — so the write path drops the field and
+// relies on the merge below to keep the stored ciphertext. A section missing
+// from either list silently loses its key on the next save of that section.
+//
+// ptium had already been missed once, from AllowedSetting, where the symptom
+// was a 404 nobody could miss. Missing from the merge list was quieter: saving
+// the section again erased the key, so an administrator configured Ptium, came
+// back, and had to type it in again.
+func SecretSettingFields(key string) []string {
+	switch key {
+	case "oidc":
+		return []string{"client_secret"}
+	case "ai_gateway":
+		return []string{"api_key", "embedding_api_key"}
+	case "ptium":
+		return []string{"api_key"}
+	}
+	return nil
+}
+
+// PreservedSettingFields names every value that survives a save that omits it.
+//
+// Secrets, because the screen sends a mask instead of the stored value, and the
+// security numbers, because an older client that does not know a newer field
+// would otherwise reset it.
+func PreservedSettingFields(key string) []string {
+	if key == "security" {
+		return []string{
+			"login_max_failures",
+			"login_lockout_minutes",
+			"api_rate_per_minute",
+			"ai_rate_per_minute",
+			"ai_daily_limit",
+		}
+	}
+	return SecretSettingFields(key)
 }
 
 func AllowedSetting(key string) bool {

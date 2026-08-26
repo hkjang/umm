@@ -372,6 +372,22 @@ func (s *Service) RevokeKey(ctx context.Context, userID, keyID uuid.UUID) error 
 	return err
 }
 
+// ForgetRevokedKey removes a key that has already been revoked.
+//
+// Revoking and forgetting are two steps on purpose. Revoking is what stops the
+// key working and must not be undoable by a slip; forgetting only tidies the
+// list, and cannot happen to a key that still works.
+//
+// Without this a revoked key stayed on the screen for good. Someone pressing
+// 폐기 saw the row remain and reasonably read that as deletion not working.
+func (s *Service) ForgetRevokedKey(ctx context.Context, userID, keyID uuid.UUID) error {
+	cmd, err := s.Store.Pool.Exec(ctx, `DELETE FROM api_keys WHERE id=$1 AND user_id=$2 AND status='revoked'`, keyID, userID)
+	if err == nil && cmd.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return err
+}
+
 func (s *Service) UpdateKeyScopes(ctx context.Context, userID, keyID uuid.UUID, scopes []string) error {
 	cmd, err := s.Store.Pool.Exec(ctx, `UPDATE api_keys SET scopes=$3 WHERE id=$1 AND user_id=$2 AND status='active'`, keyID, userID, scopes)
 	if err == nil && cmd.RowsAffected() == 0 {
