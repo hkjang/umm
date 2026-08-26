@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -91,6 +92,13 @@ func TestUpdateNoteReadOnlyIsTerminalIntegration(t *testing.T) {
 	readOnly, readOnlyPayload := send(note.Version)
 	if readOnly.Code != http.StatusForbidden || readOnlyPayload["type"] != "https://umm.local/problems/note-read-only" {
 		t.Fatalf("read-only update response=%d payload=%#v", readOnly.Code, readOnlyPayload)
+	}
+	// This path answers a live edit and a replayed offline change alike, so the
+	// message may not assume which. It used to say the "offline change" could
+	// not be applied, and reached someone online who had just typed into a
+	// space they may only read.
+	if detail, _ := readOnlyPayload["detail"].(string); strings.Contains(detail, "오프라인") {
+		t.Errorf("the read-only message assumes an offline change: %q", detail)
 	}
 	latest, err := db.NoteByID(ctx, editorID, note.ID)
 	if err != nil {

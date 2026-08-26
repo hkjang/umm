@@ -230,6 +230,10 @@ func (s *Server) updateSpace(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	updated, err := s.Store.UpdateSpace(r.Context(), p.User.ID, spaceID, name, body.AIExcluded)
 	if err != nil {
+		// This path answers a live edit and a replayed offline change alike, so
+		// neither message may assume which one it is. They used to say the
+		// "offline change" could not be applied, which reached someone who was
+		// online and had just typed into a space they may only read.
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, 404, "이름을 변경할 수 있는 공간을 찾지 못했습니다.")
 			return
@@ -415,14 +419,14 @@ func (s *Server) updateNote(w http.ResponseWriter, r *http.Request) {
 			latest, canEdit, latestErr := s.Store.NoteByIDWithEditAccess(r.Context(), p.User.ID, noteID)
 			if latestErr == nil {
 				if !canEdit {
-					writeProblem(w, r, http.StatusForbidden, "note-read-only", "읽기 전용 메모", "이 공간의 편집 권한이 없어 오프라인 변경을 적용할 수 없습니다.", nil)
+					writeProblem(w, r, http.StatusForbidden, "note-read-only", "읽기 전용 메모", "이 공간의 편집 권한이 없어 변경을 저장하지 못했습니다.", nil)
 					return
 				}
 				writeProblem(w, r, http.StatusConflict, "note-version-conflict", "메모 버전 충돌", "다른 위치에서 메모가 변경되었습니다. 두 버전을 비교해 선택해 주세요.", map[string]any{"clientVersion": n.Version, "latest": latest})
 				return
 			}
 			if updateNoteLookupFailureStatus(latestErr) == http.StatusNotFound {
-				writeProblem(w, r, http.StatusNotFound, "note-not-found", "메모를 찾을 수 없음", "메모가 삭제되었거나 더 이상 접근할 수 없어 오프라인 변경을 적용할 수 없습니다.", nil)
+				writeProblem(w, r, http.StatusNotFound, "note-not-found", "메모를 찾을 수 없음", "메모가 삭제되었거나 더 이상 접근할 수 없어 변경을 저장하지 못했습니다.", nil)
 				return
 			}
 			writeError(w, http.StatusInternalServerError, "최신 메모를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.")

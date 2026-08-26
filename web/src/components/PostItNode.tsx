@@ -309,7 +309,7 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
             </Tooltip>
           </Menu.Target>
           <Menu.Dropdown>
-            {note.source !== 'dream' && (
+            {!data.readOnly && note.source !== 'dream' && (
               <Menu.Sub>
                 <Menu.Sub.Target>
                   <Menu.Sub.Item leftSection={<IconPalette size={15} />}>{t('색상')}</Menu.Sub.Item>
@@ -354,33 +354,43 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
                 </Menu.Sub.Dropdown>
               </Menu.Sub>
             )}
-            <Menu.Item
-              leftSection={<IconHeading size={15} />}
-              onClick={() => {
-                if (note.title !== '') {
-                  data.onPatch(note.id, { title: '' });
-                  setNamingTitle(false);
-                  return;
-                }
-                setNamingTitle(true);
-                // Focused after the field exists, so naming a note is one action
-                // rather than a menu click and then a hunt for where to type.
-                window.setTimeout(() => titleRef.current?.focus(), 0);
-              }}
-            >
-              {t(note.title !== '' ? '제목 지우기' : '제목 붙이기')}
-            </Menu.Item>
+            {/* Everything that writes is left out for a space this person may
+                only read. The API refuses each of them, and a menu that lists
+                actions which cannot happen is a worse answer than a shorter
+                menu. What stays is what genuinely works from here: following a
+                link, reading the connections, and commenting — which a
+                read-only member may do. */}
+            {!data.readOnly && (
+              <Menu.Item
+                leftSection={<IconHeading size={15} />}
+                onClick={() => {
+                  if (note.title !== '') {
+                    data.onPatch(note.id, { title: '' });
+                    setNamingTitle(false);
+                    return;
+                  }
+                  setNamingTitle(true);
+                  // Focused after the field exists, so naming a note is one action
+                  // rather than a menu click and then a hunt for where to type.
+                  window.setTimeout(() => titleRef.current?.focus(), 0);
+                }}
+              >
+                {t(note.title !== '' ? '제목 지우기' : '제목 붙이기')}
+              </Menu.Item>
+            )}
             {/* Marking, not inferring. umm never decides a note is a question —
                 a sentence ending in a question mark often is not one, and a real
                 question is often written without one. */}
-            <Menu.Item
-              color={note.kind === 'question' ? 'blue' : undefined}
-              leftSection={<IconHelp size={15} />}
-              onClick={() => data.onPatch(note.id, { kind: note.kind === 'question' ? 'thought' : 'question' })}
-            >
-              {t(note.kind === 'question' ? '질문 표시 해제' : '질문으로 표시')}
-            </Menu.Item>
-            {note.source !== 'dream' && (
+            {!data.readOnly && (
+              <Menu.Item
+                color={note.kind === 'question' ? 'blue' : undefined}
+                leftSection={<IconHelp size={15} />}
+                onClick={() => data.onPatch(note.id, { kind: note.kind === 'question' ? 'thought' : 'question' })}
+              >
+                {t(note.kind === 'question' ? '질문 표시 해제' : '질문으로 표시')}
+              </Menu.Item>
+            )}
+            {!data.readOnly && note.source !== 'dream' && (
               <Menu.Item
                 color={note.aiExcluded ? 'grape' : undefined}
                 leftSection={<IconBrain size={15} />}
@@ -395,12 +405,16 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
             <Menu.Item leftSection={<IconMessageCircle size={15} />} onClick={() => data.onComments(note)}>
               {t('댓글과 멘션')}
             </Menu.Item>
-            <Menu.Item leftSection={<IconHistory size={15} />} onClick={() => data.onRestore(note.id)}>
-              {t('이전 버전 복원')}
-            </Menu.Item>
-            <Menu.Item color="red" leftSection={<IconTrash size={15} />} onClick={() => data.onDelete(note.id)}>
-              {t('지우기')}
-            </Menu.Item>
+            {!data.readOnly && (
+              <Menu.Item leftSection={<IconHistory size={15} />} onClick={() => data.onRestore(note.id)}>
+                {t('이전 버전 복원')}
+              </Menu.Item>
+            )}
+            {!data.readOnly && (
+              <Menu.Item color="red" leftSection={<IconTrash size={15} />} onClick={() => data.onDelete(note.id)}>
+                {t('지우기')}
+              </Menu.Item>
+            )}
           </Menu.Dropdown>
         </Menu>
       </div>
