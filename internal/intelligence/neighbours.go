@@ -154,3 +154,49 @@ func (p *Prepared) Counts(band Band, fallback float64) ([]int, float64) {
 func NeighbourCounts(vectors [][]float32, band Band, fallback float64) ([]int, float64) {
 	return Prepare(vectors).Counts(band, fallback)
 }
+
+// PerNoteCounts is, for each vector, how many others clear a line drawn from
+// that vector's own scores rather than from every pair in the space.
+//
+// Counts and PerNoteCounts answer different questions and both are wanted. A
+// line drawn across the whole space says how connected a thought is compared
+// with the rest; a line drawn from one thought's own distribution says what
+// that thought would show you if you asked it. The card shows a number and
+// then opens the second one, so the card has to use the second one too —
+// otherwise it offers a count nobody can reach.
+//
+// The pair scores are the same ones Counts uses, read back by index instead of
+// multiplied a second time: a symmetric pair is stored once, so row i is
+// assembled from the halves either side of the diagonal.
+func (p *Prepared) PerNoteCounts(band Band, fallback float64) []int {
+	if p == nil {
+		return nil
+	}
+	n := len(p.dense)
+	counts := make([]int, n)
+	if n < 2 {
+		return counts
+	}
+	scores := p.pairScores()
+	// Where pair (a,b) with a<b sits in the i<j ordering.
+	at := func(a, b int) int { return a*n - a*(a+1)/2 + (b - a - 1) }
+	row := make([]float64, 0, n-1)
+	for i := 0; i < n; i++ {
+		row = row[:0]
+		for j := 0; j < n; j++ {
+			switch {
+			case j < i:
+				row = append(row, scores[at(j, i)])
+			case j > i:
+				row = append(row, scores[at(i, j)])
+			}
+		}
+		cutoff := NewSimilarityScale(row).ThresholdOr(band, fallback)
+		for _, score := range row {
+			if score >= cutoff {
+				counts[i]++
+			}
+		}
+	}
+	return counts
+}
