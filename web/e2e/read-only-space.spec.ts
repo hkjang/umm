@@ -58,7 +58,10 @@ test.describe('read-only space', () => {
     // The thought is readable and plainly not editable.
     const editor = page.locator('.postit').first().getByRole('textbox', { name: '생각 내용' });
     await expect(editor).toBeVisible();
-    await expect(editor).toHaveAttribute('readonly', '');
+    // The DOM property rather than the attribute: an attribute whose value is
+    // the empty string compares badly, and what matters is whether the browser
+    // considers the field editable.
+    await expect(editor).toHaveJSProperty('readOnly', true);
 
     // And the reason is on screen, where the capture bar would have been.
     await expect(page.getByText('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')).toBeVisible();
@@ -70,7 +73,7 @@ test.describe('read-only space', () => {
     await openSpaceWithPermission(page, 'manage');
 
     const editor = page.locator('.postit').first().getByRole('textbox', { name: '생각 내용' });
-    await expect(editor).not.toHaveAttribute('readonly', '');
+    await expect(editor).toHaveJSProperty('readOnly', false);
     await expect(page.getByPlaceholder('생각을 입력하고 Enter로 붙이세요')).toBeVisible();
     await expect(page.getByText('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')).toHaveCount(0);
   });
