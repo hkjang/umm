@@ -196,6 +196,8 @@ func (s *Server) router() chi.Router {
 				admin.Get("/spaces", s.adminSpaces)
 				admin.Get("/spaces/{spaceID}/members", s.adminSpaceMembers)
 				admin.Put("/spaces/{spaceID}/owner", s.transferSpaceOwner)
+				admin.Get("/webhooks", s.adminWebhooks)
+				admin.Post("/webhooks/{webhookID}/pause", s.pauseWebhook)
 				admin.Get("/security/encryption", s.encryptionKeyStatus)
 				admin.Post("/security/encryption/rotate", s.rotateEncryptionKey)
 				admin.Get("/ai-evals", s.listAIEvals)

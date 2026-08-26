@@ -121,6 +121,7 @@ const menu = [
   ['workflow', msg('검토 프로세스'), IconRoute],
   ['users', msg('사용자'), IconUsers],
   ['spaces', msg('공간과 참여자'), IconUsers],
+  ['webhooks', msg('웹훅 상태'), IconRoute],
   ['audit', msg('감사 로그'), IconAdjustments],
 ] as const;
 interface AdminSpace {
@@ -132,6 +133,19 @@ interface AdminSpace {
   ownerActive: boolean;
   members: number;
   notes: number;
+}
+interface AdminWebhook {
+  id: string;
+  name: string;
+  destination: string;
+  active: boolean;
+  failureCount: number;
+  lastError: string;
+  lastDeliveredAt?: string;
+  owner: string;
+  ownerActive: boolean;
+  failed24h: number;
+  waiting: number;
 }
 interface SpaceMember {
   id: string;
@@ -166,6 +180,9 @@ export default function AdminPage() {
   const [spacesOrphanOnly, setSpacesOrphanOnly] = useState(false);
   const [spacesLoading, setSpacesLoading] = useState(false);
   const [spaceMembers, setSpaceMembers] = useState<Record<string, SpaceMember[]>>({});
+  const [adminWebhooks, setAdminWebhooks] = useState<AdminWebhook[]>([]);
+  const [webhooksFailingOnly, setWebhooksFailingOnly] = useState(false);
+  const [adminWebhooksLoading, setAdminWebhooksLoading] = useState(false);
   const [auditFilter, setAuditFilter] = useState({ actor: '', action: '', resourceId: '' });
   const [keyStatus, setKeyStatus] = useState<Record<string, number | string>>({});
   const [evals, setEvals] = useState<EvalCase[]>([]);
@@ -263,6 +280,7 @@ export default function AdminPage() {
     // list of every space is not worth loading for someone who came to change
     // a setting.
     if (section === 'spaces' && spaces.length === 0) void loadSpaces();
+    if (section === 'webhooks' && adminWebhooks.length === 0) void loadAdminWebhooks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section]);
   useEffect(() => {
@@ -464,6 +482,34 @@ export default function AdminPage() {
       await loadSpaces();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t('공간 소유자를 바꾸지 못했습니다.'));
+    }
+  };
+  const loadAdminWebhooks = async (failingOnly = webhooksFailingOnly) => {
+    setAdminWebhooksLoading(true);
+    setError('');
+    try {
+      const query = failingOnly ? '?failing=true' : '';
+      const value = await api<{ webhooks: AdminWebhook[] }>(`/admin/webhooks${query}`);
+      setAdminWebhooks(value.webhooks);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('웹훅 목록을 불러오지 못했습니다.'));
+    } finally {
+      setAdminWebhooksLoading(false);
+    }
+  };
+  const pauseAdminWebhook = async (hook: AdminWebhook) => {
+    if (
+      !window.confirm(
+        t('“{name}” 웹훅 전송을 멈춥니다. 설정은 그대로 남고 주인이 다시 켤 수 있습니다.', { name: hook.name }),
+      )
+    )
+      return;
+    try {
+      await api(`/admin/webhooks/${hook.id}/pause`, { method: 'POST' });
+      setMessage(t('웹훅 전송을 멈췄습니다.'));
+      await loadAdminWebhooks();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('웹훅을 멈추지 못했습니다.'));
     }
   };
   const loadMoreAudit = async () => {
@@ -1216,6 +1262,19 @@ export default function AdminPage() {
               onReload={() => void loadSpaces()}
               onExpand={loadSpaceMembers}
               onTransfer={transferSpace}
+            />
+          )}
+          {section === 'webhooks' && (
+            <WebhookHealthPanel
+              webhooks={adminWebhooks}
+              loading={adminWebhooksLoading}
+              failingOnly={webhooksFailingOnly}
+              onFailingOnly={(next) => {
+                setWebhooksFailingOnly(next);
+                void loadAdminWebhooks(next);
+              }}
+              onReload={() => void loadAdminWebhooks()}
+              onPause={pauseAdminWebhook}
             />
           )}
           {section === 'audit' && (
@@ -2327,6 +2386,118 @@ function SpacesPanel({
                     </Table.Tr>
                   )}
                 </>
+              ))}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Every webhook in the installation, worst first.
+ *
+ * The metrics screen carried one number — deliveries failed in the last day.
+ * Which webhook, whose, and failing with what were all recorded and none of
+ * them shown, so the number said something was wrong and nothing about where
+ * to look.
+ */
+function WebhookHealthPanel({
+  webhooks,
+  loading,
+  failingOnly,
+  onFailingOnly,
+  onReload,
+  onPause,
+}: {
+  webhooks: AdminWebhook[];
+  loading: boolean;
+  failingOnly: boolean;
+  onFailingOnly: (next: boolean) => void;
+  onReload: () => void;
+  onPause: (hook: AdminWebhook) => Promise<void>;
+}) {
+  const { t, formatDate } = useTranslation();
+  return (
+    <Card radius="lg" withBorder p="xl">
+      <Group align="center" gap="sm" mb="lg" wrap="wrap">
+        <Switch
+          label={t('실패한 것만')}
+          checked={failingOnly}
+          onChange={(e) => onFailingOnly(e.currentTarget.checked)}
+        />
+        <Button variant="light" loading={loading} onClick={onReload}>
+          {t('새로 고침')}
+        </Button>
+      </Group>
+      {webhooks.length === 0 && !loading ? (
+        <Text c="dimmed">{failingOnly ? t('실패한 웹훅이 없습니다.') : t('등록된 웹훅이 없습니다.')}</Text>
+      ) : (
+        <Table.ScrollContainer minWidth={900}>
+          <Table verticalSpacing="sm" striped>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>{t('웹훅')}</Table.Th>
+                <Table.Th>{t('주인')}</Table.Th>
+                <Table.Th>{t('보내는 곳')}</Table.Th>
+                <Table.Th>{t('연속 실패')}</Table.Th>
+                <Table.Th>{t('최근 24시간 실패')}</Table.Th>
+                <Table.Th>{t('마지막 전송')}</Table.Th>
+                <Table.Th />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {webhooks.map((hook) => (
+                <Table.Tr key={hook.id}>
+                  <Table.Td>
+                    <Group gap="xs">
+                      <Text fw={600}>{hook.name}</Text>
+                      {!hook.active && (
+                        <Badge size="xs" color="gray" variant="light">
+                          {t('멈춤')}
+                        </Badge>
+                      )}
+                    </Group>
+                    {hook.lastError && (
+                      <Text size="xs" c="red" mt={4} style={{ whiteSpace: 'pre-wrap' }}>
+                        {hook.lastError}
+                      </Text>
+                    )}
+                  </Table.Td>
+                  <Table.Td>
+                    <Group gap="xs">
+                      <Text size="sm">{hook.owner}</Text>
+                      {!hook.ownerActive && (
+                        <Badge size="xs" color="red" variant="light">
+                          {t('비활성')}
+                        </Badge>
+                      )}
+                    </Group>
+                  </Table.Td>
+                  {/* The host only: a hook address with a token in its path is
+                      itself the secret, and an administrator needs to know where
+                      deliveries go, not how to make one. */}
+                  <Table.Td>
+                    <Text size="sm" c="dimmed">
+                      {hook.destination}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>{hook.failureCount}</Table.Td>
+                  <Table.Td>{hook.failed24h}</Table.Td>
+                  <Table.Td>
+                    <Text size="sm" c="dimmed">
+                      {hook.lastDeliveredAt ? formatDate(hook.lastDeliveredAt) : t('없음')}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td>
+                    {hook.active && (
+                      <Button size="xs" variant="light" color="red" onClick={() => void onPause(hook)}>
+                        {t('멈추기')}
+                      </Button>
+                    )}
+                  </Table.Td>
+                </Table.Tr>
               ))}
             </Table.Tbody>
           </Table>

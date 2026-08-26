@@ -1687,6 +1687,28 @@ paths:
         '200': { description: The new owner, and whether the previous one kept access }
         '400': { description: An inbox, an inactive recipient, or already the owner }
         '404': { description: No such space or user }
+  /admin/webhooks:
+    get:
+      operationId: get_admin_webhooks
+      tags: [Admin]
+      summary: Every webhook in the installation, worst first
+      description: >-
+        The destination is reported as scheme and host only. A hook address with
+        a token in its path is itself the credential, so the path is not
+        returned.
+      parameters:
+        - { in: query, name: failing, schema: { type: boolean }, description: Only webhooks with failures recorded }
+      responses: { '200': { description: Webhooks with owner, destination, failures and waiting deliveries } }
+  /admin/webhooks/{webhookId}/pause:
+    post:
+      operationId: post_admin_webhook_pause
+      tags: [Admin]
+      summary: Stop a webhook delivering without deleting its configuration
+      parameters:
+        - { in: path, name: webhookId, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: Paused, or already paused }
+        '404': { description: No such webhook }
 components:
   securitySchemes:
     cookieAuth: { type: apiKey, in: cookie, name: umm_session }
