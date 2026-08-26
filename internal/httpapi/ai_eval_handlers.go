@@ -122,7 +122,11 @@ func (s *Server) deleteAIEval(w http.ResponseWriter, r *http.Request) {
 	}
 	p := principal(r)
 	command, err := s.Store.Pool.Exec(r.Context(), `DELETE FROM ai_eval_cases WHERE id=$1`, id)
-	if err != nil || command.RowsAffected() == 0 {
+	if err != nil {
+		writeError(w, 500, "AI 평가 케이스를 삭제하지 못했습니다.")
+		return
+	}
+	if command.RowsAffected() == 0 {
 		writeError(w, 404, "AI 평가 케이스를 찾을 수 없습니다.")
 		return
 	}

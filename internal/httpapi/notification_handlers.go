@@ -97,7 +97,11 @@ func (s *Server) readNotification(w http.ResponseWriter, r *http.Request) {
 	}
 	p := principal(r)
 	cmd, err := s.Store.Pool.Exec(r.Context(), `UPDATE notifications SET read_at=COALESCE(read_at,now()) WHERE id=$1 AND user_id=$2`, id, p.User.ID)
-	if err != nil || cmd.RowsAffected() == 0 {
+	if err != nil {
+		writeError(w, 500, "알림을 읽음으로 표시하지 못했습니다.")
+		return
+	}
+	if cmd.RowsAffected() == 0 {
 		writeError(w, 404, "알림을 찾을 수 없습니다.")
 		return
 	}
