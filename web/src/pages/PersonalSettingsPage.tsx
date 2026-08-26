@@ -102,6 +102,8 @@ export default function PersonalSettingsPage() {
   const { t, formatDate } = useTranslation();
   const [prefs, setPrefs] = useState<Preferences>();
   const [keys, setKeys] = useState<APIKey[]>([]);
+  const [keysFailed, setKeysFailed] = useState(false);
+  const [webhooksFailed, setWebhooksFailed] = useState(false);
   const [available, setAvailable] = useState<string[]>([]);
   const [overlap, setOverlap] = useState(24);
   const [opened, setOpened] = useState(false);
@@ -117,24 +119,41 @@ export default function PersonalSettingsPage() {
   const [hookURL, setHookURL] = useState('');
   const [hookSelected, setHookSelected] = useState<string[]>(['note.created']);
   const [hookSecret, setHookSecret] = useState('');
-  const load = () =>
-    Promise.all([
-      api<Preferences>('/preferences').then((value) => {
-        setPrefs(value);
-        writeLocalStorage('umm:edge-style', value.edge_style || 'bezier');
-      }),
-      api<{ keys: APIKey[]; availableScopes: string[]; rotationOverlapHours: number }>('/api-keys').then((v) => {
-        setKeys(v.keys);
-        setAvailable(v.availableScopes);
-        setOverlap(v.rotationOverlapHours);
-      }),
-      api<{ webhooks: Webhook[]; supportedEvents: string[] }>('/webhooks').then((value) => {
-        setWebhooks(value.webhooks);
-        setWebhookEvents(value.supportedEvents);
-      }),
+  /*
+   * Loaded one section at a time, and each says whether it arrived.
+   *
+   * These were fetched together with Promise.all and the failure swallowed, so
+   * one request failing emptied all three lists — and an empty list here reads
+   * as "you have not made any keys" and "you have no webhooks". Someone
+   * checking whether a key of theirs is still live was told there were none.
+   *
+   * Which one failed matters too: saying the keys could not be loaded next to a
+   * webhook list that arrived perfectly well is wrong in the other direction.
+   */
+  const load = async () => {
+    const [preferences, apiKeys, hooks] = await Promise.allSettled([
+      api<Preferences>('/preferences'),
+      api<{ keys: APIKey[]; availableScopes: string[]; rotationOverlapHours: number }>('/api-keys'),
+      api<{ webhooks: Webhook[]; supportedEvents: string[] }>('/webhooks'),
     ]);
+    if (preferences.status === 'fulfilled') {
+      setPrefs(preferences.value);
+      writeLocalStorage('umm:edge-style', preferences.value.edge_style || 'bezier');
+    }
+    setKeysFailed(apiKeys.status === 'rejected');
+    if (apiKeys.status === 'fulfilled') {
+      setKeys(apiKeys.value.keys);
+      setAvailable(apiKeys.value.availableScopes);
+      setOverlap(apiKeys.value.rotationOverlapHours);
+    }
+    setWebhooksFailed(hooks.status === 'rejected');
+    if (hooks.status === 'fulfilled') {
+      setWebhooks(hooks.value.webhooks);
+      setWebhookEvents(hooks.value.supportedEvents);
+    }
+  };
   useEffect(() => {
-    void load().catch(() => undefined);
+    void load();
   }, []);
   const savePrefs = async (next: Preferences) => {
     const previous = prefs;
@@ -425,7 +444,14 @@ export default function PersonalSettingsPage() {
             </Button>
           </Group>
           <Divider my="lg" />
-          {keys.length === 0 ? (
+          {keysFailed ? (
+            <Group gap="sm">
+              <Text c="red">{t('키 목록을 불러오지 못했습니다. 키가 없는 것인지 알 수 없습니다.')}</Text>
+              <Button size="xs" variant="light" onClick={() => void load()}>
+                {t('다시 시도')}
+              </Button>
+            </Group>
+          ) : keys.length === 0 ? (
             <Text c="dimmed">{t('아직 만든 키가 없습니다.')}</Text>
           ) : (
             <Stack>
@@ -546,7 +572,14 @@ export default function PersonalSettingsPage() {
             </Button>
           </Group>
           <Divider my="lg" />
-          {webhooks.length === 0 ? (
+          {webhooksFailed ? (
+            <Group gap="sm">
+              <Text c="red">{t('웹훅 목록을 불러오지 못했습니다. 웹훅이 없는 것인지 알 수 없습니다.')}</Text>
+              <Button size="xs" variant="light" onClick={() => void load()}>
+                {t('다시 시도')}
+              </Button>
+            </Group>
+          ) : webhooks.length === 0 ? (
             <Text c="dimmed">{t('등록한 웹훅이 없습니다.')}</Text>
           ) : (
             <Stack>
