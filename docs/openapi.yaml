@@ -1696,7 +1696,10 @@ paths:
         Measures the bands in force and the proposed ones against the same
         sample of the largest spaces. Writes nothing. Omitting a parameter
         previews the value currently in force; a value outside 0-4 is refused
-        rather than replaced.
+        rather than replaced. When `semantic` is false the canvas groups by
+        position and the cluster band decides nothing, so the cluster figures
+        are left at zero and must not be read as counts; the related figures
+        are unaffected.
       parameters:
         - { in: query, name: related_band, schema: { type: number, minimum: 0, maximum: 4 } }
         - { in: query, name: cluster_band, schema: { type: number, minimum: 0, maximum: 4 } }

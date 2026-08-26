@@ -97,6 +97,7 @@ func TestBandPreviewMeasuresTheProposalBeforeItIsSavedIntegration(t *testing.T) 
 		Spaces   int     `json:"spaces"`
 		Notes    int     `json:"notes"`
 		Embedded int     `json:"embedded"`
+		Semantic bool    `json:"semantic"`
 		Current  outcome `json:"current"`
 		Proposed outcome `json:"proposed"`
 	}
@@ -127,17 +128,21 @@ func TestBandPreviewMeasuresTheProposalBeforeItIsSavedIntegration(t *testing.T) 
 		t.Fatalf("a band of 3.5 admitted neighbours for %d of %d cards: %s",
 			preview.Notes-preview.Proposed.WithoutRelated, preview.Notes, body)
 	}
-	if preview.Proposed.Clusters != 0 {
-		t.Fatalf("a band of 3.5 still formed %d groups: %s", preview.Proposed.Clusters, body)
+	// The local char-gram backend is not judged fit to compare meaning, so the
+	// canvas groups by position and the cluster band decides nothing. The
+	// figures must be absent rather than zero-shaped counts of a grouping that
+	// will not happen.
+	if preview.Semantic {
+		t.Fatalf("the test backend reported itself semantic, so this case no longer covers the fallback: %s", body)
+	}
+	for label, value := range map[string]outcome{"current": preview.Current, "proposed": preview.Proposed} {
+		if value.Clusters != 0 || value.Grouped != 0 || value.LargestCluster != 0 || value.Ungrouped != 0 {
+			t.Fatalf("%s reported cluster figures on a backend that will not cluster by meaning: %s", label, body)
+		}
 	}
 
-	// Every note is either in a group or drawn on its own, whichever band is
-	// used. A total that does not add up means the summarised canvas would be
-	// missing notes.
+	// The related figures are scored whatever the backend, so they stay.
 	for label, value := range map[string]outcome{"current": preview.Current, "proposed": preview.Proposed} {
-		if value.Grouped+value.Ungrouped != preview.Embedded {
-			t.Fatalf("%s: %d grouped + %d alone ≠ %d notes: %s", label, value.Grouped, value.Ungrouped, preview.Embedded, body)
-		}
 		if value.MedianRelated > value.MostRelated {
 			t.Fatalf("%s: median %d above the highest %d: %s", label, value.MedianRelated, value.MostRelated, body)
 		}
@@ -161,20 +166,9 @@ func TestBandPreviewMeasuresTheProposalBeforeItIsSavedIntegration(t *testing.T) 
 	if low.Proposed.WithoutRelated >= preview.Proposed.WithoutRelated {
 		t.Fatalf("band 0.2 left %d cards empty, band 3.5 left %d: %s", low.Proposed.WithoutRelated, preview.Proposed.WithoutRelated, body)
 	}
-	if low.Proposed.Grouped <= preview.Proposed.Grouped {
-		t.Fatalf("band 0.2 grouped %d notes, band 3.5 grouped %d: %s", low.Proposed.Grouped, preview.Proposed.Grouped, body)
-	}
-	if low.Proposed.LargestCluster < 2 {
-		t.Fatalf("band 0.2 formed no group larger than %d, so there is nothing to compare against: %s",
-			low.Proposed.LargestCluster, body)
-	}
 	// Whatever is proposed, the current column stays the settings in force.
 	if low.Current != preview.Current {
 		t.Fatalf("the current column moved with the proposal: %+v then %+v", preview.Current, low.Current)
-	}
-	if low.Proposed.Grouped+low.Proposed.Ungrouped != preview.Embedded {
-		t.Fatalf("band 0.2: %d grouped + %d alone != %d notes: %s",
-			low.Proposed.Grouped, low.Proposed.Ungrouped, preview.Embedded, body)
 	}
 
 	// Nothing is written. The preview exists so that looking is not the same as

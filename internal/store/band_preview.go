@@ -54,8 +54,10 @@ type BandPreview struct {
 	Embedded int `json:"embedded"`
 	// Semantic reports whether the active backend is judged fit to compare
 	// meaning. When it is not, clustering falls back to position on the canvas
-	// and the cluster band does nothing at all — a preview that showed numbers
-	// anyway would be describing arithmetic nobody will see.
+	// and the cluster band does nothing at all, so the cluster figures below are
+	// left at zero and must not be read as counts — showing them anyway would be
+	// describing arithmetic nobody will see. The related figures are unaffected:
+	// related thoughts are scored whatever the backend.
 	Semantic bool        `json:"semantic"`
 	Current  BandOutcome `json:"current"`
 	Proposed BandOutcome `json:"proposed"`
@@ -143,8 +145,14 @@ func (s *Store) PreviewBands(ctx context.Context, relatedBand, clusterBand float
 			prepared.PerNoteCounts(intelligence.Band(settings.RelatedBand), legacyRelatedCutoff)...)
 		relatedProposed = append(relatedProposed,
 			prepared.PerNoteCounts(intelligence.Band(relatedBand), legacyRelatedCutoff)...)
-		addClustering(&preview.Current, prepared, settings.ClusterBand)
-		addClustering(&preview.Proposed, prepared, clusterBand)
+		// Only when the cluster band is what the canvas will actually use. On a
+		// backend judged unfit to compare meaning the canvas groups by position
+		// instead, and these numbers would describe a grouping nobody is going
+		// to see.
+		if preview.Semantic {
+			addClustering(&preview.Current, prepared, settings.ClusterBand)
+			addClustering(&preview.Proposed, prepared, clusterBand)
+		}
 	}
 
 	summariseRelated(&preview.Current, relatedCurrent)

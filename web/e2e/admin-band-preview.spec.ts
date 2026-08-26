@@ -66,6 +66,17 @@ test.describe('밴드 미리보기', () => {
       .poll(async () => Number((await emptyCards.getByRole('cell').nth(2).innerText()).replace(/[^0-9]/g, '')))
       .toBeLessThan(high);
 
+    // The local backend is not judged fit to compare meaning, so the canvas
+    // groups by position and the cluster band decides nothing. The panel says
+    // so — and must not then print a table of group counts underneath that
+    // sentence, which would take it straight back.
+    await expect(page.getByText(/군집 기준은 아무 일도 하지 않습니다/)).toBeVisible();
+    for (const clusterRow of ['묶음 수', '묶인 생각', '가장 큰 묶음', '혼자 남는 생각']) {
+      await expect(page.getByRole('cell', { name: clusterRow, exact: true })).toHaveCount(0);
+    }
+    // The related rows are unaffected: those are scored whatever the backend.
+    await expect(page.getByRole('cell', { name: '카드당 연관 생각 (중앙값)', exact: true })).toHaveCount(1);
+
     // Measuring is not deciding: the setting on the server has not moved.
     const stored = await page.evaluate(async () => {
       const all = await (await fetch('/api/v1/admin/settings')).json();
