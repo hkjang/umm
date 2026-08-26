@@ -2,12 +2,15 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type workflowConfig struct {
@@ -126,8 +129,12 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 	var requestTeam *uuid.UUID
 	var payloadRaw json.RawMessage
 	err = tx.QueryRow(r.Context(), `SELECT action,resource_id,payload,requester_id,team_id FROM approval_requests WHERE id=$1 AND status='pending' FOR UPDATE`, id).Scan(&action, &resourceID, &payloadRaw, &requesterID, &requestTeam)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "처리할 검토 요청을 찾을 수 없습니다.")
+		return
+	}
+	if err != nil {
+		writeError(w, 500, "검토 요청을 처리하지 못했습니다.")
 		return
 	}
 	if p.User.Role == "team_lead" {
