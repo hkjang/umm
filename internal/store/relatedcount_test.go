@@ -14,13 +14,18 @@ func cosineOf(vectors map[uuid.UUID][]float32, a, b uuid.UUID) float64 {
 
 func similarityCutoffForTest(db *Store, ctx context.Context, scores []float64) float64 {
 	return intelligence.NewSimilarityScale(scores).ThresholdOr(
-		intelligence.Band(db.IntelligenceSettings(ctx).ClusterBand), legacyClusterCutoff)
+		intelligence.Band(db.IntelligenceSettings(ctx).RelatedBand), legacyRelatedCutoff)
 }
 
 // The count a canvas shows on each thought must be the same whether it is
 // computed from a fresh pass over the square or read back from the scores
-// already taken. Similarity is symmetric, so counting each pair once and
-// crediting both sides is the same answer — this pins that it stays so.
+// already taken. Similarity is symmetric, so a pair stored once can be read
+// from either side — this pins that the index arithmetic that does so keeps
+// picking the right row.
+//
+// The line is drawn per thought, from that thought's own scores, because that
+// is the line the list it opens is drawn from. It used to be one line across
+// every pair in the space, and the number and the list disagreed.
 func TestRelatedCountMatchesTheFullSquareIntegration(t *testing.T) {
 	db, userID, spaceID := retrievalSpace(t)
 	ctx := context.Background()
@@ -49,20 +54,20 @@ func TestRelatedCountMatchesTheFullSquareIntegration(t *testing.T) {
 		t.Fatalf("listed %d notes, want %d", len(notes), len(contents))
 	}
 
-	// The same counts, computed the way the code used to: a full square, one
-	// Cosine call per ordered pair.
+	// The same counts, computed the obvious way: for each thought, score it
+	// against every other, draw the line from those scores, count what clears.
 	vectors := db.loadEmbeddings(ctx, notes)
-	scores := make([]float64, 0, len(notes)*(len(notes)-1)/2)
-	for i := range notes {
-		for j := i + 1; j < len(notes); j++ {
-			scores = append(scores, cosineOf(vectors, notes[i].ID, notes[j].ID))
-		}
-	}
-	cutoff := similarityCutoffForTest(db, ctx, scores)
 	want := make([]int, len(notes))
 	for i := range notes {
+		row := make([]float64, 0, len(notes)-1)
 		for j := range notes {
-			if i != j && cosineOf(vectors, notes[i].ID, notes[j].ID) >= cutoff {
+			if i != j {
+				row = append(row, cosineOf(vectors, notes[i].ID, notes[j].ID))
+			}
+		}
+		cutoff := similarityCutoffForTest(db, ctx, row)
+		for _, score := range row {
+			if score >= cutoff {
 				want[i]++
 			}
 		}

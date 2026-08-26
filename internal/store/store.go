@@ -721,22 +721,31 @@ func (s *Store) listNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 	s.ensureEmbeddings(ctx, notes)
 	if withCounts {
 		// How many other thoughts each one resembles, against a cutoff derived
-		// from this space's own score distribution rather than fixed — so the
+		// from this thought's own score distribution rather than fixed — so the
 		// count means the same thing whether the vectors came from the offline
 		// algorithm or a configured embedding model.
 		//
+		// The same line RelatedNotes draws, because the card shows this number
+		// and then opens that list. They used to be drawn differently — this
+		// one across every pair in the space at the cluster band, that one from
+		// a single thought's scores at the related band — and the two bands
+		// differ by default, so the number and the list disagreed. Measured on
+		// a small space, five of seven thoughts; three showed no number at all
+		// while the list had one or two waiting, which is the worst of it,
+		// because a count of zero hides the chip and nobody finds out.
+		//
 		// Every pair is compared, which was measured at 163ms of a 243ms
-		// request in a space of two thousand notes. NeighbourCounts does the
-		// same arithmetic while skipping the four fifths of it that multiplies
-		// by a zero, and is tested against the plain loop for identical counts
-		// and an identical cutoff rather than close ones.
+		// request in a space of two thousand notes. The pair scores are
+		// computed once and read back by index for each row, so drawing a line
+		// per thought costs a few linear passes rather than another pass over
+		// the square: 48ms to 63ms at two thousand.
 		vectors := s.loadEmbeddings(ctx, notes)
 		ordered := make([][]float32, len(notes))
 		for i := range notes {
 			ordered[i] = vectors[notes[i].ID]
 		}
-		counts, _ := intelligence.NeighbourCounts(ordered,
-			intelligence.Band(s.IntelligenceSettings(ctx).ClusterBand), legacyClusterCutoff)
+		counts := intelligence.Prepare(ordered).PerNoteCounts(
+			intelligence.Band(s.IntelligenceSettings(ctx).RelatedBand), legacyRelatedCutoff)
 		for i := range notes {
 			notes[i].RelatedCount = counts[i]
 		}

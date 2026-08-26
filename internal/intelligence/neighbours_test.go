@@ -239,3 +239,72 @@ func TestNilPreparedIsHarmless(t *testing.T) {
 		t.Fatalf("nil cutoff %v", cutoff)
 	}
 }
+
+// densePerNote is the obvious loop PerNoteCounts replaced: score a vector
+// against every other one, draw the line from those scores, count what clears
+// it. The index arithmetic that reads a symmetric pair back from the i<j
+// ordering is the only thing PerNoteCounts does differently, and getting it
+// wrong would quietly count the wrong row.
+func densePerNote(vectors [][]float32, band Band, fallback float64) []int {
+	counts := make([]int, len(vectors))
+	for i := range vectors {
+		row := []float64{}
+		for j := range vectors {
+			if i == j {
+				continue
+			}
+			row = append(row, Cosine(vectors[i], vectors[j]))
+		}
+		cutoff := NewSimilarityScale(row).ThresholdOr(band, fallback)
+		for _, score := range row {
+			if score >= cutoff {
+				counts[i]++
+			}
+		}
+	}
+	return counts
+}
+
+func TestPerNoteCountsMatchTheDenseLoop(t *testing.T) {
+	for _, n := range []int{2, 3, 17, 64, 200} {
+		rng := rand.New(rand.NewSource(int64(n) + 500))
+		vectors := sparseVectors(n, rng)
+		got := Prepare(vectors).PerNoteCounts(Band(0.6), 0.42)
+		want := densePerNote(vectors, Band(0.6), 0.42)
+		sameCounts(t, got, want, "per-note sparse vectors")
+	}
+}
+
+// The line is drawn per vector, so a vector that resembles nothing is judged
+// against its own flat distribution rather than the space's.
+func TestPerNoteCountsHandleEmptyAndRaggedVectors(t *testing.T) {
+	rng := rand.New(rand.NewSource(13))
+	vectors := [][]float32{
+		sparseVectors(1, rng)[0],
+		make([]float32, Dimensions),
+		make([]float32, 8),
+		{},
+	}
+	got := Prepare(vectors).PerNoteCounts(Band(1.1), 0.42)
+	want := densePerNote(vectors, Band(1.1), 0.42)
+	sameCounts(t, got, want, "per-note ragged vectors")
+}
+
+func TestPerNoteCountsTooFewToCompare(t *testing.T) {
+	var p *Prepared
+	if got := p.PerNoteCounts(Band(0.6), 0.42); got != nil {
+		t.Fatalf("nil set returned %v", got)
+	}
+	if got := Prepare([][]float32{make([]float32, Dimensions)}).PerNoteCounts(Band(0.6), 0.42); len(got) != 1 || got[0] != 0 {
+		t.Fatalf("one vector returned %v", got)
+	}
+}
+
+func BenchmarkPerNoteCounts2000(b *testing.B) {
+	rng := rand.New(rand.NewSource(1))
+	vectors := sparseVectors(2000, rng)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		Prepare(vectors).PerNoteCounts(Band(0.6), 0.42)
+	}
+}
