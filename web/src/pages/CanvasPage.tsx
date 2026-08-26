@@ -1016,7 +1016,9 @@ function CanvasInner() {
               content: thought.content,
               title: thought.title,
               color: 'yellow',
-              kind: 'thought',
+              // A question that comes back a plain thought has lost the thing
+              // that made it worth keeping apart.
+              kind: thought.kind ?? 'thought',
               x: position.x,
               y: position.y,
               width: 240,
