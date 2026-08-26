@@ -96,7 +96,14 @@ export interface ThoughtEdge {
 }
 
 /** Why a suggestion run produced what it did — including when it produced nothing. */
-export type SuggestionOutcome = 'suggested' | 'no-candidates' | 'backend-not-semantic' | 'too-few-notes';
+export type SuggestionOutcome =
+  | 'suggested'
+  | 'no-candidates'
+  | 'backend-not-semantic'
+  | 'too-few-notes'
+  /** A space this person may read but not change. Suggesting writes edges. */
+  | 'read-only'
+  | 'disabled';
 
 export interface SuggestionResult {
   outcome: SuggestionOutcome;

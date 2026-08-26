@@ -50,6 +50,25 @@ async function openSpaceWithPermission(page: import('@playwright/test').Page, pe
   return spaceId;
 }
 
+/**
+ * Opens a note's menu and returns the dropdown itself.
+ *
+ * Scoped to the open dropdown rather than searching the page: a menu left in
+ * the DOM by an earlier test matches the same roles, which passed alone and
+ * failed inside the full suite. The button is only shown on hover, so the hover
+ * is waited for rather than assumed.
+ */
+async function openNoteMenu(page: import('@playwright/test').Page) {
+  const card = page.locator('.postit').first();
+  await card.hover();
+  const trigger = card.getByRole('button', { name: '메모 메뉴' });
+  await expect(trigger).toBeVisible();
+  await trigger.click();
+  const menu = page.getByRole('menu');
+  await expect(menu).toBeVisible();
+  return menu;
+}
+
 test.describe('read-only space', () => {
   test('says so instead of offering an editor that cannot save', async ({ page }) => {
     await signIn(page);
@@ -94,14 +113,12 @@ test.describe('read-only space', () => {
     await signIn(page);
     await openSpaceWithPermission(page, 'view');
 
-    const card = page.locator('.postit').first();
-    await card.hover();
-    await card.getByRole('button', { name: '메모 메뉴' }).click();
+    const menu = await openNoteMenu(page);
 
-    await expect(page.getByRole('menuitem', { name: '연결과 갈래' })).toBeVisible();
-    await expect(page.getByRole('menuitem', { name: '댓글과 멘션' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: '연결과 갈래' })).toBeVisible();
+    await expect(menu.getByRole('menuitem', { name: '댓글과 멘션' })).toBeVisible();
     for (const gone of ['색상', '제목 붙이기', '질문으로 표시', '이전 버전 복원', '지우기']) {
-      await expect(page.getByRole('menuitem', { name: gone }), `${gone} is still offered`).toHaveCount(0);
+      await expect(menu.getByRole('menuitem', { name: gone }), `${gone} is still offered`).toHaveCount(0);
     }
   });
 
@@ -109,12 +126,30 @@ test.describe('read-only space', () => {
     await signIn(page);
     await openSpaceWithPermission(page, 'manage');
 
-    const card = page.locator('.postit').first();
-    await card.hover();
-    await card.getByRole('button', { name: '메모 메뉴' }).click();
+    const menu = await openNoteMenu(page);
 
     for (const item of ['색상', '제목 붙이기', '질문으로 표시', '연결과 갈래', '댓글과 멘션', '지우기']) {
-      await expect(page.getByRole('menuitem', { name: item }), `${item} went missing`).toBeVisible();
+      await expect(menu.getByRole('menuitem', { name: item }), `${item} went missing`).toBeVisible();
     }
+  });
+
+  /**
+   * Suggesting connections writes them, so it is not offered here.
+   *
+   * The server refused it as well — a read-only member was able to insert four
+   * edges into a space they may only read, because reading the notes is allowed
+   * and nothing after that asked whether they could be written. This is the
+   * half that means the refusal never has to happen.
+   */
+  test('does not offer to add connections to a space it cannot write to', async ({ page }) => {
+    await signIn(page);
+    await openSpaceWithPermission(page, 'view');
+    await expect(page.getByRole('button', { name: '연결 추천 받기' })).toHaveCount(0);
+  });
+
+  test('still offers it where connections can be added', async ({ page }) => {
+    await signIn(page);
+    await openSpaceWithPermission(page, 'manage');
+    await expect(page.getByRole('button', { name: '연결 추천 받기' })).toBeVisible();
   });
 });

@@ -366,6 +366,8 @@ export const en: Dictionary = {
   '이 Dream을 숨기고 스타일 선호도에 반영했습니다.': 'Hidden, and your style preference was updated.',
   '피드백 반영': 'Feedback recorded',
   검토함: 'Inbox',
+  '읽기 전용으로 공유된 공간이라 연결을 추가할 수 없습니다.':
+    'This space is shared with you as read-only, so connections cannot be added.',
   '읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.':
     'Shared with you as read-only. You can still leave comments.',
   '읽기 전용으로 공유된 생각입니다': 'Shared with you as read-only',

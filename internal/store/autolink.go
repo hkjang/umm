@@ -39,6 +39,13 @@ const (
 	// OutcomeDisabled: an administrator turned proposals off, for a deployment
 	// that wants the graph to hold only what people put in it.
 	OutcomeDisabled SuggestionOutcome = "disabled"
+	// OutcomeReadOnly is a space this person may read but not change.
+	//
+	// Suggesting connections writes them, so it is a change to someone's
+	// workspace and not a read. Reading the notes is allowed for a member shared
+	// in to view, and that was as far as the check went — the edges were then
+	// inserted without asking whether they could be.
+	OutcomeReadOnly SuggestionOutcome = "read-only"
 )
 
 // SuggestionResult is what a run produced and why.
@@ -64,6 +71,18 @@ func (s *Store) SuggestLinks(ctx context.Context, userID, spaceID uuid.UUID) (Su
 	if !settings.AutoLinkEnabled {
 		return SuggestionResult{Outcome: OutcomeDisabled, Edges: []Edge{}}, nil
 	}
+	// Asked before the backend is measured. Whether this person may change the
+	// space at all decides more than whether the embedding could judge it, and
+	// answering it first means no embedding work is done for someone whose
+	// result could never be written.
+	writable, err := s.canWriteToSpace(ctx, userID, spaceID)
+	if err != nil {
+		return SuggestionResult{}, err
+	}
+	if !writable {
+		return SuggestionResult{Outcome: OutcomeReadOnly, Edges: []Edge{}}, nil
+	}
+
 	report, err := s.MeasureEmbeddingQuality(ctx, false)
 	if err != nil {
 		return SuggestionResult{}, fmt.Errorf("measure embedding backend: %w", err)
@@ -232,6 +251,20 @@ func (s *Store) dismissedPairs(ctx context.Context, spaceID uuid.UUID) (map[stri
 // createInferredEdge is the only path that writes origin='auto'. It is separate
 // from createEdge because an inferred edge carries a confidence, which the
 // database refuses on every other origin.
+// canWriteToSpace answers whether this person may change the space at all.
+//
+// The same condition the note and edge writes carry, in one place so a new
+// caller can ask instead of inventing its own version of it.
+func (s *Store) canWriteToSpace(ctx context.Context, userID, spaceID uuid.UUID) (bool, error) {
+	var allowed bool
+	err := s.Pool.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$1
+			WHERE s.id=$2 AND (s.owner_id=$1 OR m.permission IN ('edit','manage'))
+		)`, userID, spaceID).Scan(&allowed)
+	return allowed, err
+}
+
 func (s *Store) createInferredEdge(ctx context.Context, userID, spaceID, source, target uuid.UUID, confidence float64) (Edge, error) {
 	edge := Edge{
 		SpaceID: spaceID, SourceID: source, TargetID: target,
@@ -242,9 +275,17 @@ func (s *Store) createInferredEdge(ctx context.Context, userID, spaceID, source,
 		return Edge{}, err
 	}
 	defer tx.Rollback(ctx)
+	// The same condition the ordinary edge path carries. Checked again here
+	// rather than trusted from the caller: this insert is what actually changes
+	// someone's workspace, and a guard that lives only in the caller is one
+	// refactor away from being gone.
 	if err = tx.QueryRow(ctx, `
 		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,origin,confidence,created_by)
-		VALUES($1,$2,$3,'related','auto',$4,$5)
+		SELECT $1,$2,$3,'related','auto',$4,$5
+		WHERE EXISTS(
+			SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$5
+			WHERE s.id=$1 AND (s.owner_id=$5 OR m.permission IN ('edit','manage'))
+		)
 		RETURNING id`, spaceID, source, target, confidence, userID).Scan(&edge.ID); err != nil {
 		return Edge{}, err
 	}

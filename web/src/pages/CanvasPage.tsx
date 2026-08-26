@@ -1079,6 +1079,12 @@ function CanvasInner() {
         showInfo(t('무엇이 유난히 가까운지 판단하기에 생각이 아직 적습니다.'), t('추천을 건너뛰었습니다'));
         return;
       }
+      // Told apart from "nothing was close enough", which is what an unknown
+      // outcome would otherwise be reported as — and which would be untrue.
+      if (result.outcome === 'read-only') {
+        showInfo(t('읽기 전용으로 공유된 공간이라 연결을 추가할 수 없습니다.'), t('추천을 건너뛰었습니다'));
+        return;
+      }
       showInfo(
         t('{count}개 짝을 살펴봤지만 눈에 띄게 가까운 것이 없었습니다.', { count: result.considered }),
         t('추천할 연결이 없습니다'),
@@ -1830,18 +1836,23 @@ function CanvasInner() {
                 data={relationOptions.map((relation) => ({ value: relation, label: relationLabel(relation) }))}
               />
             </Tooltip>
-            <Tooltip label={t('연결 추천 받기')}>
-              <ActionIcon
-                className="canvas-action"
-                variant="subtle"
-                color="dark"
-                loading={suggestBusy}
-                onClick={() => void requestSuggestions()}
-                aria-label={t('연결 추천 받기')}
-              >
-                <IconSparkles size={19} />
-              </ActionIcon>
-            </Tooltip>
+            {/* Suggesting connections writes them, so it is not offered in a
+                space this person may only read. The server refuses it too — this
+                is so the refusal never has to happen. */}
+            {!readOnly && (
+              <Tooltip label={t('연결 추천 받기')}>
+                <ActionIcon
+                  className="canvas-action"
+                  variant="subtle"
+                  color="dark"
+                  loading={suggestBusy}
+                  onClick={() => void requestSuggestions()}
+                  aria-label={t('연결 추천 받기')}
+                >
+                  <IconSparkles size={19} />
+                </ActionIcon>
+              </Tooltip>
+            )}
             <div className="canvas-tool-divider" aria-hidden="true" />
             <Menu position="bottom" withinPortal width={230}>
               <Menu.Target>
