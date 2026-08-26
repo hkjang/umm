@@ -141,6 +141,35 @@ func (c *Client) ApplySource(ctx context.Context, deckID, source string, dryRun 
 	return envelope.Data, nil
 }
 
+// StatusError is a reply Ptium actually sent. Its presence means the request
+// reached Ptium and came back — which is the difference between a connection
+// that does not work and one that works but answered something unexpected.
+type StatusError struct {
+	Status int
+	Detail string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("ptium status %d: %s", e.Status, e.Detail)
+}
+
+// ShapeError is a reply that arrived and could not be read as documented.
+//
+// Ptium answered, so the address and the key are right; only the body was not
+// what this version expects. Reported apart from a failure to connect, because
+// telling someone their connection is broken when it is not sends them looking
+// in the wrong place — and the templates envelope has already changed shape
+// once between versions.
+type ShapeError struct {
+	Err error
+}
+
+func (e *ShapeError) Error() string {
+	return "ptium returned something that is not the documented response: " + e.Err.Error()
+}
+
+func (e *ShapeError) Unwrap() error { return e.Err }
+
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
 	// A read carries no body. Sending "null" with a JSON content type on a GET
 	// is the kind of thing a strict server or a proxy in front of one rejects,
@@ -187,13 +216,13 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		return errors.New("ptium response is too large")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("ptium status %d: %s", response.StatusCode, problemDetail(payload))
+		return &StatusError{Status: response.StatusCode, Detail: problemDetail(payload)}
 	}
 	if out == nil {
 		return nil
 	}
 	if err := json.Unmarshal(payload, out); err != nil {
-		return fmt.Errorf("ptium returned something that is not the documented response: %w", err)
+		return &ShapeError{Err: err}
 	}
 	return nil
 }

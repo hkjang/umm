@@ -553,10 +553,20 @@ func (s *Server) testPtium(w http.ResponseWriter, r *http.Request) {
 	// connection does not require retyping it.
 	var stored presentation.Config
 	hasStored := s.Store.GetSetting(r.Context(), "ptium", &stored) == nil
-	key := body.APIKey
-	if hasStored && (key == "" || key == secretMask) {
-		key = s.Store.DecryptSetting(stored.APIKey)
+	storedKey := ""
+	if hasStored {
+		storedKey = s.Store.DecryptSetting(stored.APIKey)
 	}
+	key := body.APIKey
+	usingStoredKey := key == "" || key == secretMask
+	if hasStored && usingStoredKey {
+		key = storedKey
+	}
+	// A pass on a key nobody has saved yet is the most misleading result this
+	// screen can give: it works, the page is reloaded, the saved key is used
+	// instead, and the connection stops working with nothing having changed on
+	// screen. Said plainly rather than left for the reload to reveal.
+	unsaved := !usingStoredKey && key != "" && key != storedKey
 	base := strings.TrimSpace(body.BaseURL)
 	if base == "" && hasStored {
 		base = stored.BaseURL
@@ -576,16 +586,80 @@ func (s *Server) testPtium(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	/*
+	 * Listing templates is how the connection is tested, and it used to be the
+	 * whole of the verdict: anything it could not do was reported as the
+	 * connection failing.
+	 *
+	 * Templates are the optional part. A deck can be made without one, and a
+	 * Ptium that keeps them somewhere else, or answers that endpoint in a shape
+	 * this version does not know, is still a Ptium umm can talk to. Telling
+	 * someone their connection is broken when it works sends them to check the
+	 * address and the key, which are fine.
+	 *
+	 * So the reply is read for what it actually says. Nothing came back at all,
+	 * or Ptium refused the key: the connection does not work, and that is worth
+	 * stopping for. Ptium answered anything else — a 404, a 500, a body this
+	 * version cannot parse — the connection works and the templates are simply
+	 * unavailable.
+	 */
 	templates, err := client.Templates(r.Context())
-	if err != nil {
+	switch {
+	case err == nil:
+		writeJSON(w, 200, map[string]any{
+			"ok":        true,
+			"message":   withSaveWarning(fmt.Sprintf("Ptium에 연결했습니다. 템플릿 %d개를 찾았습니다.", len(templates)), unsaved),
+			"unsaved":   unsaved,
+			"templates": templates,
+		})
+	case isPtiumAuthFailure(err):
+		writeError(w, 400, "Ptium이 API 키를 거부했습니다: "+err.Error())
+	case ptiumAnswered(err):
+		writeJSON(w, 200, map[string]any{
+			"ok":        true,
+			"message":   withSaveWarning("Ptium에 연결했습니다. 템플릿 목록은 가져오지 못했습니다 — 발표 자료를 만드는 데는 지장이 없고, 템플릿은 직접 입력할 수 있습니다.", unsaved),
+			"unsaved":   unsaved,
+			"warning":   err.Error(),
+			"templates": []presentation.Template{},
+		})
+	default:
 		writeError(w, 400, "Ptium 연결 실패: "+err.Error())
-		return
 	}
-	writeJSON(w, 200, map[string]any{
-		"ok":        true,
-		"message":   fmt.Sprintf("Ptium에 연결했습니다. 템플릿 %d개를 찾았습니다.", len(templates)),
-		"templates": templates,
-	})
+}
+
+// withSaveWarning appends the note that the key under test is not the saved one.
+func withSaveWarning(message string, unsaved bool) string {
+	if !unsaved {
+		return message
+	}
+	return message + " 다만 이 키는 아직 저장되지 않았습니다 — 저장해야 실제 연동에 쓰입니다."
+}
+
+// isPtiumAuthFailure is Ptium saying the credential is wrong.
+//
+// Separated from every other reply because it is the one the person can act on
+// directly, and because it must not be softened into "connected" — a key Ptium
+// refuses is not a working integration.
+func isPtiumAuthFailure(err error) bool {
+	var status *presentation.StatusError
+	if !errors.As(err, &status) {
+		return false
+	}
+	return status.Status == http.StatusUnauthorized || status.Status == http.StatusForbidden
+}
+
+// ptiumAnswered reports whether Ptium replied at all, whatever it said.
+//
+// A reply means the address resolved, the connection was made and any
+// credential was accepted far enough to get a response. What came back may
+// still be useless for listing templates.
+func ptiumAnswered(err error) bool {
+	var status *presentation.StatusError
+	if errors.As(err, &status) {
+		return true
+	}
+	var shape *presentation.ShapeError
+	return errors.As(err, &shape)
 }
 
 func (s *Server) testEmbeddingGateway(w http.ResponseWriter, r *http.Request) {

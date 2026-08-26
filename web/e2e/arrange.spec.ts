@@ -56,10 +56,19 @@ test.describe('arranging thoughts', () => {
 
     await page.getByLabel('겹침 정리').click();
     await expect(page.getByText(/겹친 생각 \d+개만 옮겼습니다/)).toBeVisible();
-    const after = await positionsOf(page, space);
 
     // The pile came apart.
-    expect(after[`${marker}-겹침-1`]).not.toBe(before[`${marker}-겹침-1`]);
+    //
+    // Waited for rather than read once. The notice is raised as soon as the
+    // canvas has worked out the new positions; storing them is a separate
+    // request per note that is still in flight at that moment. Reading the
+    // server straight after the notice caught the old positions now and then,
+    // and the test failed saying a thought had not moved when it had — on
+    // screen it already had.
+    await expect
+      .poll(async () => (await positionsOf(page, space))[`${marker}-겹침-1`])
+      .not.toBe(before[`${marker}-겹침-1`]);
+    const after = await positionsOf(page, space);
     // The thought that had room was not touched — this is the part that keeps a
     // layout rather than replacing it.
     expect(after[`${marker}-멀리`]).toBe(before[`${marker}-멀리`]);
