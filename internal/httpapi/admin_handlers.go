@@ -440,6 +440,18 @@ func (s *Server) runDreams(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 202, map[string]string{"status": "queued"})
 }
 
+// adminAudit lists what was done, narrowed to the question being asked.
+//
+// The log records everything worth recording — a space unshared, a key
+// rotated, a thought restored, other sessions ended — and it could only be
+// read newest-first, all of it. Answering "who took this person out of that
+// space" meant scrolling until you found it, which is not an answer anyone
+// gets to.
+//
+// Every filter is optional and they combine. An unknown action or a username
+// nobody has narrows the result to nothing rather than being ignored: a filter
+// that silently does not apply is worse than an empty page, because the page
+// then looks like an answer.
 func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
 	offset, ok := decodeOffsetCursor(r.URL.Query().Get("cursor"))
 	if !ok {
@@ -447,7 +459,56 @@ func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := parsePageLimit(r, 100, 300)
-	rows, err := s.Store.Pool.Query(r.Context(), `SELECT a.id,a.action,a.resource_type,a.resource_id,a.metadata,a.created_at,COALESCE(u.username,'system') FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.created_at DESC,a.id DESC LIMIT $1 OFFSET $2`, limit+1, offset)
+
+	where := []string{}
+	args := []any{}
+	add := func(clause string, value any) {
+		args = append(args, value)
+		where = append(where, fmt.Sprintf(clause, len(args)))
+	}
+	query := r.URL.Query()
+	if actor := strings.TrimSpace(query.Get("actor")); actor != "" {
+		// 'system' is what the listing shows for an action with no actor, so
+		// asking for it has to find those rather than nothing.
+		if actor == "system" {
+			where = append(where, "a.actor_id IS NULL")
+		} else {
+			add("u.username = $%d::citext", actor)
+		}
+	}
+	if action := strings.TrimSpace(query.Get("action")); action != "" {
+		add("a.action = $%d", action)
+	}
+	if kind := strings.TrimSpace(query.Get("resourceType")); kind != "" {
+		add("a.resource_type = $%d", kind)
+	}
+	if id := strings.TrimSpace(query.Get("resourceId")); id != "" {
+		add("a.resource_id = $%d", id)
+	}
+	if from := strings.TrimSpace(query.Get("from")); from != "" {
+		at, parseErr := time.Parse(time.RFC3339, from)
+		if parseErr != nil {
+			writeError(w, 400, "시작 시각이 올바르지 않습니다.")
+			return
+		}
+		add("a.created_at >= $%d", at)
+	}
+	if to := strings.TrimSpace(query.Get("to")); to != "" {
+		at, parseErr := time.Parse(time.RFC3339, to)
+		if parseErr != nil {
+			writeError(w, 400, "끝 시각이 올바르지 않습니다.")
+			return
+		}
+		add("a.created_at <= $%d", at)
+	}
+	clause := ""
+	if len(where) > 0 {
+		clause = " WHERE " + strings.Join(where, " AND ")
+	}
+	args = append(args, limit+1, offset)
+
+	rows, err := s.Store.Pool.Query(r.Context(), `SELECT a.id,a.action,a.resource_type,a.resource_id,a.metadata,a.created_at,COALESCE(u.username,'system') FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id`+clause+
+		fmt.Sprintf(` ORDER BY a.created_at DESC,a.id DESC LIMIT $%d OFFSET $%d`, len(args)-1, len(args)), args...)
 	if err != nil {
 		writeError(w, 500, "감사 로그를 불러오지 못했습니다.")
 		return
@@ -474,7 +535,23 @@ func (s *Server) adminAudit(w http.ResponseWriter, r *http.Request) {
 		out = out[:limit]
 		next = encodeOffsetCursor(offset + limit)
 	}
-	writeJSON(w, 200, map[string]any{"audit": out, "nextCursor": next})
+	// The actions actually in use, so the screen can offer them instead of
+	// asking someone to type "space.unshare" exactly. Taken from a bounded
+	// window of recent rows rather than the whole table, which would be a full
+	// scan on a log that only ever grows.
+	actions := []string{}
+	actionRows, err := s.Store.Pool.Query(r.Context(),
+		`SELECT DISTINCT action FROM (SELECT action FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 5000) recent ORDER BY action`)
+	if err == nil {
+		for actionRows.Next() {
+			var action string
+			if actionRows.Scan(&action) == nil {
+				actions = append(actions, action)
+			}
+		}
+		actionRows.Close()
+	}
+	writeJSON(w, 200, map[string]any{"audit": out, "nextCursor": next, "actions": actions})
 }
 
 // embeddingQuality reports what the configured embedding backend actually

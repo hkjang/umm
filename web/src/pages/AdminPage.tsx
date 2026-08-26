@@ -144,6 +144,8 @@ export default function AdminPage() {
   const [audit, setAudit] = useState<Audit[]>([]);
   const [auditCursor, setAuditCursor] = useState('');
   const [auditLoading, setAuditLoading] = useState(false);
+  const [auditActions, setAuditActions] = useState<string[]>([]);
+  const [auditFilter, setAuditFilter] = useState({ actor: '', action: '', resourceId: '' });
   const [keyStatus, setKeyStatus] = useState<Record<string, number | string>>({});
   const [evals, setEvals] = useState<EvalCase[]>([]);
   const [evalTypes, setEvalTypes] = useState<string[]>([]);
@@ -162,9 +164,10 @@ export default function AdminPage() {
         }),
         api<Record<string, any>>('/admin/metrics').then(setMetrics),
         api<{ users: AdminUser[] }>('/admin/users').then((v) => setUsers(v.users)),
-        api<{ audit: Audit[]; nextCursor: string }>('/admin/audit?limit=100').then((v) => {
+        api<{ audit: Audit[]; nextCursor: string; actions?: string[] }>('/admin/audit?limit=100').then((v) => {
           setAudit(v.audit);
           setAuditCursor(v.nextCursor || '');
+          setAuditActions(v.actions || []);
         }),
         api<Record<string, number | string>>('/admin/security/encryption').then(setKeyStatus),
         api<{ cases: EvalCase[]; dreamTypes: string[] }>('/admin/ai-evals').then((value) => {
@@ -354,14 +357,47 @@ export default function AdminPage() {
     );
     setUsers((all) => all.map((v) => (v.id === user.id ? next : v)));
   };
+  /* The filters as the server wants them, empty ones left out entirely. */
+  const auditQuery = (using = auditFilter) => {
+    const query = new URLSearchParams({ limit: '100' });
+    if (using.actor.trim()) query.set('actor', using.actor.trim());
+    if (using.action) query.set('action', using.action);
+    if (using.resourceId.trim()) query.set('resourceId', using.resourceId.trim());
+    return query;
+  };
+  /*
+   * Takes the filter to use rather than reading it back from state.
+   *
+   * Clearing the filters sets them and searches in the same breath, and state
+   * set a moment ago is not readable yet — so clearing searched with exactly
+   * the conditions it had just removed, and the rows never changed.
+   */
+  const loadAudit = async (using = auditFilter) => {
+    setAuditLoading(true);
+    setError('');
+    try {
+      const value = await api<{ audit: Audit[]; nextCursor: string; actions?: string[] }>(
+        `/admin/audit?${auditQuery(using)}`,
+      );
+      // Replaced rather than appended: this is a new question, not more of the
+      // previous answer.
+      setAudit(value.audit);
+      setAuditCursor(value.nextCursor || '');
+      if (value.actions) setAuditActions(value.actions);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : t('감사 로그를 불러오지 못했습니다.'));
+    } finally {
+      setAuditLoading(false);
+    }
+  };
   const loadMoreAudit = async () => {
     if (!auditCursor || auditLoading) return;
     setAuditLoading(true);
     setError('');
     try {
-      const value = await api<{ audit: Audit[]; nextCursor: string }>(
-        `/admin/audit?limit=100&cursor=${encodeURIComponent(auditCursor)}`,
-      );
+      const query = auditQuery();
+      query.set('cursor', auditCursor);
+      const value = await api<{ audit: Audit[]; nextCursor: string }>(`/admin/audit?${query}`);
       setAudit((all) => [...all, ...value.audit.filter((item) => !all.some((existing) => existing.id === item.id))]);
       setAuditCursor(value.nextCursor || '');
     } catch (reason) {
@@ -1091,7 +1127,16 @@ export default function AdminPage() {
           )}
           {section === 'users' && <Users users={users} update={updateUser} />}{' '}
           {section === 'audit' && (
-            <AuditTable entries={audit} nextCursor={auditCursor} loading={auditLoading} onMore={loadMoreAudit} />
+            <AuditTable
+              entries={audit}
+              nextCursor={auditCursor}
+              loading={auditLoading}
+              onMore={loadMoreAudit}
+              actions={auditActions}
+              filter={auditFilter}
+              onFilter={setAuditFilter}
+              onSearch={loadAudit}
+            />
           )}
         </Stack>
       </section>
@@ -1928,15 +1973,74 @@ function AuditTable({
   nextCursor,
   loading,
   onMore,
+  actions,
+  filter,
+  onFilter,
+  onSearch,
 }: {
   entries: Audit[];
   nextCursor: string;
   loading: boolean;
   onMore: () => Promise<void>;
+  /* The actions actually in the log, so nobody has to type space.unshare. */
+  actions: string[];
+  filter: { actor: string; action: string; resourceId: string };
+  onFilter: (next: { actor: string; action: string; resourceId: string }) => void;
+  onSearch: (using?: { actor: string; action: string; resourceId: string }) => Promise<void>;
 }) {
   const { t, formatDate } = useTranslation();
+  const filtering = !!(filter.actor.trim() || filter.action || filter.resourceId.trim());
   return (
     <Card radius="lg" withBorder p="xl">
+      <Group align="flex-end" gap="sm" mb="lg" wrap="wrap">
+        <TextInput
+          label={t('행위자')}
+          placeholder={t('아이디 또는 system')}
+          value={filter.actor}
+          onChange={(e) => onFilter({ ...filter, actor: e.currentTarget.value })}
+          w={200}
+        />
+        <Select
+          label={t('작업')}
+          placeholder={t('전체')}
+          data={actions}
+          value={filter.action || null}
+          onChange={(v) => onFilter({ ...filter, action: v || '' })}
+          clearable
+          searchable
+          w={220}
+        />
+        <TextInput
+          label={t('대상 ID')}
+          placeholder={t('공간·메모·키의 ID')}
+          value={filter.resourceId}
+          onChange={(e) => onFilter({ ...filter, resourceId: e.currentTarget.value })}
+          w={300}
+        />
+        <Button loading={loading} onClick={() => void onSearch()}>
+          {t('찾기')}
+        </Button>
+        {filtering && (
+          <Button
+            variant="subtle"
+            color="gray"
+            onClick={() => {
+              const cleared = { actor: '', action: '', resourceId: '' };
+              onFilter(cleared);
+              // Handed over rather than read back: the state set on the line
+              // above is not visible to onSearch yet.
+              void onSearch(cleared);
+            }}
+          >
+            {t('조건 지우기')}
+          </Button>
+        )}
+      </Group>
+      {filtering && entries.length === 0 && !loading && (
+        <Text c="dimmed" mb="md">
+          {t('이 조건에 맞는 기록이 없습니다. 기록이 없다는 뜻이지, 찾지 못했다는 뜻이 아닙니다.')}
+        </Text>
+      )}
       <Table.ScrollContainer minWidth={760}>
         <Table verticalSpacing="sm" striped>
           <Table.Thead>
