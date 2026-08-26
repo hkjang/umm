@@ -76,7 +76,15 @@ export default function ImportThoughtsModal({ opened, onClose, onImport }: Props
     try {
       const result = await onImport(parsed, setDone);
       if (result.failed.length > 0) {
-        setText(formatImportedThoughts(result.failed));
+        // Written back as an export when that is what it came from, so a retry
+        // restores what the first attempt would have.
+        setText(
+          formatImportedThoughts(result.failed, {
+            banner: parsed.banner,
+            connections: parsed.connections,
+            lines: parsed.lines,
+          }),
+        );
         setError(
           t('{count}개의 생각을 가져오지 못했습니다. 입력란에 남겨 두었으니 다시 시도해 주세요.', {
             count: result.failed.length,
