@@ -2403,6 +2403,7 @@ function CanvasInner() {
               assignments={branchAssignments}
               onChanged={() => void loadBranches()}
               onFocus={(label, ids) => setLens({ label, ids: new Set(ids) })}
+              readOnly={readOnly}
             />
           )}
           {backlinks.length > 0 && (

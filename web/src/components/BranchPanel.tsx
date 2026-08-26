@@ -34,6 +34,7 @@ export default function BranchPanel({
   assignments,
   onChanged,
   onFocus,
+  readOnly = false,
 }: {
   spaceId: string;
   noteId?: string;
@@ -41,6 +42,17 @@ export default function BranchPanel({
   // set aside has to be marked whether or not anyone has selected it.
   branches: Branch[];
   assignments: Record<string, string>;
+  /*
+   * Everything here writes: filing a thought into a line, adopting one,
+   * setting one aside, reopening it, deleting it, starting a new one. A member
+   * shared in to read is refused all of them by the server, and the panel used
+   * to offer every one regardless.
+   *
+   * What they keep is the part worth keeping: which line a thought belongs to
+   * and what became of it, reason and all. Not being able to change it is no
+   * reason to be shown less.
+   */
+  readOnly?: boolean;
   onChanged: () => void;
   onFocus?: (label: string, noteIds: string[]) => void;
 }) {
@@ -129,8 +141,8 @@ export default function BranchPanel({
                 size="xs"
                 variant={current === branch.id ? 'filled' : 'light'}
                 color={branch.status === 'abandoned' ? 'gray' : branch.status === 'adopted' ? 'teal' : 'indigo'}
-                style={{ cursor: noteId ? 'pointer' : 'default', flexShrink: 0 }}
-                onClick={() => noteId && void fileNote(current === branch.id ? null : branch.id)}
+                style={{ cursor: noteId && !readOnly ? 'pointer' : 'default', flexShrink: 0 }}
+                onClick={() => !readOnly && noteId && void fileNote(current === branch.id ? null : branch.id)}
                 title={branch.status === 'open' ? undefined : t('이유: {reason}', { reason: branch.resolution })}
               >
                 {branch.status === 'abandoned' ? t('접어 둠') : branch.status === 'adopted' ? t('채택') : t('진행 중')}
@@ -142,44 +154,46 @@ export default function BranchPanel({
                 {branch.notes}
               </Text>
             </Group>
-            <Menu position="bottom-end" withinPortal>
-              <Menu.Target>
-                <ActionIcon size="sm" variant="subtle" aria-label={t('갈래 메뉴')}>
-                  <IconDots size={14} />
-                </ActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                {onFocus && (
-                  <Menu.Item
-                    onClick={() =>
-                      onFocus(
-                        branch.name,
-                        Object.entries(assignments)
-                          .filter(([, id]) => id === branch.id)
-                          .map(([note]) => note),
-                      )
-                    }
-                  >
-                    {t('이 갈래만 보기')}
+            {!readOnly && (
+              <Menu position="bottom-end" withinPortal>
+                <Menu.Target>
+                  <ActionIcon size="sm" variant="subtle" aria-label={t('갈래 메뉴')}>
+                    <IconDots size={14} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {onFocus && (
+                    <Menu.Item
+                      onClick={() =>
+                        onFocus(
+                          branch.name,
+                          Object.entries(assignments)
+                            .filter(([, id]) => id === branch.id)
+                            .map(([note]) => note),
+                        )
+                      }
+                    >
+                      {t('이 갈래만 보기')}
+                    </Menu.Item>
+                  )}
+                  {branch.status === 'open' ? (
+                    <>
+                      <Menu.Item onClick={() => setResolving({ branch, status: 'adopted' })}>
+                        {t('이 방향으로 정함')}
+                      </Menu.Item>
+                      <Menu.Item onClick={() => setResolving({ branch, status: 'abandoned' })}>
+                        {t('접어 두기')}
+                      </Menu.Item>
+                    </>
+                  ) : (
+                    <Menu.Item onClick={() => void act(branch, 'reopen')}>{t('다시 열기')}</Menu.Item>
+                  )}
+                  <Menu.Item color="red" onClick={() => void act(branch, 'delete')}>
+                    {t('갈래만 지우기 (생각은 남습니다)')}
                   </Menu.Item>
-                )}
-                {branch.status === 'open' ? (
-                  <>
-                    <Menu.Item onClick={() => setResolving({ branch, status: 'adopted' })}>
-                      {t('이 방향으로 정함')}
-                    </Menu.Item>
-                    <Menu.Item onClick={() => setResolving({ branch, status: 'abandoned' })}>
-                      {t('접어 두기')}
-                    </Menu.Item>
-                  </>
-                ) : (
-                  <Menu.Item onClick={() => void act(branch, 'reopen')}>{t('다시 열기')}</Menu.Item>
-                )}
-                <Menu.Item color="red" onClick={() => void act(branch, 'delete')}>
-                  {t('갈래만 지우기 (생각은 남습니다)')}
-                </Menu.Item>
-              </Menu.Dropdown>
-            </Menu>
+                </Menu.Dropdown>
+              </Menu>
+            )}
           </Group>
         ))}
       </Stack>
@@ -218,22 +232,24 @@ export default function BranchPanel({
         </Stack>
       )}
 
-      <Group gap={6} mt="xs" wrap="nowrap">
-        <TextInput
-          size="xs"
-          style={{ flex: 1 }}
-          placeholder={t('새 갈래 이름')}
-          aria-label={t('새 갈래 이름')}
-          value={name}
-          onChange={(e) => setName(e.currentTarget.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.nativeEvent.isComposing) void create();
-          }}
-        />
-        <Button size="xs" variant="light" loading={busy} disabled={!name.trim()} onClick={() => void create()}>
-          {t('만들기')}
-        </Button>
-      </Group>
+      {!readOnly && (
+        <Group gap={6} mt="xs" wrap="nowrap">
+          <TextInput
+            size="xs"
+            style={{ flex: 1 }}
+            placeholder={t('새 갈래 이름')}
+            aria-label={t('새 갈래 이름')}
+            value={name}
+            onChange={(e) => setName(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) void create();
+            }}
+          />
+          <Button size="xs" variant="light" loading={busy} disabled={!name.trim()} onClick={() => void create()}>
+            {t('만들기')}
+          </Button>
+        </Group>
+      )}
     </>
   );
 }

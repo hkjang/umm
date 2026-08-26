@@ -239,4 +239,43 @@ test.describe('read-only space', () => {
     const commentMenu = page.getByRole('menu');
     await expect(commentMenu.getByRole('menuitem', { name: '해결 표시' })).toBeVisible();
   });
+
+  // Lines of thinking are the same story again.
+  //
+  // Everything the panel offers writes — filing a thought into a line,
+  // adopting, setting aside, reopening, deleting, starting a new one — and it
+  // offered all of them to a reader, who is refused every one by the server.
+  // What they keep is what is worth keeping: which line a thought is in and
+  // what became of it.
+  test('the lines panel shows the lines without offering to change them', async ({ page }) => {
+    await signIn(page);
+    const spaceId = await openSpaceWithPermission(page, 'view');
+    await page.evaluate(async (id) => {
+      const notes = await (await fetch(`/api/v1/spaces/${id}/notes`)).json();
+      const branch = await (
+        await fetch(`/api/v1/spaces/${id}/branches`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: '주인의 갈래' }),
+        })
+      ).json();
+      await fetch(`/api/v1/notes/${notes.notes[0].id}/branch`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branchId: branch.id }),
+      });
+    }, spaceId);
+    await page.reload();
+    await expect(page.getByText('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')).toBeVisible();
+
+    // The lines live in the connections panel, which a reader may open.
+    const menu = await openNoteMenu(page);
+    await menu.getByRole('menuitem', { name: '연결과 갈래' }).click();
+
+    // The line is visible — that is the half a reader needs.
+    await expect(page.getByText('주인의 갈래')).toBeVisible();
+    // And nothing on offer to change it.
+    await expect(page.getByRole('button', { name: '갈래 메뉴' })).toHaveCount(0);
+    await expect(page.getByRole('textbox', { name: '새 갈래 이름' })).toHaveCount(0);
+  });
 });
