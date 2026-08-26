@@ -33,7 +33,23 @@ export default function ImportThoughtsModal({ opened, onClose, onImport }: Props
 
   const parsed = useMemo(() => readMarkdownDocument(text), [text]);
   const thoughts = parsed.thoughts;
-  const overLimit = thoughts.length > maxImportedThoughts;
+  /*
+   * The cap is for someone else's Markdown, not for your own space coming back.
+   *
+   * It exists so a large vault cannot flood a canvas in a single click — a
+   * count nobody expected, from a file nobody read. An umm export is neither:
+   * every thought in it was already in a umm space, and restoring it is a
+   * deliberate act.
+   *
+   * Leaving the cap on made the backup useless exactly where a backup matters.
+   * A space of two thousand notes — the size this canvas is built for — could
+   * not be restored at all, and the advice the screen gave, to split the input
+   * and try again, produced the worst possible result: only the first piece
+   * carries the banner, so every piece after it was read as ordinary Markdown,
+   * with the ids and canvas positions left in the bodies and each untitled
+   * thought named "Thought".
+   */
+  const overLimit = !parsed.isExport && thoughts.length > maxImportedThoughts;
   const limitError = overLimit
     ? t('한 번에 최대 {max}개의 생각을 가져올 수 있습니다. 현재 {count}개입니다. 입력을 나누어 다시 시도해 주세요.', {
         max: maxImportedThoughts,

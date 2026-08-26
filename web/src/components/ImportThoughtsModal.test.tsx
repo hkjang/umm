@@ -40,6 +40,36 @@ describe('ImportThoughtsModal', () => {
     ).toBeInTheDocument();
   });
 
+  // The cap is for someone else's Markdown. A space of two thousand notes is
+  // the size this canvas is built for, and leaving the cap on made its own
+  // backup unrestorable — while the advice on screen, to split the input,
+  // produced pieces that no longer looked like an export at all.
+  it('lets a space larger than the cap come back from its own export', async () => {
+    const onClose = vi.fn();
+    const onImport = vi.fn(async ({ thoughts }: ImportedDocument) => ({ created: thoughts.length, failed: [] }));
+    render(
+      <MantineProvider>
+        <TranslationProvider>
+          <ImportThoughtsModal opened onClose={onClose} onImport={onImport} />
+        </TranslationProvider>
+      </MantineProvider>,
+    );
+
+    const body = Array.from(
+      { length: maxImportedThoughts + 50 },
+      (_, index) => `## Thought\n\n생각 ${index}\n\n- id: \`n-${index}\`\n- canvas: \`${index}, 0\`\n`,
+    ).join('\n');
+    const editor = await screen.findByRole('textbox', { name: '가져올 내용' });
+    fireEvent.change(editor, {
+      target: { value: `# 큰 공간\n\nExported from umm at 2026-08-26T18:00:00+09:00.\n\n${body}` },
+    });
+
+    expect(screen.queryByText(new RegExp(`한 번에 최대 ${maxImportedThoughts}개`))).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '가져오기' }));
+    await waitFor(() => expect(onImport).toHaveBeenCalledOnce());
+    expect(onImport.mock.calls[0][0].thoughts).toHaveLength(maxImportedThoughts + 50);
+  });
+
   it('rejects an oversized draft without importing or clearing its tail', async () => {
     const onClose = vi.fn();
     const onImport = vi.fn(async () => ({ created: 0, failed: [] }));

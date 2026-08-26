@@ -43,6 +43,8 @@ export interface ImportedDocument {
   thoughts: ImportedThought[];
   connections: ImportedConnection[];
   lines: ImportedLine[];
+  /** Whether this is a file umm wrote, rather than anyone's Markdown. */
+  isExport: boolean;
 }
 
 export interface ImportThoughtsResult {
@@ -238,7 +240,12 @@ export function readMarkdownDocument(source: string): ImportedDocument {
     // heading itself as the content rather than dropping the section.
     thoughts.push({ title, content: content || title, ...carried });
   }
-  return { thoughts: thoughts.filter((thought) => thought.content !== ''), connections, lines: linesOfThinking };
+  return {
+    thoughts: thoughts.filter((thought) => thought.content !== ''),
+    connections,
+    lines: linesOfThinking,
+    isExport: ummExport,
+  };
 }
 
 /**
