@@ -97,7 +97,12 @@ import { neighbourhood } from '../lens';
 import { hasOverlaps, packGroups, ringAround, spreadOverlaps, type Placement } from '../layout';
 import type { Branch } from '../components/BranchPanel';
 import { readLocalStorage, readSessionStorage, writeLocalStorage, writeSessionStorage } from '../lib/browser-storage';
-import { importLayout, type ImportedThought, type ImportThoughtsResult } from '../lib/markdown-import';
+import {
+  importLayout,
+  type ImportedThought,
+  type ImportedDocument,
+  type ImportThoughtsResult,
+} from '../lib/markdown-import';
 import { originLabel, relationLabel, relationOptions } from '../lib/edge-vocabulary';
 import { restoreAfterFailedWrite } from '../lib/optimistic-write';
 import ClusterNode, { type ClusterNodeData } from '../components/ClusterNode';
@@ -989,45 +994,81 @@ function CanvasInner() {
   // Imported thoughts are created one at a time so the progress bar reflects
   // real work and one rejected note cannot lose the rest of the batch.
   const importThoughts = useCallback(
-    async (thoughts: ImportedThought[], onProgress: (done: number) => void): Promise<ImportThoughtsResult> => {
+    async (parsed: ImportedDocument, onProgress: (done: number) => void): Promise<ImportThoughtsResult> => {
+      const { thoughts, connections } = parsed;
       if (thoughts.length === 0) return { created: 0, failed: [] };
       if (!activeSpace) return { created: 0, failed: thoughts };
       const viewport = flow.screenToFlowPosition({ x: 140, y: 180 });
       const created: ThoughtNote[] = [];
       const failed: ImportedThought[] = [];
+      // What each thought used to be called, so the connections between them can
+      // be found again on the other side.
+      const restored = new Map<string, string>();
       for (const [index, thought] of thoughts.entries()) {
-        const position = importLayout(index, viewport.x, viewport.y);
+        // A thought umm exported goes back where it was. On this canvas where a
+        // thought sits is part of what it says, and a restored space laid out in
+        // a fresh grid is a list of sentences, not the space someone built.
+        const laidOut = importLayout(index, viewport.x, viewport.y);
+        const position = thought.x === undefined || thought.y === undefined ? laidOut : { x: thought.x, y: thought.y };
         try {
-          created.push(
-            await api<ThoughtNote>(`/spaces/${activeSpace}/notes`, {
-              ...json('POST', {
-                content: thought.content,
-                title: thought.title,
-                color: 'yellow',
-                kind: 'thought',
-                x: position.x,
-                y: position.y,
-                width: 240,
-                height: 160,
-                rotation: Math.round((Math.random() - 0.5) * 2),
-              }),
-              silent: true,
+          const note = await api<ThoughtNote>(`/spaces/${activeSpace}/notes`, {
+            ...json('POST', {
+              content: thought.content,
+              title: thought.title,
+              color: 'yellow',
+              kind: 'thought',
+              x: position.x,
+              y: position.y,
+              width: 240,
+              height: 160,
+              rotation: Math.round((Math.random() - 0.5) * 2),
             }),
-          );
+            silent: true,
+          });
+          created.push(note);
+          if (thought.sourceId) restored.set(thought.sourceId, note.id);
         } catch {
           // A single rejected note must not abandon the ones that follow.
           failed.push(thought);
         }
         onProgress(index + 1);
       }
+
+      // The connections, rebuilt against the thoughts that actually arrived.
+      //
+      // A connection whose either end failed to import has nowhere to attach,
+      // and is dropped rather than reported: the thought it belonged to is
+      // already in the retry draft, and a connection to a thought that is not
+      // there cannot be retried on its own.
+      let connected = 0;
+      for (const connection of connections) {
+        const source = restored.get(connection.from);
+        const target = restored.get(connection.to);
+        if (!source || !target) continue;
+        try {
+          await api<ThoughtEdge>(`/spaces/${activeSpace}/edges`, {
+            ...json('POST', { source, target, relation: connection.relation }),
+            silent: true,
+          });
+          connected += 1;
+        } catch {
+          // A refused connection is not worth losing the import over.
+        }
+      }
+      if (connected > 0) await loadCanvas(true);
       if (created.length > 0) {
         for (const note of created) durableNotesRef.current[note.id] = note;
         syncNotes([...Object.values(notesRef.current), ...created]);
-        showSuccess(t('{count}개의 생각을 캔버스에 붙였습니다.', { count: created.length }), t('가져오기 완료'));
+        showSuccess(
+          connected > 0
+            ? t('{count}개의 생각과 {links}개의 연결을 되살렸습니다.', { count: created.length, links: connected })
+            : t('{count}개의 생각을 캔버스에 붙였습니다.', { count: created.length }),
+          t('가져오기 완료'),
+        );
       }
       return { created: created.length, failed };
     },
-    [activeSpace, flow, t],
+    [activeSpace, flow, t, loadCanvas],
   );
 
   const onPaneDoubleClick = useCallback(

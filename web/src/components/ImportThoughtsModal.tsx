@@ -5,15 +5,15 @@ import { useTranslation } from '../i18n';
 import {
   formatImportedThoughts,
   maxImportedThoughts,
-  splitMarkdownThoughts,
-  type ImportedThought,
+  readMarkdownDocument,
+  type ImportedDocument,
   type ImportThoughtsResult,
 } from '../lib/markdown-import';
 
 interface Props {
   opened: boolean;
   onClose: () => void;
-  onImport: (thoughts: ImportedThought[], onProgress: (done: number) => void) => Promise<ImportThoughtsResult>;
+  onImport: (document: ImportedDocument, onProgress: (done: number) => void) => Promise<ImportThoughtsResult>;
 }
 
 /**
@@ -31,7 +31,8 @@ export default function ImportThoughtsModal({ opened, onClose, onImport }: Props
   const [done, setDone] = useState(0);
   const [error, setError] = useState('');
 
-  const thoughts = useMemo(() => splitMarkdownThoughts(text), [text]);
+  const parsed = useMemo(() => readMarkdownDocument(text), [text]);
+  const thoughts = parsed.thoughts;
   const overLimit = thoughts.length > maxImportedThoughts;
   const limitError = overLimit
     ? t('한 번에 최대 {max}개의 생각을 가져올 수 있습니다. 현재 {count}개입니다. 입력을 나누어 다시 시도해 주세요.', {
@@ -57,7 +58,7 @@ export default function ImportThoughtsModal({ opened, onClose, onImport }: Props
     setError('');
     setDone(0);
     try {
-      const result = await onImport(thoughts, setDone);
+      const result = await onImport(parsed, setDone);
       if (result.failed.length > 0) {
         setText(formatImportedThoughts(result.failed));
         setError(
