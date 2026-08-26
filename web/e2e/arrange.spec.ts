@@ -65,10 +65,29 @@ test.describe('arranging thoughts', () => {
     // server straight after the notice caught the old positions now and then,
     // and the test failed saying a thought had not moved when it had — on
     // screen it already had.
+    // Every thought in the pile, not just one of them.
+    //
+    // Waiting for a single note said nothing about the rest, and the assertion
+    // below is that a thought was *not* moved — which a write still in flight
+    // would also satisfy, so the test could pass while arranging was quietly
+    // shifting something it had no business touching.
+    // Every thought the arrangement moves, not just one of them.
+    //
+    // The pile is separated by holding the first one still and moving the four
+    // behind it, and each move is its own request. Waiting for one of the four
+    // said nothing about the other three — and the assertion below is that a
+    // thought was *not* moved, which a write still in flight would also
+    // satisfy. So the test could pass while arranging quietly shifted something
+    // it had no business touching.
     await expect
-      .poll(async () => (await positionsOf(page, space))[`${marker}-겹침-1`])
-      .not.toBe(before[`${marker}-겹침-1`]);
+      .poll(async () => {
+        const now = await positionsOf(page, space);
+        return [1, 2, 3, 4].every((i) => now[`${marker}-겹침-${i}`] !== before[`${marker}-겹침-${i}`]);
+      })
+      .toBe(true);
     const after = await positionsOf(page, space);
+    // The one at the front of the pile is the anchor and is meant to stay.
+    expect(after[`${marker}-겹침-0`]).toBe(before[`${marker}-겹침-0`]);
     // The thought that had room was not touched — this is the part that keeps a
     // layout rather than replacing it.
     expect(after[`${marker}-멀리`]).toBe(before[`${marker}-멀리`]);
@@ -76,10 +95,15 @@ test.describe('arranging thoughts', () => {
     // One undo takes the whole arrangement back, not one note of it.
     await page.locator('.canvas-page').click({ position: { x: 5, y: 5 } });
     await page.keyboard.press('Control+z');
-    await expect
-      .poll(async () => (await positionsOf(page, space))[`${marker}-겹침-1`])
-      .toBe(before[`${marker}-겹침-1`]);
-    expect(await positionsOf(page, space)).toEqual(before);
+    // The whole layout, polled as one.
+    //
+    // Undo restores every note it moved, and each restore is its own request.
+    // Waiting for one note and then reading the rest in a single shot caught
+    // notes whose writes had not landed yet — the arrangement was already back
+    // on screen, and two of five were still on their way to the server. That is
+    // the failure this suite reported for weeks and I could not summon; holding
+    // the saves back on purpose reproduces it every time.
+    await expect.poll(async () => await positionsOf(page, space), { timeout: 15_000 }).toEqual(before);
   });
 
   test('says so rather than moving anything when nothing overlaps', async ({ page }) => {
