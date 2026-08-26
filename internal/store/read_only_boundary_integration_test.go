@@ -50,6 +50,15 @@ func TestAReadOnlyMemberCannotChangeTheSpaceIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A line of thinking, and a thought with something to restore to: both are
+	// things the owner made that a reader could try to change.
+	branch, err := db.CreateBranch(ctx, ownerID, spaceID, "주인의 갈래", &first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.UpdateNote(ctx, ownerID, Note{ID: first, Version: 1, Content: "주인이 고친 첫 생각", Color: "yellow", Kind: "thought"}, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	// Counted before and after: a refusal that still wrote something would pass
 	// a test that only checked the error.
@@ -65,7 +74,7 @@ func TestAReadOnlyMemberCannotChangeTheSpaceIntegration(t *testing.T) {
 		}
 		return n
 	}
-	notesBefore, edgesBefore := count("notes"), count("note_edges")
+	notesBefore, edgesBefore, branchesBefore := count("notes"), count("note_edges"), count("branches")
 
 	refusals := []struct {
 		what string
@@ -100,6 +109,22 @@ func TestAReadOnlyMemberCannotChangeTheSpaceIntegration(t *testing.T) {
 			_, err := db.AcceptSuggestion(ctx, readerID, existing.ID)
 			return err
 		}},
+		// Restoring is a write wearing a recovery's clothes, and it reaches the
+		// same update through a different door: the row it reads is fetched by
+		// id alone, with the permission asked only when the change is applied.
+		{"put a thought back to an older version", func() error {
+			_, err := db.RestoreNote(ctx, readerID, first, 1)
+			return err
+		}},
+		{"cut a connection", func() error { return db.DeleteEdge(ctx, readerID, existing.ID) }},
+		{"put a thought into a line of thinking", func() error {
+			return db.SetNoteBranch(ctx, readerID, second, &branch.ID)
+		}},
+		{"close someone else's line of thinking", func() error {
+			_, err := db.ResolveBranch(ctx, readerID, branch.ID, BranchAbandoned, "읽기 전용이 접어 봄")
+			return err
+		}},
+		{"delete a line of thinking", func() error { return db.DeleteBranch(ctx, readerID, branch.ID) }},
 	}
 	for _, tc := range refusals {
 		if err := tc.run(); err == nil {
@@ -107,8 +132,25 @@ func TestAReadOnlyMemberCannotChangeTheSpaceIntegration(t *testing.T) {
 		}
 	}
 
-	if notes, edges := count("notes"), count("note_edges"); notes != notesBefore || edges != edgesBefore {
-		t.Errorf("the space changed anyway: notes %d->%d, edges %d->%d", notesBefore, notes, edgesBefore, edges)
+	if notes, edges, branches := count("notes"), count("note_edges"), count("branches"); notes != notesBefore ||
+		edges != edgesBefore || branches != branchesBefore {
+		t.Errorf("the space changed anyway: notes %d->%d, edges %d->%d, lines %d->%d",
+			notesBefore, notes, edgesBefore, edges, branchesBefore, branches)
+	}
+	// Counting rows cannot see a thought whose text was replaced in place, or a
+	// line quietly closed, so those are read back directly.
+	var content, branchStatus string
+	if err = db.Pool.QueryRow(ctx, `SELECT content FROM notes WHERE id=$1`, first).Scan(&content); err != nil {
+		t.Fatal(err)
+	}
+	if content != "주인이 고친 첫 생각" {
+		t.Errorf("a refused restore rewrote the thought anyway: %q", content)
+	}
+	if err = db.Pool.QueryRow(ctx, `SELECT status FROM branches WHERE id=$1`, branch.ID).Scan(&branchStatus); err != nil {
+		t.Fatal(err)
+	}
+	if branchStatus != BranchOpen {
+		t.Errorf("a refused resolve closed the line anyway: %s", branchStatus)
 	}
 
 	// The one thing they may do. Not being able to change something is no reason
