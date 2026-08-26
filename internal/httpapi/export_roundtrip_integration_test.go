@@ -93,20 +93,26 @@ func TestMarkdownExportKeepsTheShapeTheImporterReadsIntegration(t *testing.T) {
 		}
 	}
 
-	lines := strings.Split(body, "\n")
-	if len(lines) < 3 || !strings.HasPrefix(lines[0], "# ") {
-		t.Fatalf("the export does not open with the space name:\n%s", body)
+	// The importer recognises its own file by this line, and requires it to be
+	// the whole of the section it sits in — that is what keeps someone's own
+	// note quoting the phrase from being read as an export. So the banner must
+	// stay alone between the space name and the first thought.
+	firstThought := strings.Index(body, "\n## ")
+	if firstThought < 0 {
+		t.Fatalf("the export has no thoughts in it:\n%s", body)
 	}
-	// The importer recognises its own file by this line, and only near the top.
-	bannerAt := -1
-	for i, line := range lines {
-		if strings.HasPrefix(line, "Exported from umm at ") {
-			bannerAt = i
-			break
-		}
+	preamble := strings.TrimSpace(body[:firstThought])
+	preambleLines := strings.Split(preamble, "\n")
+	if len(preambleLines) == 0 || !strings.HasPrefix(preambleLines[0], "# ") {
+		t.Fatalf("the export does not open with the space name:\n%s", preamble)
 	}
-	if bannerAt < 0 || bannerAt >= 6 {
-		t.Fatalf("the banner the importer looks for is missing or too far down (line %d):\n%s", bannerAt, body)
+	banner := strings.TrimSpace(strings.Join(preambleLines[1:], "\n"))
+	if !strings.HasPrefix(banner, "Exported from umm at ") {
+		t.Fatalf("the banner the importer looks for is missing:\n%s", preamble)
+	}
+	// Alone: one line, nothing else keeping it company.
+	if strings.Contains(banner, "\n") {
+		t.Errorf("something else joined the banner in its section; the importer reads a banner only when it is the entire body:\n%s", preamble)
 	}
 
 	// The metadata keys the importer strips off each thought.

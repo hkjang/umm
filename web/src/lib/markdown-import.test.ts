@@ -190,13 +190,46 @@ describe("reading umm's own export", () => {
       '',
       '## Later',
       '',
-      'I read "Exported from umm at" in a file once',
+      // The whole phrase, timestamp and all, sitting inside a sentence — so
+      // what keeps this from being read as a banner is that a banner is the
+      // entire body of its section, not that the words are absent.
+      'I read Exported from umm at 2026-08-26T16:01:02+09:00. in a file once',
       '',
       '- id: `keep me`',
     ].join('\n');
     const thoughts = splitMarkdownThoughts(mentions);
     expect(thoughts).toHaveLength(2);
     expect(thoughts[1].content).toContain('- id: `keep me`');
+  });
+
+  // The import screen appends a chosen file to whatever is already in the box,
+  // so an export very often arrives second. A rule that looked for the banner
+  // near the top missed exactly this and handed back every id and canvas
+  // position it was meant to strip.
+  it('reads an export that was appended after something already typed', () => {
+    const typedFirst = ['# 오늘 떠오른 것', '', '먼저 적어 둔 생각'].join('\n') + '\n\n---\n\n' + ummExport;
+    expect(splitMarkdownThoughts(typedFirst)).toEqual([
+      { title: '오늘 떠오른 것', content: '먼저 적어 둔 생각' },
+      { title: '', content: '이어진 생각의 본문' },
+      { title: '제목이 있는 생각', content: '제목이 있는 생각의 본문' },
+      { title: '', content: '제목이 없는 생각의 본문' },
+    ]);
+  });
+
+  // Picking two files joins them with a rule, which is two exports in one
+  // document. Both have to be read as exports, not just the first.
+  it('reads two exports picked at once', () => {
+    const both = [ummExport, ummExport].join('\n\n---\n\n');
+    const thoughts = splitMarkdownThoughts(both);
+    expect(thoughts).toHaveLength(6);
+    expect(thoughts.map((thought) => thought.content)).toEqual([
+      '이어진 생각의 본문',
+      '제목이 있는 생각의 본문',
+      '제목이 없는 생각의 본문',
+      '이어진 생각의 본문',
+      '제목이 있는 생각의 본문',
+      '제목이 없는 생각의 본문',
+    ]);
   });
 
   // An export of an empty space is a banner and nothing else, and importing it
