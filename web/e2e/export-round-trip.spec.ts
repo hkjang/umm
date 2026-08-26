@@ -31,12 +31,14 @@ test.describe('exporting a space and importing it back', () => {
         ).json();
       const space = await post('/api/v1/spaces', { name });
       const left = await post(`/api/v1/spaces/${space.id}/notes`, { content: `${name}-왼쪽`, x: 40, y: 60 });
-      // Not a plain thought: a question is kept apart on purpose.
+      // Not a plain thought, and not the default colour: both are choices
+      // someone made about this note.
       const right = await post(`/api/v1/spaces/${space.id}/notes`, {
         content: `${name}-오른쪽`,
         x: 980,
         y: 720,
         kind: 'question',
+        color: 'blue',
       });
       await post(`/api/v1/spaces/${space.id}/edges`, { source: left.id, target: right.id, relation: 'related' });
       // A direction that was followed and then set aside, with the reason.
@@ -62,6 +64,10 @@ test.describe('exporting a space and importing it back', () => {
     expect(exported).toContain('Exported from umm at ');
     expect(exported).toContain('## Connections');
     expect(exported).toContain('## Lines of thinking');
+    // Named explicitly: if the export stopped carrying the colour, the importer
+    // would fall back to the default and a test asserting "blue came back"
+    // could still pass on a note that had simply never been anything else.
+    expect(exported).toContain('- color: `blue`');
 
     // A different space, so nothing here can be the original showing through.
     const destination = await page.evaluate(async (name) => {
@@ -133,8 +139,11 @@ test.describe('exporting a space and importing it back', () => {
     const byContent = await page.evaluate(async (id) => {
       const result = await (await fetch(`/api/v1/spaces/${id}/notes`)).json();
       return Object.fromEntries(
-        result.notes.map((n: { id: string; content: string; kind: string }) => [n.content, { id: n.id, kind: n.kind }]),
-      ) as Record<string, { id: string; kind: string }>;
+        result.notes.map((n: { id: string; content: string; kind: string; color: string }) => [
+          n.content,
+          { id: n.id, kind: n.kind, color: n.color },
+        ]),
+      ) as Record<string, { id: string; kind: string; color: string }>;
     }, destination);
     const ids = Object.fromEntries(Object.entries(byContent).map(([content, n]) => [content, n.id]));
 
@@ -142,6 +151,10 @@ test.describe('exporting a space and importing it back', () => {
     // was marked one.
     expect(byContent[`${marker}-오른쪽`].kind).toBe('question');
     expect(byContent[`${marker}-왼쪽`].kind).toBe('thought');
+    // And the colour someone chose, which on a colour-coded canvas is part of
+    // what the thought says.
+    expect(byContent[`${marker}-오른쪽`].color).toBe('blue');
+    expect(byContent[`${marker}-왼쪽`].color).toBe('yellow');
     expect(restored.edges[0].source).toBe(ids[`${marker}-왼쪽`]);
     expect(restored.edges[0].target).toBe(ids[`${marker}-오른쪽`]);
 

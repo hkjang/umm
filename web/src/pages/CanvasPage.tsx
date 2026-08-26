@@ -1015,7 +1015,9 @@ function CanvasInner() {
             ...json('POST', {
               content: thought.content,
               title: thought.title,
-              color: 'yellow',
+              // A canvas people colour-code is a canvas where the colour is
+              // part of what a thought says.
+              color: thought.color ?? 'yellow',
               // A question that comes back a plain thought has lost the thing
               // that made it worth keeping apart.
               kind: thought.kind ?? 'thought',

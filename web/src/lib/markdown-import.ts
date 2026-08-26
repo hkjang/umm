@@ -14,6 +14,8 @@ export interface ImportedThought {
   line?: string;
   /** What sort of thought it was: a question stays a question. */
   kind?: string;
+  /** The colour someone chose for it. */
+  color?: string;
 }
 
 /**
@@ -78,7 +80,7 @@ const headingLine = /^#{1,6}\s+\S/;
  * it and hand back every id and canvas position it was meant to strip.
  */
 const exportBanner = /^Exported from umm at\s+\S+$/;
-const exportMetadata = /^-\s+(?:id|type|source|canvas|line):\s+`/;
+const exportMetadata = /^-\s+(?:id|type|source|color|canvas|line):\s+`/;
 const exportSections = new Set(['Connections', 'Lines of thinking']);
 /** `- id: `uuid`` under a thought: where it lived before. */
 const exportedID = /^-\s+id:\s+`([^`]+)`/m;
@@ -86,6 +88,8 @@ const exportedID = /^-\s+id:\s+`([^`]+)`/m;
 const exportedCanvas = /^-\s+canvas:\s+`\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*`/m;
 /** `- type: `question`` under a thought: a question is not a plain thought. */
 const exportedKind = /^-\s+type:\s+`([^`]+)`/m;
+/** `- color: `blue`` under a thought: the colour someone chose. */
+const exportedColor = /^-\s+color:\s+`([^`]+)`/m;
 /** `- line: `name` (status)` under a thought: the line it belonged to. */
 const exportedLineLabel = /^-\s+line:\s+`([^`]+)`/m;
 /** A line of the Lines of thinking section: `- **name** — status: why`. */
@@ -217,10 +221,12 @@ export function readMarkdownDocument(source: string): ImportedDocument {
       const canvas = exportedCanvas.exec(content);
       const line = exportedLineLabel.exec(content)?.[1];
       const kind = exportedKind.exec(content)?.[1];
+      const color = exportedColor.exec(content)?.[1];
       if (id) carried = { sourceId: id };
       if (canvas) carried = { ...carried, x: Number(canvas[1]), y: Number(canvas[2]) };
       if (line) carried = { ...carried, line };
       if (kind) carried = { ...carried, kind };
+      if (color) carried = { ...carried, color };
       content = withoutExportMetadata(content);
       // A thought that had no title gets one from the exporter; giving it back
       // would name every restored thought "Thought".
