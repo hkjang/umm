@@ -74,6 +74,16 @@ test.describe('read-only space', () => {
     await signIn(page);
     await openSpaceWithPermission(page, 'view');
 
+    // Waited for before anything is asserted about the card.
+    //
+    // The permission arrives with the space list, which is a separate request
+    // from the notes, so for a moment the canvas has thoughts and does not yet
+    // know whether they can be edited — and treats them as editable, which is
+    // the right default for a space whose permission never arrives at all. This
+    // notice is the first thing that changes when the answer lands, and it is
+    // what a person sees too.
+    await expect(page.getByText('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')).toBeVisible();
+
     // The thought is readable and plainly not editable.
     const editor = page.locator('.postit').first().getByRole('textbox', { name: '생각 내용' });
     await expect(editor).toBeVisible();
