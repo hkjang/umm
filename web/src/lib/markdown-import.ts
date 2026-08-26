@@ -26,23 +26,32 @@ const headingLine = /^#{1,6}\s+\S/;
  * titled all of them "Thought" — the word the exporter writes when a note has
  * no title of its own. A backup you cannot restore is not a backup.
  *
- * These rules apply only to a document that announces itself as an umm export.
- * Any other Markdown is read exactly as it was before, because "Connections" is
- * an ordinary thing to title a thought and only umm's own file means something
- * particular by it.
+ * These rules apply only from the point a document announces itself as an umm
+ * export. Any other Markdown is read exactly as it was before, because
+ * "Connections" is an ordinary thing to title a thought and only umm's own file
+ * means something particular by it.
+ *
+ * The announcement is a section whose whole body is the banner, wherever it
+ * falls — not something near the top. The import screen appends a chosen file
+ * to whatever is already in the box, so an export very often arrives second:
+ * type a thought, pick your export, and a banner-near-the-top rule would miss
+ * it and hand back every id and canvas position it was meant to strip.
  */
-const exportBanner = /^Exported from umm at\s+\S+/m;
+const exportBanner = /^Exported from umm at\s+\S+$/;
 const exportMetadata = /^-\s+(?:id|type|source|canvas|line):\s+`/;
 const exportSections = new Set(['Connections', 'Lines of thinking']);
 /** The heading the exporter writes for a thought that has no title. */
 const untitledThought = 'Thought';
 
-/** Whether this document is a file umm produced. */
-function isUmmExport(lines: string[]): boolean {
-  // The banner sits directly under the space name, before any thought, so a
-  // document that merely mentions the phrase further down is not mistaken for
-  // one.
-  return lines.slice(0, 6).some((line) => exportBanner.test(line));
+/**
+ * Whether this section is umm's export banner and nothing else.
+ *
+ * Requiring the banner to be the entire body is what keeps someone's own note
+ * about umm from being read as one: a thought that quotes the phrase says other
+ * things too.
+ */
+function isExportBanner(content: string): boolean {
+  return exportBanner.test(content.trim());
 }
 
 /** Drops the trailing metadata list the exporter writes under each thought. */
@@ -109,7 +118,9 @@ export function splitMarkdownThoughts(source: string): ImportedThought[] {
     flush();
   }
 
-  const ummExport = isUmmExport(lines);
+  // Set once the banner is seen, and stays set: a document may hold several
+  // exports one after another, which is exactly what picking two files makes.
+  let ummExport = false;
   const thoughts: ImportedThought[] = [];
   for (const block of blocks) {
     const body = block.join('\n').trim();
@@ -118,10 +129,17 @@ export function splitMarkdownThoughts(source: string): ImportedThought[] {
     let title = headingLine.test(first) ? first.replace(/^#{1,6}\s+/, '').trim() : '';
     let content = title ? rest.join('\n').trim() : body;
 
+    if (isExportBanner(content)) {
+      // The banner is umm describing the file, not a thought in it. It also
+      // marks everything after it as umm's own writing.
+      ummExport = true;
+      continue;
+    }
+
     if (ummExport) {
-      // The banner, and the lists of connections and lines of thinking, are
-      // things umm wrote about the space rather than thoughts someone had.
-      if (exportBanner.test(content) || exportSections.has(title)) continue;
+      // The connections and the lines of thinking describe the space rather
+      // than being thoughts someone had in it.
+      if (exportSections.has(title)) continue;
       content = withoutExportMetadata(content);
       // A thought that had no title gets one from the exporter; giving it back
       // would name every restored thought "Thought".
