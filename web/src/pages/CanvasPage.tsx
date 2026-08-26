@@ -223,6 +223,18 @@ function CanvasInner() {
     const space = spaces.find((s) => s.id === activeSpace);
     return space?.permission === 'view';
   }, [spaces, activeSpace]);
+  /**
+   * Whether this person may act on other people's comments here.
+   *
+   * The owner is sent as 'manage' too, so this is the one test for both. Used
+   * to decide what the comment menu offers: resolving a discussion needs edit
+   * or better, and deleting someone else's needs manage — offering either to
+   * someone who will be refused is a button that exists to fail.
+   */
+  const managesSpace = useMemo(() => {
+    const space = spaces.find((s) => s.id === activeSpace);
+    return space?.permission === 'manage';
+  }, [spaces, activeSpace]);
   const [notes, setNotes] = useState<ThoughtNote[]>([]);
   const [rawEdges, setRawEdges] = useState<ThoughtEdge[]>([]);
   // The canvas holds post-its at working zoom and cluster shapes below it, so
@@ -2565,25 +2577,46 @@ function CanvasInner() {
                           {comment.body}
                         </Text>
                       </div>
-                      <Menu shadow="sm">
-                        <Menu.Target>
-                          <ActionIcon variant="subtle" aria-label={t('댓글 메뉴')}>
-                            <IconDots size={16} />
-                          </ActionIcon>
-                        </Menu.Target>
-                        <Menu.Dropdown>
-                          <Menu.Item leftSection={<IconCheck size={14} />} onClick={() => void resolveComment(comment)}>
-                            {comment.resolvedAt ? t('다시 열기') : t('해결 표시')}
-                          </Menu.Item>
-                          <Menu.Item
-                            color="red"
-                            leftSection={<IconTrash size={14} />}
-                            onClick={() => void deleteComment(comment)}
-                          >
-                            {t('삭제')}
-                          </Menu.Item>
-                        </Menu.Dropdown>
-                      </Menu>
+                      {(() => {
+                        // Only what this person can actually do. Resolving a
+                        // discussion needs edit or better; deleting one is for
+                        // whoever wrote it, or for someone who manages the
+                        // space. The menu used to offer both to everyone, so a
+                        // member shared in to read was invited to resolve and
+                        // delete and told no by the server afterwards.
+                        const mine = comment.username === user?.username;
+                        const mayResolve = !readOnly;
+                        const mayDelete = mine || managesSpace;
+                        if (!mayResolve && !mayDelete) return null;
+                        return (
+                          <Menu shadow="sm">
+                            <Menu.Target>
+                              <ActionIcon variant="subtle" aria-label={t('댓글 메뉴')}>
+                                <IconDots size={16} />
+                              </ActionIcon>
+                            </Menu.Target>
+                            <Menu.Dropdown>
+                              {mayResolve && (
+                                <Menu.Item
+                                  leftSection={<IconCheck size={14} />}
+                                  onClick={() => void resolveComment(comment)}
+                                >
+                                  {comment.resolvedAt ? t('다시 열기') : t('해결 표시')}
+                                </Menu.Item>
+                              )}
+                              {mayDelete && (
+                                <Menu.Item
+                                  color="red"
+                                  leftSection={<IconTrash size={14} />}
+                                  onClick={() => void deleteComment(comment)}
+                                >
+                                  {t('삭제')}
+                                </Menu.Item>
+                              )}
+                            </Menu.Dropdown>
+                          </Menu>
+                        );
+                      })()}
                     </Group>
                   </Paper>
                 ))
