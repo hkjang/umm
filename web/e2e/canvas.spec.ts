@@ -364,4 +364,26 @@ test.describe('canvas', () => {
     await page.getByRole('button', { name: '전체 보기' }).click();
     await expect(outsideNode).toHaveCSS('opacity', '1');
   });
+
+  // A space that could not be loaded is not an empty space.
+  //
+  // There was no catch on the load, so a failure left the canvas with no notes
+  // and it showed the hint meant for someone who has never written anything:
+  // double-click anywhere to start. A person with a thousand thoughts was
+  // invited to begin, under an error notification much smaller than the
+  // invitation beneath it.
+  test('does not invite you to start when the space failed to load', async ({ page }) => {
+    await signIn(page);
+    await openCanvas(page);
+    const url = page.url();
+
+    await page.route('**/api/v1/spaces/*/notes', (route) =>
+      route.request().method() === 'GET' ? route.fulfill({ status: 500, json: { detail: 'nope' } }) : route.continue(),
+    );
+    await page.goto(url);
+
+    await expect(page.getByText('이 공간을 불러오지 못했습니다.')).toBeVisible();
+    await expect(page.getByText('생각이 사라진 것이 아니라 가져오지 못한 것입니다.')).toBeVisible();
+    await expect(page.getByText('여기 아무 곳이나 더블클릭 해보세요.')).toHaveCount(0);
+  });
 });
