@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -9,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type preferences struct {
@@ -261,8 +264,16 @@ func (s *Server) rotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	cfg := s.getSecurityConfig(r)
 	p := principal(r)
 	key, secret, err := s.Auth.RotateKey(r.Context(), p.User.ID, id, cfg.RotationOverlapHours)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "회전할 활성 키를 찾을 수 없습니다.")
+		return
+	}
+	if err != nil {
+		// Only the lookup for an active key answers "no rows". Everything after
+		// it — the new key, the overlap, the commit — fails differently, and
+		// reporting that as "there is no key to rotate" sends someone looking
+		// for a key that is sitting right there in their list.
+		writeError(w, 500, "키를 회전하지 못했습니다.")
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "api_key.rotate", "api_key", id.String(), map[string]any{"replacement": key.ID, "overlapHours": cfg.RotationOverlapHours})

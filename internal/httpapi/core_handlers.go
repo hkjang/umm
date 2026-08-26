@@ -562,8 +562,14 @@ func (s *Server) relatedNotes(w http.ResponseWriter, r *http.Request) {
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	related, err := s.Store.RelatedNotes(r.Context(), principal(r).User.ID, id, limit)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
+		// A thought that is not there and one this person may not see answer
+		// the same way on purpose.
 		writeError(w, 404, "관련 생각을 찾을 수 없습니다.")
+		return
+	}
+	if err != nil {
+		writeError(w, 500, "관련 생각을 불러오지 못했습니다.")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"related": related})
@@ -579,7 +585,11 @@ func (s *Server) thoughtClusters(w http.ResponseWriter, r *http.Request) {
 	}
 	clusters, err := s.Store.Clusters(r.Context(), principal(r).User.ID, spaceID)
 	if err != nil {
-		writeError(w, 404, "생각 군집을 찾을 수 없습니다.")
+		// A space with nothing to group, and one this person cannot see, both
+		// come back empty rather than as an error — so anything that arrives
+		// here is a failure, and saying "none found" would report an empty
+		// canvas as the answer.
+		writeError(w, 500, "생각 군집을 불러오지 못했습니다.")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"clusters": clusters})
@@ -631,7 +641,10 @@ func (s *Server) noteHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	history, err := s.Store.NoteHistory(r.Context(), principal(r).User.ID, id)
 	if err != nil {
-		writeError(w, 404, "메모 기록을 찾을 수 없습니다.")
+		// As above: no history and no permission both come back empty, so this
+		// is a failure. Telling someone their thought has no earlier versions
+		// when the lookup broke is how a person stops looking for their words.
+		writeError(w, 500, "메모 기록을 불러오지 못했습니다.")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"history": history})
@@ -651,8 +664,15 @@ func (s *Server) restoreNote(w http.ResponseWriter, r *http.Request) {
 	}
 	p := principal(r)
 	restored, err := s.Store.RestoreNote(r.Context(), p.User.ID, id, version)
-	if err != nil {
+	if errors.Is(err, pgx.ErrNoRows) {
+		// No such version, or no permission to write this thought back.
 		writeError(w, 404, "복원할 기록을 찾을 수 없습니다.")
+		return
+	}
+	if err != nil {
+		// Someone recovering their own writing, told it is not there when the
+		// restore merely failed, stops trying to get it back.
+		writeError(w, 500, "기록을 복원하지 못했습니다.")
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "note.restore", "note", id.String(), map[string]any{"fromVersion": version})
