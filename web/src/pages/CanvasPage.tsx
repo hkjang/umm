@@ -328,6 +328,7 @@ function CanvasInner() {
   const [shareOpen, setShareOpen] = useState(false);
   const [members, setMembers] = useState<SpaceMember[]>([]);
   const [canManage, setCanManage] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [shareUser, setShareUser] = useState('');
   const [sharePermission, setSharePermission] = useState('edit');
   const [shareMessage, setShareMessage] = useState('');
@@ -382,6 +383,19 @@ function CanvasInner() {
         const v = await api<{ notes: ThoughtNote[]; edges: ThoughtEdge[] }>(`/spaces/${activeSpace}/notes`);
         syncNotes(v.notes, true);
         setRawEdges(v.edges);
+        setLoadFailed(false);
+      } catch (reason) {
+        /*
+         * A space that could not be loaded is not an empty space.
+         *
+         * There was no catch here, so a failed load left the canvas with no
+         * notes and it showed the hint it shows a new person: double-click
+         * anywhere to start. Someone with a thousand thoughts was told to begin
+         * — with an error notification above it that is easy to miss and much
+         * smaller than the invitation underneath.
+         */
+        setLoadFailed(true);
+        throw reason;
       } finally {
         if (!silent) setLoading(false);
       }
@@ -2252,7 +2266,22 @@ function CanvasInner() {
           </Menu>
         </Group>
       </Paper>
-      {!loading && notes.length === 0 && (
+      {!loading && loadFailed && (
+        <div className="onboarding-hint">
+          <div>
+            <Text fz="lg" fw={650}>
+              {t('이 공간을 불러오지 못했습니다.')}
+            </Text>
+            <Text c="dimmed" mt={4}>
+              {t('생각이 사라진 것이 아니라 가져오지 못한 것입니다.')}
+            </Text>
+            <Button mt="md" variant="light" onClick={() => void loadCanvas()}>
+              {t('다시 시도')}
+            </Button>
+          </div>
+        </div>
+      )}
+      {!loading && !loadFailed && notes.length === 0 && (
         <div className="onboarding-hint">
           <div>
             <IconSparkles size={30} stroke={1.4} />

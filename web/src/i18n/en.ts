@@ -289,6 +289,8 @@ export const en: Dictionary = {
   '생각 군집 모으기': 'Group thoughts',
   '연결한 생각 모으기': 'Group linked thoughts',
   '여기 아무 곳이나 더블클릭 해보세요.': 'Double-click anywhere here.',
+  '이 공간을 불러오지 못했습니다.': 'This space could not be loaded.',
+  '생각이 사라진 것이 아니라 가져오지 못한 것입니다.': 'Your thoughts are still there; they just could not be fetched.',
   '또는 아래에 생각을 바로 적어보세요.': 'Or write a thought below.',
   '검색 결과가 없습니다.': 'No results.',
   '다른 단어를 입력하거나 Esc로 검색을 지워보세요.': 'Try another word, or press Esc to clear the search.',
