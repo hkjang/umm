@@ -369,3 +369,27 @@ func (s *Store) StaleCounts(ctx context.Context, userID, spaceID uuid.UUID) (map
 	}
 	return counts, rows.Err()
 }
+
+// FailedPresentationLink loads one failed link, for retrying into the deck that
+// already exists rather than making another.
+//
+// Only a failed one: a deck that compiled is not something to re-apply source
+// to behind its owner's back, and a pending one is a compile still running.
+// Permission is the same as writing, because this leads to changing a deck.
+func (s *Store) FailedPresentationLink(ctx context.Context, userID, linkID uuid.UUID) (PresentationLink, error) {
+	var link PresentationLink
+	err := s.Pool.QueryRow(ctx, `
+		SELECT l.id,l.space_id,l.ptium_presentation_id,l.title,l.status,l.error,l.failure_kind,
+		       l.thought_count,l.excluded_count,l.created_by
+		FROM presentation_links l
+		JOIN spaces sp ON sp.id=l.space_id
+		LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
+		WHERE l.id=$1 AND l.status=$3
+		  AND (sp.owner_id=$2 OR m.permission IN ('edit','manage'))`, linkID, userID, PresentationFailed).
+		Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status, &link.Error, &link.FailureKind,
+			&link.ThoughtCount, &link.ExcludedCount, &link.CreatedBy)
+	if err != nil {
+		return PresentationLink{}, err
+	}
+	return link, nil
+}

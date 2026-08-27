@@ -24,12 +24,16 @@ import (
 
 // Thought is the part of a note this compiler reads.
 type Thought struct {
-	ID         uuid.UUID
-	Title      string
-	Content    string
-	Kind       string
-	X, Y       float64
-	AIExcluded bool
+	ID      uuid.UUID
+	Title   string
+	Content string
+	Kind    string
+	X, Y    float64
+	// Width and Height are the note's own size on the canvas. Grouping measures
+	// the gap between edges rather than centres, so a wide note does not appear
+	// to swallow its neighbours. Zero means the default a note is created at.
+	Width, Height float64
+	AIExcluded    bool
 }
 
 // Link is a connection between two thoughts, with what it asserts.
@@ -97,6 +101,11 @@ type Options struct {
 	// Only restricts the talk to these thoughts, for building from a selection
 	// or a cluster rather than a whole space. Empty means everything.
 	Only []uuid.UUID
+	// OneSlidePerThought turns off grouping thoughts by where they sit. What
+	// the person connected still travels together — that is what they said, not
+	// something inferred. This is for a space whose arrangement means nothing,
+	// where being read the notes one at a time is the honest result.
+	OneSlidePerThought bool
 }
 
 // Compile turns thoughts and their connections into a talk.
@@ -133,8 +142,32 @@ func Compile(thoughts []Thought, links []Link, opts Options) Storyline {
 	// the deck entirely.
 	reserved := reservedForComparison(rel, byID)
 
+	// Thoughts nobody connected are grouped by where they were put, the way the
+	// canvas groups them when it is too far out to read. Without this a space
+	// that was written quickly and never drawn on produced one slide per note.
+	// Only the unconnected ones: a stated relationship always wins, and grouping
+	// a supporter by its position would carry it away from the claim it argues
+	// for.
+	grouped := map[uuid.UUID][]uuid.UUID{}
+	if !opts.OneSlidePerThought {
+		grouped = huddles(unconnected(usable, rel))
+	}
+	emitted := map[uuid.UUID]bool{}
+
 	for _, t := range order(usable, rel) {
 		if consumed[t.ID] {
+			continue
+		}
+		if group, ok := grouped[t.ID]; ok {
+			if emitted[t.ID] {
+				continue
+			}
+			for _, slide := range huddleSlides(group, byID, order(usable, rel)) {
+				slides = append(slides, slide)
+			}
+			for _, id := range group {
+				emitted[id], consumed[id] = true, true
+			}
 			continue
 		}
 		if slide, taken, ok := comparisonSlide(t, rel, byID, consumed); ok {
@@ -200,7 +233,16 @@ type related struct {
 	// hasPrev marks a thought something else leads into, so chains can be
 	// started only from their beginning.
 	hasPrev map[uuid.UUID]bool
+	// touched marks both ends of every link umm kept. The maps above are keyed
+	// by one side each, so neither of them answers "did the person say anything
+	// about this thought at all" — and that is the question that decides whether
+	// a thought may be grouped by where it sits.
+	touched map[uuid.UUID]bool
 }
+
+// connected reports whether the person stated any relationship involving this
+// thought. A stated relationship always beats an inferred one.
+func (r related) connected(id uuid.UUID) bool { return r.touched[id] }
 
 func indexLinks(links []Link, byID map[uuid.UUID]Thought) related {
 	r := related{
@@ -210,6 +252,7 @@ func indexLinks(links []Link, byID map[uuid.UUID]Thought) related {
 		contradicts: map[uuid.UUID][]uuid.UUID{},
 		next:        map[uuid.UUID][]uuid.UUID{},
 		hasPrev:     map[uuid.UUID]bool{},
+		touched:     map[uuid.UUID]bool{},
 	}
 	for _, l := range links {
 		if _, ok := byID[l.From]; !ok {
@@ -217,6 +260,11 @@ func indexLinks(links []Link, byID map[uuid.UUID]Thought) related {
 		}
 		if _, ok := byID[l.To]; !ok {
 			continue
+		}
+		switch l.Relation {
+		case store.RelationSupports, store.RelationRefines, store.RelationAnswers,
+			store.RelationContradicts, store.RelationFollows:
+			r.touched[l.From], r.touched[l.To] = true, true
 		}
 		switch l.Relation {
 		case store.RelationSupports:

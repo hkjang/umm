@@ -35,6 +35,7 @@ type Spaces interface {
 type Links interface {
 	CreatePresentationLink(ctx context.Context, userID, spaceID uuid.UUID, ptiumID, title string) (store.PresentationLink, error)
 	CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []store.SlideSource, thoughtCount, excludedCount int, failure, failureKind string) error
+	FailedPresentationLink(ctx context.Context, userID, linkID uuid.UUID) (store.PresentationLink, error)
 }
 
 // Settings reads umm's configuration.
@@ -90,6 +91,8 @@ type Request struct {
 	Only []uuid.UUID
 	// IncludeExcluded overrides the note-level mark. Off unless asked.
 	IncludeExcluded bool
+	// OneSlidePerThought turns off grouping thoughts by where they sit.
+	OneSlidePerThought bool
 }
 
 // Preview is what a space would become, without anything having happened.
@@ -199,7 +202,9 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req Request) (Re
 			len(story.usedThoughts()), len(story.Excluded), applyErr.Error(), string(classified.Kind)); err != nil {
 			return Result{}, fmt.Errorf("%w (and recording the failure also failed: %v)", applyErr, err)
 		}
-		return Result{}, applyErr
+		// The deck is open in Ptium and empty. Saying so is what stops the next
+		// press from making another one.
+		return Result{}, &DeckLeftBehind{DeckID: deck.ID, Err: applyErr}
 	}
 
 	if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationReady, source,
@@ -236,7 +241,7 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 	for _, note := range notes {
 		thoughts = append(thoughts, Thought{
 			ID: note.ID, Title: note.Title, Content: note.Content, Kind: note.Kind,
-			X: note.X, Y: note.Y, AIExcluded: note.AIExcluded,
+			X: note.X, Y: note.Y, Width: note.Width, Height: note.Height, AIExcluded: note.AIExcluded,
 		})
 	}
 	links := make([]Link, 0, len(edges))
@@ -244,7 +249,8 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 		links = append(links, Link{From: edge.SourceID, To: edge.TargetID, Relation: edge.Relation, Origin: edge.Origin})
 	}
 
-	story := Compile(thoughts, links, Options{Title: title, Only: req.Only, IncludeExcluded: req.IncludeExcluded})
+	story := Compile(thoughts, links, Options{Title: title, Only: req.Only,
+		IncludeExcluded: req.IncludeExcluded, OneSlidePerThought: req.OneSlidePerThought})
 	if len(story.Slides) == 0 {
 		return Storyline{}, "", ErrNothingToPresent
 	}
@@ -337,4 +343,60 @@ func (s Storyline) usedThoughts() map[uuid.UUID]bool {
 		}
 	}
 	return seen
+}
+
+// Retry compiles the space again into the deck a failed attempt already made.
+//
+// Making a deck is two calls: Ptium opens one, then umm compiles source into
+// it. When the second fails — a space large enough to run past the timeout is
+// the usual way — the deck exists in Ptium and umm records the attempt as
+// failed. Pressing the button again made another deck, so a space that failed
+// four times left four empty ones behind and nothing said so.
+//
+// This applies the source to the deck that is already there. Ptium's source
+// endpoint replaces rather than appends, so a partly-compiled deck ends up the
+// same as one compiled once, and running this twice is the same as running it
+// once.
+func (s *Service) Retry(ctx context.Context, userID uuid.UUID, linkID uuid.UUID) (Result, error) {
+	link, err := s.Links.FailedPresentationLink(ctx, userID, linkID)
+	if err != nil {
+		return Result{}, err
+	}
+	// Recompiled rather than replayed from the stored source: the thinking has
+	// probably moved on since it failed, and a retry that resurrects an old
+	// deck source would put stale sentences on the slides.
+	story, source, err := s.compile(ctx, userID, Request{SpaceID: link.SpaceID, Title: link.Title})
+	if err != nil {
+		return Result{}, err
+	}
+	client, _, err := s.client(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+
+	result, applyErr := client.ApplySource(ctx, link.PtiumID, source, false)
+	if applyErr != nil {
+		classified := Classify(applyErr)
+		if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationFailed, source, nil,
+			len(story.usedThoughts()), len(story.Excluded), applyErr.Error(), string(classified.Kind)); err != nil {
+			return Result{}, fmt.Errorf("%w (and recording the failure also failed: %v)", applyErr, err)
+		}
+		return Result{}, applyErr
+	}
+
+	if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationReady, source,
+		story.SlideSources(), len(story.usedThoughts()), len(story.Excluded), "", ""); err != nil {
+		return Result{}, err
+	}
+	link.Status = store.PresentationReady
+	link.Error, link.FailureKind = "", ""
+	link.CompiledSource = source
+	link.ThoughtCount = len(story.usedThoughts())
+	link.ExcludedCount = len(story.Excluded)
+
+	warnings := result.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
+	return Result{Link: link, Warnings: warnings}, nil
 }

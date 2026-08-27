@@ -394,10 +394,33 @@ paths:
                 title: { type: string }
                 noteIds: { type: array, items: { type: string, format: uuid } }
                 includeExcluded: { type: boolean }
+                oneSlidePerThought: { type: boolean, description: Turn off grouping thoughts by where they sit on the canvas. What the person connected still travels together. }
       responses:
         '201': { description: The deck, content: { application/json: { schema: { type: object, properties: { link: { $ref: '#/components/schemas/PresentationLink' }, warnings: { type: array, items: { type: string } } } } } } }
         '400': { description: Nothing in this space can become a talk }
         '409': { description: No Ptium is configured }
+        '422': { $ref: '#/components/responses/PtiumFailure' }
+        '502': { $ref: '#/components/responses/PtiumFailure' }
+        '504': { $ref: '#/components/responses/PtiumFailure' }
+  /presentations/{linkId}/retry:
+    parameters:
+      - { in: path, name: linkId, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: post_presentations_linkId_retry
+      tags: [Thoughts]
+      summary: Compile the space again into the deck a failed attempt already made
+      description: >-
+        Making a deck is two calls: Ptium opens one, then umm compiles source
+        into it. When the second fails the deck exists and is empty, and making
+        another would leave the first behind. This applies source to the deck
+        that is already there. Ptium's source endpoint replaces rather than
+        appends, so running it twice is the same as running it once. The space
+        is recompiled rather than replayed from the stored source, because the
+        thinking has probably moved on. Only a failed attempt may be retried.
+      x-required-scope: notes:write
+      responses:
+        '200': { description: The deck, now compiled, content: { application/json: { schema: { type: object, properties: { link: { $ref: '#/components/schemas/PresentationLink' }, warnings: { type: array, items: { type: string } } } } } } }
+        '404': { description: No failed attempt with this id that the caller may write to }
         '422': { $ref: '#/components/responses/PtiumFailure' }
         '502': { $ref: '#/components/responses/PtiumFailure' }
         '504': { $ref: '#/components/responses/PtiumFailure' }
@@ -1766,6 +1789,8 @@ components:
               failure: { type: string, enum: [unreachable, timed-out, unauthorized, no-api, rejected, remote-error, unexpected-response, not-recorded, other] }
               ptiumStatus: { type: integer, description: The status Ptium answered with, when it answered. }
               ptiumDetail: { type: string }
+              ptiumId: { type: string, description: The deck Ptium opened before compiling failed. Present when a deck was left behind, which is when retrying into it is the right move rather than making another. }
+              deckLeftBehind: { type: boolean }
               technical: { type: string, description: Administrators only. }
               requestId: { type: string }
     Error: { description: RFC 9457 Problem Details, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }

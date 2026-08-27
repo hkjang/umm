@@ -62,6 +62,29 @@ const (
 // tell it apart without matching on wording.
 var ErrDeckNotRecorded = errors.New("ptium made a deck that umm could not record")
 
+// DeckLeftBehind marks a failure that happened after Ptium had already opened
+// the deck. The deck is really there and empty, so the answer is not "try
+// again" — trying again used to make a second one.
+type DeckLeftBehind struct {
+	DeckID string
+	Err    error
+}
+
+func (e *DeckLeftBehind) Error() string {
+	return "ptium deck " + e.DeckID + " was created and left empty: " + e.Err.Error()
+}
+
+func (e *DeckLeftBehind) Unwrap() error { return e.Err }
+
+// LeftBehindDeck returns the deck a failure left in Ptium, if it left one.
+func LeftBehindDeck(err error) string {
+	var left *DeckLeftBehind
+	if errors.As(err, &left) {
+		return left.DeckID
+	}
+	return ""
+}
+
 // Failure is a classified error: what kind it is, and the part of it that is
 // safe and useful to show the person who asked for the deck.
 type Failure struct {

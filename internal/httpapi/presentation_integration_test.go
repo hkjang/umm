@@ -76,6 +76,7 @@ func presentationAPI(t *testing.T) presentationHarness {
 	router.Post("/spaces/{spaceID}/presentations", server.createPresentation)
 	router.Get("/spaces/{spaceID}/presentations", server.listPresentations)
 	router.Get("/notes/{noteID}/presentations", server.notePresentations)
+	router.Post("/presentations/{linkID}/retry", server.retryPresentation)
 
 	return presentationHarness{
 		db:      db,
@@ -790,5 +791,137 @@ func TestAFailedDeckRecordsWhatKindOfFailureItWasIntegration(t *testing.T) {
 	// it even though the list does not show it.
 	if deck.Error == "" {
 		t.Fatal("the underlying error was not recorded")
+	}
+}
+
+// A failed attempt leaves a real deck in Ptium, and pressing the button again
+// used to make another one.
+//
+// Making a deck is two calls: Ptium opens one, then umm compiles source into
+// it. When the second fails — a space large enough to run past the timeout is
+// the usual way — the deck exists and is empty. Nothing said so, so a space
+// that failed four times left four empty decks behind.
+func TestARetryUsesTheDeckTheFailedAttemptAlreadyMadeIntegration(t *testing.T) {
+	var created, applied int
+	fail := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			created++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"id": fmt.Sprintf("deck-%d", created), "title": "t"},
+			})
+			return
+		}
+		applied++
+		if fail {
+			w.WriteHeader(504)
+			_, _ = w.Write([]byte(`{"detail":"compiling took too long"}`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"slideCount": 3, "warnings": []string{}}})
+	}))
+	defer server.Close()
+
+	h := presentationAPI(t)
+	if err := h.db.PutSetting(context.Background(), "ptium", map[string]any{
+		"base_url": server.URL, "api_key": "ptium_test", "timeout_seconds": 5,
+	}, h.userID); err != nil {
+		t.Fatal(err)
+	}
+
+	response := h.do(t, http.MethodPost, "/spaces/"+h.spaceID.String()+"/presentations", `{}`)
+	if response.Code == 201 {
+		t.Fatalf("the deck was reported as made although compiling failed: %s", response.Body.String())
+	}
+	// The failure names the deck Ptium opened, which is what turns "it broke"
+	// into something that can be finished.
+	var problem struct {
+		PtiumID        string `json:"ptiumId"`
+		DeckLeftBehind bool   `json:"deckLeftBehind"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if !problem.DeckLeftBehind || problem.PtiumID != "deck-1" {
+		t.Fatalf("the deck left in Ptium was not reported: %s", response.Body.String())
+	}
+
+	// The failed attempt is in the list, with the deck it made.
+	var listed struct {
+		Presentations []struct {
+			ID      string `json:"id"`
+			Status  string `json:"status"`
+			PtiumID string `json:"ptiumId"`
+		} `json:"presentations"`
+	}
+	if err := json.Unmarshal(h.do(t, http.MethodGet, "/spaces/"+h.spaceID.String()+"/presentations", "").Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Presentations) != 1 || listed.Presentations[0].Status != "failed" {
+		t.Fatalf("the failed attempt was not recorded: %+v", listed.Presentations)
+	}
+	linkID, deckOfFirst := listed.Presentations[0].ID, listed.Presentations[0].PtiumID
+
+	// Retry, and Ptium must not be asked for another deck.
+	fail = false
+	retry := h.do(t, http.MethodPost, "/presentations/"+linkID+"/retry", "")
+	if retry.Code != 200 {
+		t.Fatalf("retry: %d %s", retry.Code, retry.Body.String())
+	}
+	if created != 1 {
+		t.Fatalf("retrying opened %d decks in Ptium; the one already there was the point", created)
+	}
+	if applied != 2 {
+		t.Fatalf("source was applied %d times, want the failure and the retry", applied)
+	}
+
+	// One row still, now ready, still pointing at the same deck.
+	listed.Presentations = nil
+	if err := json.Unmarshal(h.do(t, http.MethodGet, "/spaces/"+h.spaceID.String()+"/presentations", "").Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Presentations) != 1 {
+		t.Fatalf("retrying left %d rows, want the one it was retrying", len(listed.Presentations))
+	}
+	if got := listed.Presentations[0]; got.Status != "ready" || got.PtiumID != deckOfFirst {
+		t.Fatalf("after a successful retry the row is %+v, want ready on %s", got, deckOfFirst)
+	}
+}
+
+// Only a failed attempt may be retried: re-applying source to a deck that
+// compiled would change it behind its owner's back.
+func TestOnlyAFailedDeckMayBeRetriedIntegration(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "deck-ok", "title": "t"}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"slideCount": 3, "warnings": []string{}}})
+	}))
+	defer server.Close()
+
+	h := presentationAPI(t)
+	if err := h.db.PutSetting(context.Background(), "ptium", map[string]any{
+		"base_url": server.URL, "api_key": "ptium_test", "timeout_seconds": 5,
+	}, h.userID); err != nil {
+		t.Fatal(err)
+	}
+	made := h.do(t, http.MethodPost, "/spaces/"+h.spaceID.String()+"/presentations", `{}`)
+	if made.Code != 201 {
+		t.Fatalf("status %d: %s", made.Code, made.Body.String())
+	}
+	var result struct {
+		Link struct {
+			ID string `json:"id"`
+		} `json:"link"`
+	}
+	if err := json.Unmarshal(made.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if code := h.do(t, http.MethodPost, "/presentations/"+result.Link.ID+"/retry", "").Code; code != 404 {
+		t.Fatalf("a deck that compiled was retried: %d", code)
+	}
+	if code := h.do(t, http.MethodPost, "/presentations/"+uuid.New().String()+"/retry", "").Code; code != 404 {
+		t.Fatalf("an unknown link was retried: %d", code)
 	}
 }

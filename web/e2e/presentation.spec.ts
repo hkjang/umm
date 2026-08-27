@@ -118,3 +118,65 @@ test('explains why a deck cannot be made', async ({ page }) => {
   // And it is a sentence, not an empty box or a bare status code.
   expect(((await alert.textContent()) ?? '').trim().length).toBeGreaterThan(10);
 });
+
+/**
+ * A space nobody drew lines on.
+ *
+ * Thoughts the person connected travel together — evidence under its claim,
+ * both sides of a disagreement on one slide. Everything they said nothing about
+ * used to become a slide of its own, so a space written quickly and never drawn
+ * on produced one slide per note. The canvas already answers this question by
+ * grouping notes that sit together, and the deck now asks it the same way.
+ */
+test('groups thoughts placed together, and can be told not to', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+
+  const marker = unique('묶음');
+  const space = await page.evaluate(async (text) => {
+    const post = async (path: string, body: unknown) =>
+      (
+        await fetch(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      ).json();
+    const created = await post('/api/v1/spaces', { name: text });
+    // Twelve notes in a huddle, no connections at all: laid out the way a
+    // topic gets laid out, within half a note of each other.
+    for (let i = 0; i < 12; i++) {
+      await post(`/api/v1/spaces/${created.id}/notes`, {
+        content: `${text} 메모 ${i}`,
+        x: (i % 4) * 300,
+        y: Math.floor(i / 4) * 200,
+      });
+    }
+    return created.id as string;
+  }, marker);
+
+  await page.goto(`/space/${space}`);
+  await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+  await page.getByLabel('이 공간을 발표 자료로').click();
+
+  const modal = page.getByRole('dialog');
+  await expect(modal).toBeVisible();
+  const count = modal.getByText(/^슬라이드 \d+장$/);
+  await expect(count).toBeVisible();
+  const grouped = Number((await count.innerText()).replace(/[^0-9]/g, ''));
+
+  // Twelve thoughts, and far fewer slides than twelve.
+  expect(grouped).toBeLessThan(12);
+  expect(grouped).toBeGreaterThan(0);
+
+  // And the escape hatch really turns it off, or the toggle is decoration.
+  await modal.getByLabel('생각 하나마다 슬라이드 하나').check();
+  await expect.poll(async () => Number((await count.innerText()).replace(/[^0-9]/g, ''))).toBeGreaterThan(grouped);
+
+  // Nothing was created by looking: the preview is a preview.
+  const made = await page.evaluate(async (id) => {
+    const body = await (await fetch(`/api/v1/spaces/${id}/presentations`)).json();
+    return (body.presentations ?? []).length as number;
+  }, space);
+  expect(made).toBe(0);
+});

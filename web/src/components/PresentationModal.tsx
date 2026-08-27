@@ -96,6 +96,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
   const [preview, setPreview] = useState<PresentationPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [oneSlidePerThought, setOneSlidePerThought] = useState(false);
   // Not just a sentence: a Ptium failure has a kind, sometimes Ptium's own
   // words, and — for administrators — the underlying error. Keeping them apart
   // is what lets the screen say who fixes this instead of pasting a Go error
@@ -121,6 +122,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
       const params = new URLSearchParams();
       if (title.trim()) params.set('title', title.trim());
       if (includeExcluded) params.set('includeExcluded', 'true');
+      if (oneSlidePerThought) params.set('oneSlidePerThought', 'true');
       const query = params.toString();
       setPreview(await api<PresentationPreview>(`/spaces/${spaceID}/presentation/preview${query ? `?${query}` : ''}`));
     } catch (cause) {
@@ -129,7 +131,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
     } finally {
       setLoading(false);
     }
-  }, [spaceID, title, includeExcluded, t]);
+  }, [spaceID, title, includeExcluded, oneSlidePerThought, t]);
 
   useEffect(() => {
     if (!opened) return;
@@ -142,7 +144,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
     setBusy(true);
     setFailure(null);
     try {
-      const body: Record<string, unknown> = { includeExcluded };
+      const body: Record<string, unknown> = { includeExcluded, oneSlidePerThought };
       if (title.trim()) body.title = title.trim();
       // Only when the person asked for it: a selection that silently narrowed
       // the deck would drop thoughts they expected to see.
@@ -155,6 +157,39 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
       void loadHistory();
     } catch (cause) {
       setFailure(readFailure(cause, t('발표 자료를 만들지 못했습니다.')));
+      // The attempt was recorded even though it failed, and the row carries the
+      // deck Ptium opened. Without this the list still says nothing happened.
+      void loadHistory();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Retrying into the deck the failed attempt already opened, rather than
+  // pressing the button again and leaving a second empty one behind.
+  const retryLeftBehindDeck = async () => {
+    const link = history.find((row) => row.ptiumId === failure?.ptiumId && row.status === 'failed');
+    if (!link) {
+      // The row is loaded right after the failure, so this only happens if the
+      // list could not be read. Saying so beats a button that does nothing.
+      setFailure((current) =>
+        current
+          ? { ...current, message: t('다시 시도할 발표 자료를 찾지 못했습니다. 목록을 새로 고친 뒤 다시 해보세요.') }
+          : current,
+      );
+      return;
+    }
+    setBusy(true);
+    setFailure(null);
+    try {
+      const result = await api<{ link: PresentationLink; warnings: string[] }>(
+        `/presentations/${link.id}/retry`,
+        json('POST', {}),
+      );
+      setMade({ id: result.link.ptiumId, warnings: result.warnings ?? [] });
+      void loadHistory();
+    } catch (cause) {
+      setFailure(readFailure(cause, t('발표 자료를 다시 만들지 못했습니다.')));
     } finally {
       setBusy(false);
     }
@@ -190,9 +225,25 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
               onChange={(event) => setOnlySelection(event.currentTarget.checked)}
             />
           )}
+          {/* Off by default: thoughts placed together share a slide, the way the
+              canvas groups them when it is too far out to read. What the person
+              connected travels together either way — that is what they said,
+              not something inferred from where a note happens to sit. */}
+          <Switch
+            label={t('생각 하나마다 슬라이드 하나')}
+            checked={oneSlidePerThought}
+            onChange={(event) => setOneSlidePerThought(event.currentTarget.checked)}
+          />
         </Group>
 
-        {failure && <PtiumFailureAlert failure={failure} onRetry={failure.retryable ? () => void load() : undefined} />}
+        {failure && (
+          <PtiumFailureAlert
+            failure={failure}
+            onRetry={failure.retryable && !failure.deckLeftBehind ? () => void load() : undefined}
+            onRetryDeck={failure.deckLeftBehind ? () => void retryLeftBehindDeck() : undefined}
+            retrying={busy}
+          />
+        )}
 
         {made ? (
           <Alert color="green" icon={<IconPresentation size={17} />} title={t('발표 자료를 만들었습니다.')}>
@@ -217,6 +268,28 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
           </Alert>
         ) : (
           <>
+            {/* A long deck is the usual way this fails: Ptium is asked to lay
+                out every slide inside one request, and a space with hundreds of
+                them runs past the timeout. The count is umm's own, known before
+                anything is sent, so the warning arrives before the wait rather
+                than after it. */}
+            {slides.length >= longDeckSlides && (
+              <Alert color="yellow" variant="light" icon={<IconAlertTriangle size={17} />}>
+                <Stack gap={4}>
+                  <Text size="sm">
+                    {t(
+                      '슬라이드가 {count}장입니다. 발표 하나로는 많고, Ptium이 한 번에 만들기에도 오래 걸려 실패할 수 있습니다.',
+                      {
+                        count: slides.length,
+                      },
+                    )}
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    {t('생각을 골라서 만들거나, 공간을 나눈 뒤 다시 시도해 보세요.')}
+                  </Text>
+                </Stack>
+              </Alert>
+            )}
             {storyline && slides.length > 0 && (
               <Group gap="xs">
                 <Badge variant="light">
@@ -398,12 +471,29 @@ interface PtiumFailure {
   technical?: string;
   requestId?: string;
   retryable: boolean;
+  /**
+   * Ptium opened a deck and compiling into it failed, so the deck is really
+   * there and empty. Pressing the button again would make a second one, which
+   * is why this offers a retry into the first instead.
+   */
+  deckLeftBehind?: boolean;
+  ptiumId?: string;
 }
 
 // The kinds worth offering a retry for: something was momentarily wrong rather
 // than misconfigured. Offering "try again" for a wrong API key would be the
 // screen promising something it knows cannot work.
 const retryableFailures = new Set(['unreachable', 'timed-out', 'remote-error']);
+
+/**
+ * When a deck is long enough to be worth warning about before it is sent.
+ *
+ * A readability threshold rather than a measured Ptium limit — umm has no way
+ * to know how fast somebody's Ptium is. It is set where a deck stops being a
+ * talk somebody could give, which is also around where a single compile starts
+ * taking long enough to run past the default thirty-second timeout.
+ */
+const longDeckSlides = 80;
 
 function readFailure(cause: unknown, fallback: string): PtiumFailure {
   if (cause instanceof APIError) {
@@ -417,6 +507,8 @@ function readFailure(cause: unknown, fallback: string): PtiumFailure {
       technical: typeof payload.technical === 'string' ? payload.technical : undefined,
       requestId: typeof payload.requestId === 'string' && payload.requestId ? payload.requestId : undefined,
       retryable: retryableFailures.has(kind),
+      deckLeftBehind: payload.deckLeftBehind === true,
+      ptiumId: typeof payload.ptiumId === 'string' ? payload.ptiumId : undefined,
     };
   }
   return {
@@ -427,7 +519,17 @@ function readFailure(cause: unknown, fallback: string): PtiumFailure {
   };
 }
 
-function PtiumFailureAlert({ failure, onRetry }: { failure: PtiumFailure; onRetry?: () => void }) {
+function PtiumFailureAlert({
+  failure,
+  onRetry,
+  onRetryDeck,
+  retrying,
+}: {
+  failure: PtiumFailure;
+  onRetry?: () => void;
+  onRetryDeck?: () => void;
+  retrying?: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <Alert color="red" icon={<IconAlertTriangle size={17} />} title={failure.title || undefined}>
@@ -458,7 +560,21 @@ function PtiumFailureAlert({ failure, onRetry }: { failure: PtiumFailure; onRetr
             </Text>
           </Stack>
         )}
+        {/* The deck exists in Ptium and is empty. Saying so is what stops the
+            next press from making a second one. */}
+        {failure.deckLeftBehind && (
+          <Text size="sm">
+            {t(
+              'Ptium에는 빈 발표 자료가 이미 만들어져 있습니다. 다시 만들면 하나가 더 생기므로, 있는 것에 이어서 넣습니다.',
+            )}
+          </Text>
+        )}
         <Group gap="xs">
+          {onRetryDeck && (
+            <Button size="xs" variant="light" color="red" loading={retrying} onClick={onRetryDeck}>
+              {t('만들어진 발표 자료에 이어서 넣기')}
+            </Button>
+          )}
           {onRetry && (
             <Button size="xs" variant="light" color="red" onClick={onRetry}>
               {t('다시 시도')}
