@@ -88,6 +88,10 @@ type Slide struct {
 	// person's own words. The screen says so, because a deck whose headings
 	// quietly changed source is one nobody can check.
 	Named bool
+	// Sectioned marks a slide that is only a part heading. It carries none of
+	// the person's words and quotes no thought; it was added to divide a long
+	// talk, and nothing was moved to make room for it.
+	Sectioned bool
 }
 
 // Storyline is a talk: an ordered run of slides, and what was left out.
@@ -98,6 +102,9 @@ type Storyline struct {
 	// count on screen is the real one. Silently dropping a thought from someone's
 	// own space is the one thing this must not do.
 	Excluded []uuid.UUID
+	// Sections is how many part headings a model proposed. Reported for the
+	// same reason NamedHeadings is: the shape is the model's, not the person's.
+	Sections int
 	// NamedHeadings is how many headings a model proposed. Reported so the
 	// screen can say so: a deck whose headings quietly changed source is one
 	// nobody can check.

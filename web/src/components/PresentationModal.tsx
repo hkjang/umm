@@ -34,6 +34,9 @@ export interface StorylineSlide {
    *  anything their author said, so its heading is umm's guess at what the
    *  huddle is about. */
   Grouped?: boolean;
+  /** This slide is only a part heading. It carries none of the person's words
+   *  and quotes no thought; it was added to divide a long talk. */
+  Sectioned?: boolean;
   /** The heading was proposed by the chat model rather than taken from the
    *  person's own words. Shown, because a deck whose headings quietly changed
    *  source is one nobody can check. */
@@ -46,6 +49,8 @@ export interface Storyline {
   Excluded: string[] | null;
   /** How many headings the model proposed. */
   NamedHeadings?: number;
+  /** How many part headings the model proposed. */
+  Sections?: number;
 }
 
 export interface PresentationLink {
@@ -108,6 +113,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
   const [busy, setBusy] = useState(false);
   const [oneSlidePerThought, setOneSlidePerThought] = useState(false);
   const [nameGroups, setNameGroups] = useState(false);
+  const [sectionDeck, setSectionDeck] = useState(false);
   // Not just a sentence: a Ptium failure has a kind, sometimes Ptium's own
   // words, and — for administrators — the underlying error. Keeping them apart
   // is what lets the screen say who fixes this instead of pasting a Go error
@@ -135,6 +141,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
       if (includeExcluded) params.set('includeExcluded', 'true');
       if (oneSlidePerThought) params.set('oneSlidePerThought', 'true');
       if (nameGroups) params.set('nameGroups', 'true');
+      if (sectionDeck) params.set('sectionDeck', 'true');
       const query = params.toString();
       setPreview(await api<PresentationPreview>(`/spaces/${spaceID}/presentation/preview${query ? `?${query}` : ''}`));
     } catch (cause) {
@@ -143,7 +150,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
     } finally {
       setLoading(false);
     }
-  }, [spaceID, title, includeExcluded, oneSlidePerThought, nameGroups, t]);
+  }, [spaceID, title, includeExcluded, oneSlidePerThought, nameGroups, sectionDeck, t]);
 
   useEffect(() => {
     if (!opened) return;
@@ -156,7 +163,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
     setBusy(true);
     setFailure(null);
     try {
-      const body: Record<string, unknown> = { includeExcluded, oneSlidePerThought, nameGroups };
+      const body: Record<string, unknown> = { includeExcluded, oneSlidePerThought, nameGroups, sectionDeck };
       if (title.trim()) body.title = title.trim();
       // Only when the person asked for it: a selection that silently narrowed
       // the deck would drop thoughts they expected to see.
@@ -256,6 +263,14 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
               onChange={(event) => setNameGroups(event.currentTarget.checked)}
             />
           )}
+          {/* Adds part headings and moves nothing. The order is a follows chain
+              or the layout the person made, and rearranging it would override
+              what they said. */}
+          <Switch
+            label={t('긴 발표를 부로 나누기')}
+            checked={sectionDeck}
+            onChange={(event) => setSectionDeck(event.currentTarget.checked)}
+          />
         </Group>
 
         {failure && (
@@ -319,6 +334,13 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
               <Text size="xs" c="dimmed">
                 {t('묶음 제목 {count}개를 AI가 지었습니다. 슬라이드 본문은 그대로 당신이 쓴 문장입니다.', {
                   count: storyline?.NamedHeadings ?? 0,
+                })}
+              </Text>
+            )}
+            {(storyline?.Sections ?? 0) > 0 && (
+              <Text size="xs" c="dimmed">
+                {t('AI가 {count}개 부로 나눴습니다. 슬라이드 순서는 그대로이고 제목만 사이에 들어갔습니다.', {
+                  count: storyline?.Sections ?? 0,
                 })}
               </Text>
             )}

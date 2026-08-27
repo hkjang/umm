@@ -29,6 +29,7 @@ func (s *Server) presentations(r *http.Request) *presentation.Service {
 	// compiles with the headings umm derived itself.
 	if s.Dreams != nil {
 		svc.Namer = presentation.GatewayNamer{AI: s.Dreams, UserID: principal(r).User.ID}
+		svc.Sectioner = presentation.GatewaySectioner{AI: s.Dreams, UserID: principal(r).User.ID}
 	}
 	return svc
 }
@@ -43,6 +44,9 @@ type presentationRequest struct {
 	// thoughts to the gateway, and it makes the deck stop being the same every
 	// time. The sentences on the slides are the person's either way.
 	NameGroups bool `json:"nameGroups"`
+	// SectionDeck asks where a long talk divides into parts. It adds heading
+	// slides and moves nothing.
+	SectionDeck bool `json:"sectionDeck"`
 	// NoteIDs restricts the deck to a selection, so a cluster or a few chosen
 	// thoughts can become a talk without the rest of the space.
 	NoteIDs []uuid.UUID `json:"noteIds"`
@@ -69,6 +73,7 @@ func (s *Server) previewPresentation(w http.ResponseWriter, r *http.Request) {
 		IncludeExcluded:    r.URL.Query().Get("includeExcluded") == "true",
 		OneSlidePerThought: r.URL.Query().Get("oneSlidePerThought") == "true",
 		NameGroups:         r.URL.Query().Get("nameGroups") == "true",
+		SectionDeck:        r.URL.Query().Get("sectionDeck") == "true",
 	}
 
 	svc := s.presentations(r)
@@ -111,6 +116,7 @@ func (s *Server) createPresentation(w http.ResponseWriter, r *http.Request) {
 		IncludeExcluded:    body.IncludeExcluded,
 		OneSlidePerThought: body.OneSlidePerThought,
 		NameGroups:         body.NameGroups,
+		SectionDeck:        body.SectionDeck,
 	})
 	if err != nil {
 		writePresentationError(w, r, err, "발표 자료를 만들지 못했습니다.")
