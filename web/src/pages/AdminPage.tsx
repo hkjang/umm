@@ -2652,10 +2652,18 @@ function BandPreviewCard({
                   )}
                   {row(t('카드당 연관 생각 (중앙값)'), preview.current.medianRelated, preview.proposed.medianRelated)}
                   {row(t('가장 많은 카드'), preview.current.mostRelated, preview.proposed.mostRelated)}
-                  {row(t('묶음 수'), preview.current.clusters, preview.proposed.clusters)}
-                  {row(t('묶인 생각'), preview.current.grouped, preview.proposed.grouped)}
-                  {row(t('가장 큰 묶음'), preview.current.largestCluster, preview.proposed.largestCluster)}
-                  {row(t('혼자 남는 생각'), preview.current.ungrouped, preview.proposed.ungrouped, true)}
+                  {/* Only when the cluster band is what the canvas will use.
+                      The warning above already says it is not, and printing a
+                      table of group counts underneath that sentence would take
+                      it straight back. */}
+                  {preview.semantic && (
+                    <>
+                      {row(t('묶음 수'), preview.current.clusters, preview.proposed.clusters)}
+                      {row(t('묶인 생각'), preview.current.grouped, preview.proposed.grouped)}
+                      {row(t('가장 큰 묶음'), preview.current.largestCluster, preview.proposed.largestCluster)}
+                      {row(t('혼자 남는 생각'), preview.current.ungrouped, preview.proposed.ungrouped, true)}
+                    </>
+                  )}
                 </Table.Tbody>
               </Table>
             </Table.ScrollContainer>
