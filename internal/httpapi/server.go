@@ -122,6 +122,7 @@ func (s *Server) router() chi.Router {
 			protected.Post("/spaces/{spaceID}/presentations", s.createPresentation)
 			protected.Get("/spaces/{spaceID}/presentations", s.listPresentations)
 			protected.Get("/presentations/{linkID}/sources", s.presentationSources)
+			protected.Post("/presentations/{linkID}/retry", s.retryPresentation)
 			protected.Get("/notes/{noteID}/presentations", s.notePresentations)
 			protected.Get("/spaces/{spaceID}/export/authorize", s.authorizeExport)
 			protected.Get("/spaces/{spaceID}/export/markdown", s.exportMarkdown)

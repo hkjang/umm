@@ -525,6 +525,21 @@ export const en: Dictionary = {
   '키 · 권한': 'Keys & permissions',
   '검토 프로세스': 'Approval process',
   '감사 로그': 'Audit log',
+  '묶음 제목을 AI가 짓기': 'Let AI name the groups',
+  'AI 제목': 'AI heading',
+  '묶음 제목 {count}개를 AI가 지었습니다. 슬라이드 본문은 그대로 당신이 쓴 문장입니다.':
+    'AI named {count} groups. The words on the slides are still the ones you wrote.',
+  '생각 하나마다 슬라이드 하나': 'One slide per thought',
+  '슬라이드가 {count}장입니다. 발표 하나로는 많고, Ptium이 한 번에 만들기에도 오래 걸려 실패할 수 있습니다.':
+    'That is {count} slides. It is a lot for one talk, and long enough that Ptium may run out of time building it in one go.',
+  '생각을 골라서 만들거나, 공간을 나눈 뒤 다시 시도해 보세요.':
+    'Select the thoughts you want, or split the space, and try again.',
+  'Ptium에는 빈 발표 자료가 이미 만들어져 있습니다. 다시 만들면 하나가 더 생기므로, 있는 것에 이어서 넣습니다.':
+    'An empty presentation already exists in Ptium. Making another would leave that one behind, so this compiles into it instead.',
+  '만들어진 발표 자료에 이어서 넣기': 'Compile into the one already made',
+  '발표 자료를 다시 만들지 못했습니다.': 'Could not build the presentation again.',
+  '다시 시도할 발표 자료를 찾지 못했습니다. 목록을 새로 고친 뒤 다시 해보세요.':
+    'Could not find the presentation to retry. Refresh the list and try again.',
   'Ptium 서버에 연결하지 못했습니다. 잠시 뒤 다시 만들어 보세요.':
     'Could not reach the Ptium server. Try making it again in a moment.',
   'Ptium이 제때 답하지 않았습니다. 다시 만들어 보세요.': 'Ptium did not answer in time. Try making it again.',

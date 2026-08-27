@@ -21,13 +21,28 @@ import (
 
 // presentations returns the service, built from the store each time so the
 // Ptium address and credential are read fresh rather than cached past a change.
-func (s *Server) presentations() *presentation.Service {
-	return &presentation.Service{Spaces: s.Store, Links: s.Store, Settings: s.Store, Cipher: s.Cipher}
+func (s *Server) presentations(r *http.Request) *presentation.Service {
+	svc := &presentation.Service{Spaces: s.Store, Links: s.Store, Settings: s.Store, Cipher: s.Cipher}
+	// The namer is what proposes a heading for a group of thoughts nobody
+	// connected. Absent when there is no Dream service to reach a chat model
+	// through, which is the same as having no chat model configured: the deck
+	// compiles with the headings umm derived itself.
+	if s.Dreams != nil {
+		svc.Namer = presentation.GatewayNamer{AI: s.Dreams, UserID: principal(r).User.ID}
+	}
+	return svc
 }
 
 // presentationRequest is what a caller may ask for.
 type presentationRequest struct {
 	Title string `json:"title"`
+	// OneSlidePerThought turns off grouping thoughts by where they sit, for a
+	// space whose arrangement means nothing.
+	OneSlidePerThought bool `json:"oneSlidePerThought"`
+	// NameGroups asks the chat model to name each group. Opt-in: it sends those
+	// thoughts to the gateway, and it makes the deck stop being the same every
+	// time. The sentences on the slides are the person's either way.
+	NameGroups bool `json:"nameGroups"`
 	// NoteIDs restricts the deck to a selection, so a cluster or a few chosen
 	// thoughts can become a talk without the rest of the space.
 	NoteIDs []uuid.UUID `json:"noteIds"`
@@ -49,12 +64,14 @@ func (s *Server) previewPresentation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := presentation.Request{
-		SpaceID:         spaceID,
-		Title:           r.URL.Query().Get("title"),
-		IncludeExcluded: r.URL.Query().Get("includeExcluded") == "true",
+		SpaceID:            spaceID,
+		Title:              r.URL.Query().Get("title"),
+		IncludeExcluded:    r.URL.Query().Get("includeExcluded") == "true",
+		OneSlidePerThought: r.URL.Query().Get("oneSlidePerThought") == "true",
+		NameGroups:         r.URL.Query().Get("nameGroups") == "true",
 	}
 
-	svc := s.presentations()
+	svc := s.presentations(r)
 	deckID := r.URL.Query().Get("deckId")
 	preview, err := presentation.Preview{}, error(nil)
 	if deckID != "" {
@@ -87,11 +104,13 @@ func (s *Server) createPresentation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := s.presentations().Create(r.Context(), principal(r).User.ID, presentation.Request{
-		SpaceID:         spaceID,
-		Title:           body.Title,
-		Only:            body.NoteIDs,
-		IncludeExcluded: body.IncludeExcluded,
+	result, err := s.presentations(r).Create(r.Context(), principal(r).User.ID, presentation.Request{
+		SpaceID:            spaceID,
+		Title:              body.Title,
+		Only:               body.NoteIDs,
+		IncludeExcluded:    body.IncludeExcluded,
+		OneSlidePerThought: body.OneSlidePerThought,
+		NameGroups:         body.NameGroups,
 	})
 	if err != nil {
 		writePresentationError(w, r, err, "발표 자료를 만들지 못했습니다.")
@@ -189,6 +208,30 @@ func (s *Server) withDeckURLs(r *http.Request, links []store.PresentationLink) [
 // The question that matters most about a deck made this way, because the
 // slides carry the person's own words: being able to get back to the note is
 // being able to check that nothing was put in their mouth.
+// retryPresentation compiles the space again into the deck a failed attempt
+// already made, rather than making another one.
+//
+// notes:write, like creating: this changes a deck in Ptium.
+func (s *Server) retryPresentation(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:write") {
+		return
+	}
+	linkID, ok := parseID(w, r, "linkID")
+	if !ok {
+		return
+	}
+	result, err := s.presentations(r).Retry(r.Context(), principal(r).User.ID, linkID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 404, "다시 시도할 수 있는 실패한 발표 자료가 없습니다.")
+			return
+		}
+		writePresentationError(w, r, err, "발표 자료를 다시 만들지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, result)
+}
+
 func (s *Server) presentationSources(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:read") {
 		return
@@ -285,6 +328,14 @@ func writePresentationError(w http.ResponseWriter, r *http.Request, err error, f
 	// pasting them into the middle of a Korean sentence.
 	if failure.Detail != "" {
 		extra["ptiumDetail"] = failure.Detail
+	}
+	// The deck Ptium opened before the compile failed. It is really there and
+	// empty, and saying which one it is turns "it broke" into something to
+	// finish: the screen offers the deck and a retry into it rather than a
+	// button that quietly makes a second one.
+	if deck := presentation.LeftBehindDeck(err); deck != "" {
+		extra["ptiumId"] = deck
+		extra["deckLeftBehind"] = true
 	}
 	// The Go error names internal hosts, Go types and SQL constraints. An
 	// administrator is the one who can use that; for anyone else it is noise

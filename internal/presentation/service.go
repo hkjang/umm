@@ -35,7 +35,11 @@ type Spaces interface {
 type Links interface {
 	CreatePresentationLink(ctx context.Context, userID, spaceID uuid.UUID, ptiumID, title string) (store.PresentationLink, error)
 	CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []store.SlideSource, thoughtCount, excludedCount int, failure, failureKind string) error
+	FailedPresentationLink(ctx context.Context, userID, linkID uuid.UUID) (store.PresentationLink, error)
 }
+
+// Naming is optional: with none, or with one that fails, a deck compiles with
+// the headings umm derived itself, which is what it had before.
 
 // Settings reads umm's configuration.
 type Settings interface {
@@ -78,6 +82,11 @@ type Service struct {
 	// can hand back a stub without standing up an HTTP server, and so the
 	// credential is read at call time rather than cached past a rotation.
 	NewPtium func(cfg Config) (Ptium, error)
+	// Namer proposes a heading for each group of thoughts that were put together
+	// by position rather than by anything the person said. Optional in the
+	// strongest sense: nil, or one that fails, leaves the deck exactly as it
+	// compiled. Polish that breaks must not break the thing it was polishing.
+	Namer Namer
 }
 
 // Request is what a person asked for.
@@ -90,6 +99,14 @@ type Request struct {
 	Only []uuid.UUID
 	// IncludeExcluded overrides the note-level mark. Off unless asked.
 	IncludeExcluded bool
+	// OneSlidePerThought turns off grouping thoughts by where they sit.
+	OneSlidePerThought bool
+	// NameGroups asks the chat model to name each group of thoughts that were
+	// put together by position. Opt-in, because it sends those thoughts to the
+	// gateway and because it makes the deck stop being the same every time.
+	// Nothing else about the deck changes: the sentences on the slides stay the
+	// person's either way.
+	NameGroups bool
 }
 
 // Preview is what a space would become, without anything having happened.
@@ -199,7 +216,9 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req Request) (Re
 			len(story.usedThoughts()), len(story.Excluded), applyErr.Error(), string(classified.Kind)); err != nil {
 			return Result{}, fmt.Errorf("%w (and recording the failure also failed: %v)", applyErr, err)
 		}
-		return Result{}, applyErr
+		// The deck is open in Ptium and empty. Saying so is what stops the next
+		// press from making another one.
+		return Result{}, &DeckLeftBehind{DeckID: deck.ID, Err: applyErr}
 	}
 
 	if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationReady, source,
@@ -236,7 +255,7 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 	for _, note := range notes {
 		thoughts = append(thoughts, Thought{
 			ID: note.ID, Title: note.Title, Content: note.Content, Kind: note.Kind,
-			X: note.X, Y: note.Y, AIExcluded: note.AIExcluded,
+			X: note.X, Y: note.Y, Width: note.Width, Height: note.Height, AIExcluded: note.AIExcluded,
 		})
 	}
 	links := make([]Link, 0, len(edges))
@@ -244,7 +263,16 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 		links = append(links, Link{From: edge.SourceID, To: edge.TargetID, Relation: edge.Relation, Origin: edge.Origin})
 	}
 
-	story := Compile(thoughts, links, Options{Title: title, Only: req.Only, IncludeExcluded: req.IncludeExcluded})
+	story := Compile(thoughts, links, Options{Title: title, Only: req.Only,
+		IncludeExcluded: req.IncludeExcluded, OneSlidePerThought: req.OneSlidePerThought})
+	// Only the headings, only the groups, and only when asked. The slides
+	// themselves are already final at this point — a thought reaches its slide
+	// unchanged whether or not a model is involved.
+	if req.NameGroups {
+		var cfg Config
+		_ = s.Settings.GetSetting(ctx, "ptium", &cfg)
+		story.NamedHeadings = nameGroups(ctx, s.Namer, &story, cfg.Language)
+	}
 	if len(story.Slides) == 0 {
 		return Storyline{}, "", ErrNothingToPresent
 	}
@@ -337,4 +365,60 @@ func (s Storyline) usedThoughts() map[uuid.UUID]bool {
 		}
 	}
 	return seen
+}
+
+// Retry compiles the space again into the deck a failed attempt already made.
+//
+// Making a deck is two calls: Ptium opens one, then umm compiles source into
+// it. When the second fails — a space large enough to run past the timeout is
+// the usual way — the deck exists in Ptium and umm records the attempt as
+// failed. Pressing the button again made another deck, so a space that failed
+// four times left four empty ones behind and nothing said so.
+//
+// This applies the source to the deck that is already there. Ptium's source
+// endpoint replaces rather than appends, so a partly-compiled deck ends up the
+// same as one compiled once, and running this twice is the same as running it
+// once.
+func (s *Service) Retry(ctx context.Context, userID uuid.UUID, linkID uuid.UUID) (Result, error) {
+	link, err := s.Links.FailedPresentationLink(ctx, userID, linkID)
+	if err != nil {
+		return Result{}, err
+	}
+	// Recompiled rather than replayed from the stored source: the thinking has
+	// probably moved on since it failed, and a retry that resurrects an old
+	// deck source would put stale sentences on the slides.
+	story, source, err := s.compile(ctx, userID, Request{SpaceID: link.SpaceID, Title: link.Title})
+	if err != nil {
+		return Result{}, err
+	}
+	client, _, err := s.client(ctx)
+	if err != nil {
+		return Result{}, err
+	}
+
+	result, applyErr := client.ApplySource(ctx, link.PtiumID, source, false)
+	if applyErr != nil {
+		classified := Classify(applyErr)
+		if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationFailed, source, nil,
+			len(story.usedThoughts()), len(story.Excluded), applyErr.Error(), string(classified.Kind)); err != nil {
+			return Result{}, fmt.Errorf("%w (and recording the failure also failed: %v)", applyErr, err)
+		}
+		return Result{}, applyErr
+	}
+
+	if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationReady, source,
+		story.SlideSources(), len(story.usedThoughts()), len(story.Excluded), "", ""); err != nil {
+		return Result{}, err
+	}
+	link.Status = store.PresentationReady
+	link.Error, link.FailureKind = "", ""
+	link.CompiledSource = source
+	link.ThoughtCount = len(story.usedThoughts())
+	link.ExcludedCount = len(story.Excluded)
+
+	warnings := result.Warnings
+	if warnings == nil {
+		warnings = []string{}
+	}
+	return Result{Link: link, Warnings: warnings}, nil
 }

@@ -24,12 +24,16 @@ import (
 
 // Thought is the part of a note this compiler reads.
 type Thought struct {
-	ID         uuid.UUID
-	Title      string
-	Content    string
-	Kind       string
-	X, Y       float64
-	AIExcluded bool
+	ID      uuid.UUID
+	Title   string
+	Content string
+	Kind    string
+	X, Y    float64
+	// Width and Height are the note's own size on the canvas. Grouping measures
+	// the gap between edges rather than centres, so a wide note does not appear
+	// to swallow its neighbours. Zero means the default a note is created at.
+	Width, Height float64
+	AIExcluded    bool
 }
 
 // Link is a connection between two thoughts, with what it asserts.
@@ -74,6 +78,16 @@ type Slide struct {
 	// From lists every thought that reached this slide, in the order they appear.
 	// It is what lets a reader of the deck get back to what they wrote.
 	From []uuid.UUID
+	// Grouped marks a slide whose thoughts were put together by where they sit
+	// rather than by anything the person said. Its heading is the first
+	// thought's — umm's guess at what the huddle is about, and the one heading
+	// worth improving. A slide led by a thought its author titled, or a claim
+	// with the evidence they attached, already says what it is.
+	Grouped bool
+	// Named marks a heading proposed by a model rather than derived from the
+	// person's own words. The screen says so, because a deck whose headings
+	// quietly changed source is one nobody can check.
+	Named bool
 }
 
 // Storyline is a talk: an ordered run of slides, and what was left out.
@@ -84,6 +98,10 @@ type Storyline struct {
 	// count on screen is the real one. Silently dropping a thought from someone's
 	// own space is the one thing this must not do.
 	Excluded []uuid.UUID
+	// NamedHeadings is how many headings a model proposed. Reported so the
+	// screen can say so: a deck whose headings quietly changed source is one
+	// nobody can check.
+	NamedHeadings int
 }
 
 // Options tunes what the compiler is allowed to use.
@@ -97,6 +115,11 @@ type Options struct {
 	// Only restricts the talk to these thoughts, for building from a selection
 	// or a cluster rather than a whole space. Empty means everything.
 	Only []uuid.UUID
+	// OneSlidePerThought turns off grouping thoughts by where they sit. What
+	// the person connected still travels together — that is what they said, not
+	// something inferred. This is for a space whose arrangement means nothing,
+	// where being read the notes one at a time is the honest result.
+	OneSlidePerThought bool
 }
 
 // Compile turns thoughts and their connections into a talk.
@@ -133,8 +156,32 @@ func Compile(thoughts []Thought, links []Link, opts Options) Storyline {
 	// the deck entirely.
 	reserved := reservedForComparison(rel, byID)
 
+	// Thoughts nobody connected are grouped by where they were put, the way the
+	// canvas groups them when it is too far out to read. Without this a space
+	// that was written quickly and never drawn on produced one slide per note.
+	// Only the unconnected ones: a stated relationship always wins, and grouping
+	// a supporter by its position would carry it away from the claim it argues
+	// for.
+	grouped := map[uuid.UUID][]uuid.UUID{}
+	if !opts.OneSlidePerThought {
+		grouped = huddles(unconnected(usable, rel))
+	}
+	emitted := map[uuid.UUID]bool{}
+
 	for _, t := range order(usable, rel) {
 		if consumed[t.ID] {
+			continue
+		}
+		if group, ok := grouped[t.ID]; ok {
+			if emitted[t.ID] {
+				continue
+			}
+			for _, slide := range huddleSlides(group, byID, order(usable, rel)) {
+				slides = append(slides, slide)
+			}
+			for _, id := range group {
+				emitted[id], consumed[id] = true, true
+			}
 			continue
 		}
 		if slide, taken, ok := comparisonSlide(t, rel, byID, consumed); ok {
@@ -200,7 +247,16 @@ type related struct {
 	// hasPrev marks a thought something else leads into, so chains can be
 	// started only from their beginning.
 	hasPrev map[uuid.UUID]bool
+	// touched marks both ends of every link umm kept. The maps above are keyed
+	// by one side each, so neither of them answers "did the person say anything
+	// about this thought at all" — and that is the question that decides whether
+	// a thought may be grouped by where it sits.
+	touched map[uuid.UUID]bool
 }
+
+// connected reports whether the person stated any relationship involving this
+// thought. A stated relationship always beats an inferred one.
+func (r related) connected(id uuid.UUID) bool { return r.touched[id] }
 
 func indexLinks(links []Link, byID map[uuid.UUID]Thought) related {
 	r := related{
@@ -210,6 +266,7 @@ func indexLinks(links []Link, byID map[uuid.UUID]Thought) related {
 		contradicts: map[uuid.UUID][]uuid.UUID{},
 		next:        map[uuid.UUID][]uuid.UUID{},
 		hasPrev:     map[uuid.UUID]bool{},
+		touched:     map[uuid.UUID]bool{},
 	}
 	for _, l := range links {
 		if _, ok := byID[l.From]; !ok {
@@ -217,6 +274,11 @@ func indexLinks(links []Link, byID map[uuid.UUID]Thought) related {
 		}
 		if _, ok := byID[l.To]; !ok {
 			continue
+		}
+		switch l.Relation {
+		case store.RelationSupports, store.RelationRefines, store.RelationAnswers,
+			store.RelationContradicts, store.RelationFollows:
+			r.touched[l.From], r.touched[l.To] = true, true
 		}
 		switch l.Relation {
 		case store.RelationSupports:
@@ -431,8 +493,22 @@ func supporting(id uuid.UUID, rel related, byID map[uuid.UUID]Thought) []uuid.UU
 	return out
 }
 
+// maxHeadlineRunes is how long a slide heading may be before it stops being one.
+//
+// A thought the person titled keeps that title whatever its length — they chose
+// it. This only bounds the heading umm falls back to when there is no title,
+// which is the thought's first line, and a first line is often the whole
+// thought: measured on ordinary working notes, 79 characters across the top of
+// a slide.
+//
+// Nothing is lost by cutting it. The heading and the body are separate fields,
+// and Lead is set whenever the two differ — so a thought whose first line is
+// too long to head a slide appears shortened at the top and complete
+// underneath.
+const maxHeadlineRunes = 28
+
 // headline is what the slide is called: the thought's title when it has one,
-// and otherwise its first line.
+// and otherwise the opening of its first line.
 func headline(t Thought) string {
 	if title := strings.TrimSpace(t.Title); title != "" {
 		return title
@@ -442,7 +518,42 @@ func headline(t Thought) string {
 		return ""
 	}
 	first, _, _ := strings.Cut(content, "\n")
-	return strings.TrimSpace(first)
+	return shorten(strings.TrimSpace(first))
+}
+
+// shorten cuts a line down to something that can head a slide.
+//
+// A sentence ending inside the limit is the best heading available, because the
+// person wrote it as a unit. Failing that it cuts at the last space, so a
+// heading never ends mid-word, and marks the cut so nobody reads a truncated
+// line as the whole thought.
+func shorten(line string) string {
+	runes := []rune(line)
+	if len(runes) <= maxHeadlineRunes {
+		return line
+	}
+	if end := firstSentenceEnd(runes); end > 0 && end <= maxHeadlineRunes {
+		return strings.TrimSpace(string(runes[:end]))
+	}
+	cut := maxHeadlineRunes
+	for i := maxHeadlineRunes; i > maxHeadlineRunes/2; i-- {
+		if runes[i] == ' ' {
+			cut = i
+			break
+		}
+	}
+	return strings.TrimSpace(string(runes[:cut])) + "…"
+}
+
+// firstSentenceEnd is one past the first sentence-ending mark, or 0 when the
+// line does not end a sentence.
+func firstSentenceEnd(runes []rune) int {
+	for i, r := range runes {
+		if r == '.' || r == '?' || r == '!' {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // body is the thought as it will be read aloud — its own words, unchanged.

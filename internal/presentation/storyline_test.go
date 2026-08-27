@@ -368,3 +368,71 @@ func TestSupportCyclesDoNotHang(t *testing.T) {
 		t.Fatal("a support cycle produced no talk at all")
 	}
 }
+
+// A heading is a heading, not the whole thought.
+//
+// A thought with no title of its own gets its first line as one, and on
+// ordinary working notes a first line is often the entire thought — measured at
+// 79 characters running across the top of a slide.
+func TestAHeadingIsShortEnoughToBeOne(t *testing.T) {
+	long := "회고 주기를 격주로 줄이면 논의가 얕아질 수 있다. 대신 주제를 하나로 좁혀서 깊게 들어가는 편이 나을지 다음 스프린트에 시험해 보기로 했다."
+	got := headline(Thought{Content: long})
+	if len([]rune(got)) > maxHeadlineRunes+1 {
+		t.Fatalf("heading is %d runes: %q", len([]rune(got)), got)
+	}
+	// The first sentence is the best heading there is, because the person wrote
+	// it as one unit.
+	if want := "회고 주기를 격주로 줄이면 논의가 얕아질 수 있다."; got != want {
+		t.Fatalf("heading = %q, want the first sentence %q", got, want)
+	}
+}
+
+// Nothing is lost by shortening: the heading and the body are separate, so the
+// thought still appears in full underneath.
+func TestShorteningAHeadingKeepsTheWholeThoughtOnTheSlide(t *testing.T) {
+	long := "고객사 A는 온프레미스만 쓰기로 계약서 5조에 명시했고 클라우드 제안은 처음부터 불가능하다"
+	thought := Thought{ID: uuid.New(), Content: long}
+	story := Compile([]Thought{thought}, nil, Options{Title: "x"})
+	if len(story.Slides) != 1 {
+		t.Fatalf("%d slides", len(story.Slides))
+	}
+	slide := story.Slides[0]
+	if len([]rune(slide.Title)) > maxHeadlineRunes+1 {
+		t.Fatalf("heading is %d runes", len([]rune(slide.Title)))
+	}
+	if slide.Lead != long {
+		t.Fatalf("the thought was shortened away instead of moving under the heading: lead = %q", slide.Lead)
+	}
+}
+
+// A title the person chose is theirs, however long.
+func TestATitleThePersonWroteIsNotShortened(t *testing.T) {
+	title := "이번 분기 회고 주기를 어떻게 바꿀지에 대한 팀 전체의 긴 논의 정리본"
+	if got := headline(Thought{Title: title, Content: "본문"}); got != title {
+		t.Fatalf("the author's own title was cut: %q", got)
+	}
+}
+
+// A short line is left exactly as it is.
+func TestAShortLineIsLeftAlone(t *testing.T) {
+	for _, line := range []string{"배포 롤백이 3분 걸린다", "짧음", ""} {
+		if got := headline(Thought{Content: line}); got != line {
+			t.Fatalf("headline(%q) = %q", line, got)
+		}
+	}
+}
+
+// A long line with no sentence end is cut at a word boundary and marked, so
+// nobody reads it as the whole thought.
+func TestALongLineWithNoSentenceEndIsCutAtAWord(t *testing.T) {
+	got := headline(Thought{Content: "고객사 A는 온프레미스만 쓰기로 계약서 오조에 명시했고 클라우드 제안은 처음부터 불가능하다"})
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("a cut heading does not say it was cut: %q", got)
+	}
+	if strings.HasSuffix(strings.TrimSuffix(got, "…"), " ") {
+		t.Fatalf("heading ends on a space before the mark: %q", got)
+	}
+	if len([]rune(got)) > maxHeadlineRunes+1 {
+		t.Fatalf("heading is %d runes: %q", len([]rune(got)), got)
+	}
+}

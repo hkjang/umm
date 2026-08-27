@@ -49,6 +49,15 @@ type fakeLinks struct {
 	createErr error
 	complete  []recordedComplete
 	completeE error
+	failed    store.PresentationLink
+	failedErr error
+}
+
+func (f *fakeLinks) FailedPresentationLink(_ context.Context, _, _ uuid.UUID) (store.PresentationLink, error) {
+	if f.failedErr != nil {
+		return store.PresentationLink{}, f.failedErr
+	}
+	return f.failed, nil
 }
 
 func (f *fakeLinks) CreatePresentationLink(_ context.Context, _, spaceID uuid.UUID, ptiumID, title string) (store.PresentationLink, error) {
