@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -729,5 +731,116 @@ func TestDreamInboxAcceptanceIntegration(t *testing.T) {
 	loaded, err := service.Dream(ctx, userID, dreamID)
 	if err != nil || loaded.DreamID != dreamID || loaded.NoteID == nil || *loaded.NoteID != accepted.ID {
 		t.Fatalf("direct Dream lookup should not be limited by history pagination: dream=%#v err=%v", loaded, err)
+	}
+}
+
+// What actually leaves the installation when a Dream is developed.
+//
+// Every prompt umm builds is redacted first, because the text is whatever
+// someone wrote in a thought and people paste configuration into thoughts. The
+// assist on selected notes has always redacted. Developing a Dream sends the
+// same sources to the same gateway and did not — a guard on every path but one,
+// which is the shape the v0.59.0 leak had as well.
+//
+// This reads the request body the gateway actually received rather than the
+// prompt umm meant to send, because the two are only the same when nothing in
+// between undoes it.
+func TestDreamDevelopmentRedactsWhatItSendsToTheGatewayIntegration(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("POSTGRES_DSN is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	db, err := store.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Close()
+	if err = db.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	userID, spaceID := uuid.New(), uuid.New()
+	firstID, secondID, dreamID := uuid.New(), uuid.New(), uuid.New()
+	username := "redact_develop_" + userID.String()
+	if _, err = db.Pool.Exec(ctx,
+		`INSERT INTO users(id,username,display_name) VALUES($1,$2::citext,$2::text)`, userID, username); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, userID)
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO user_preferences(user_id) VALUES($1)`, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `INSERT INTO spaces(id,owner_id,name) VALUES($1,$2,'redaction fence')`, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	// The two shapes people paste, and ordinary writing either side of them so
+	// the test can tell redaction from deletion.
+	const secret = "sk-live-must-not-travel"
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO notes(id,space_id,author_id,content) VALUES
+		($1,$3,$4,'배포 절차 메모 {"api_key":"sk-live-must-not-travel"} 화요일 회의'),
+		($2,$3,$4,'게이트웨이 점검 Authorization: Bearer sk-live-must-not-travel')`,
+		firstID, secondID, spaceID, userID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO dream_notes(dream_id,user_id,space_id,dream_type,content,source_note_count)
+		VALUES($1,$2,$3,'connection','두 메모를 잇는 Dream 본문 password=dream-body-secret',2)`,
+		dreamID, userID, spaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Pool.Exec(ctx, `
+		INSERT INTO dream_sources(dream_id,source_note_id,rank,cited) VALUES($1,$2,1,true),($1,$3,2,true)`,
+		dreamID, firstID, secondID); err != nil {
+		t.Fatal(err)
+	}
+
+	var sent atomic.Value
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		sent.Store(string(body))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": "발전된 결과입니다."}}},
+			"usage":   map[string]any{"prompt_tokens": 20, "completion_tokens": 10},
+		})
+	}))
+	defer gateway.Close()
+
+	var previousDream Config
+	if db.GetSetting(ctx, "dream", &previousDream) == nil {
+		defer db.PutSetting(context.Background(), "dream", previousDream, userID)
+	}
+	var previousGateway GatewayConfig
+	if db.GetSetting(ctx, "ai_gateway", &previousGateway) == nil {
+		defer db.PutSetting(context.Background(), "ai_gateway", previousGateway, userID)
+	}
+	if err = db.PutSetting(ctx, "dream", Config{Model: "redaction-model", TokenLimit: 256}, userID); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.PutSetting(ctx, "ai_gateway", GatewayConfig{BaseURL: gateway.URL, TimeoutSeconds: 5}, userID); err != nil {
+		t.Fatal(err)
+	}
+
+	service := &Service{Store: db}
+	if _, err = service.Develop(ctx, userID, dreamID, "expand"); err != nil {
+		t.Fatalf("development failed: %v", err)
+	}
+	body, _ := sent.Load().(string)
+	if body == "" {
+		t.Fatal("the gateway received nothing, so this test proves nothing about what it received")
+	}
+	for _, leaked := range []string{secret, "dream-body-secret"} {
+		if strings.Contains(body, leaked) {
+			t.Fatalf("%q reached the gateway in the development prompt: %s", leaked, body)
+		}
+	}
+	// And the thought itself still went, or the Dream is being developed from
+	// nothing and redaction has become deletion.
+	for _, kept := range []string{"배포 절차 메모", "화요일 회의", "게이트웨이 점검"} {
+		if !strings.Contains(body, kept) {
+			t.Fatalf("%q did not reach the gateway; redaction removed the thought as well: %s", kept, body)
+		}
 	}
 }
