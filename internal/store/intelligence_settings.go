@@ -42,9 +42,16 @@ type IntelligenceSettings struct {
 	AutoLinkMinNote int     `json:"autolink_min_notes"`
 
 	// SemanticAccuracyBar and SemanticPurityBar decide whether umm considers the
-	// active embedding fit to judge meaning at all. Lowering them lets auto-link
-	// run on a backend that scores shared vocabulary above shared meaning, which
-	// is why the administrator screen says so plainly next to the field.
+	// active embedding fit to judge meaning at all. Lowering them admits a
+	// backend that lands just under the shipped line — an operator running one
+	// language and one narrow domain may legitimately need that.
+	//
+	// They cannot admit a backend that ranks shared vocabulary above shared
+	// meaning. That is gated on discrimination being positive, which is not a
+	// setting: the shipped local algorithm measures -0.25 and no value here
+	// changes it. The administrator screen says so next to the fields, and it is
+	// repeated because the fields print how the local algorithm scores, which
+	// otherwise reads as an invitation to set the bars just below it.
 	SemanticAccuracyBar float64 `json:"semantic_accuracy_bar"`
 	SemanticPurityBar   float64 `json:"semantic_purity_bar"`
 
