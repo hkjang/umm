@@ -362,6 +362,8 @@ paths:
       parameters:
         - { in: query, name: title, schema: { type: string } }
         - { in: query, name: includeExcluded, schema: { type: boolean } }
+        - { in: query, name: oneSlidePerThought, schema: { type: boolean }, description: Turn off grouping thoughts by where they sit on the canvas. }
+        - { in: query, name: nameGroups, schema: { type: boolean }, description: "Ask the chat model to name each group. Only the headings; the sentences on the slides are the author's either way." }
         - { in: query, name: deckId, schema: { type: string } }
       responses:
         '200': { description: The compiled talk, content: { application/json: { schema: { $ref: '#/components/schemas/PresentationPreview' } } } }
@@ -395,6 +397,7 @@ paths:
                 noteIds: { type: array, items: { type: string, format: uuid } }
                 includeExcluded: { type: boolean }
                 oneSlidePerThought: { type: boolean, description: Turn off grouping thoughts by where they sit on the canvas. What the person connected still travels together. }
+                nameGroups: { type: boolean, description: "Ask the chat model to name each group of thoughts that were put together by position. Only the headings: the sentences on the slides are the author's either way. Opt-in, because it sends those thoughts to the gateway and makes the deck stop being the same every time. Ignored when no chat model is configured." }
       responses:
         '201': { description: The deck, content: { application/json: { schema: { type: object, properties: { link: { $ref: '#/components/schemas/PresentationLink' }, warnings: { type: array, items: { type: string } } } } } } }
         '400': { description: Nothing in this space can become a talk }

@@ -38,6 +38,9 @@ type Links interface {
 	FailedPresentationLink(ctx context.Context, userID, linkID uuid.UUID) (store.PresentationLink, error)
 }
 
+// Naming is optional: with none, or with one that fails, a deck compiles with
+// the headings umm derived itself, which is what it had before.
+
 // Settings reads umm's configuration.
 type Settings interface {
 	GetSetting(ctx context.Context, key string, dst any) error
@@ -79,6 +82,11 @@ type Service struct {
 	// can hand back a stub without standing up an HTTP server, and so the
 	// credential is read at call time rather than cached past a rotation.
 	NewPtium func(cfg Config) (Ptium, error)
+	// Namer proposes a heading for each group of thoughts that were put together
+	// by position rather than by anything the person said. Optional in the
+	// strongest sense: nil, or one that fails, leaves the deck exactly as it
+	// compiled. Polish that breaks must not break the thing it was polishing.
+	Namer Namer
 }
 
 // Request is what a person asked for.
@@ -93,6 +101,12 @@ type Request struct {
 	IncludeExcluded bool
 	// OneSlidePerThought turns off grouping thoughts by where they sit.
 	OneSlidePerThought bool
+	// NameGroups asks the chat model to name each group of thoughts that were
+	// put together by position. Opt-in, because it sends those thoughts to the
+	// gateway and because it makes the deck stop being the same every time.
+	// Nothing else about the deck changes: the sentences on the slides stay the
+	// person's either way.
+	NameGroups bool
 }
 
 // Preview is what a space would become, without anything having happened.
@@ -251,6 +265,14 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 
 	story := Compile(thoughts, links, Options{Title: title, Only: req.Only,
 		IncludeExcluded: req.IncludeExcluded, OneSlidePerThought: req.OneSlidePerThought})
+	// Only the headings, only the groups, and only when asked. The slides
+	// themselves are already final at this point — a thought reaches its slide
+	// unchanged whether or not a model is involved.
+	if req.NameGroups {
+		var cfg Config
+		_ = s.Settings.GetSetting(ctx, "ptium", &cfg)
+		story.NamedHeadings = nameGroups(ctx, s.Namer, &story, cfg.Language)
+	}
 	if len(story.Slides) == 0 {
 		return Storyline{}, "", ErrNothingToPresent
 	}

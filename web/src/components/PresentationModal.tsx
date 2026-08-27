@@ -30,12 +30,22 @@ export interface StorylineSlide {
   Lead: string;
   Points: StorylinePoint[] | null;
   From: string[] | null;
+  /** The thoughts on this slide were put together by where they sit, not by
+   *  anything their author said, so its heading is umm's guess at what the
+   *  huddle is about. */
+  Grouped?: boolean;
+  /** The heading was proposed by the chat model rather than taken from the
+   *  person's own words. Shown, because a deck whose headings quietly changed
+   *  source is one nobody can check. */
+  Named?: boolean;
 }
 
 export interface Storyline {
   Title: string;
   Slides: StorylineSlide[] | null;
   Excluded: string[] | null;
+  /** How many headings the model proposed. */
+  NamedHeadings?: number;
 }
 
 export interface PresentationLink {
@@ -97,6 +107,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [oneSlidePerThought, setOneSlidePerThought] = useState(false);
+  const [nameGroups, setNameGroups] = useState(false);
   // Not just a sentence: a Ptium failure has a kind, sometimes Ptium's own
   // words, and — for administrators — the underlying error. Keeping them apart
   // is what lets the screen say who fixes this instead of pasting a Go error
@@ -123,6 +134,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
       if (title.trim()) params.set('title', title.trim());
       if (includeExcluded) params.set('includeExcluded', 'true');
       if (oneSlidePerThought) params.set('oneSlidePerThought', 'true');
+      if (nameGroups) params.set('nameGroups', 'true');
       const query = params.toString();
       setPreview(await api<PresentationPreview>(`/spaces/${spaceID}/presentation/preview${query ? `?${query}` : ''}`));
     } catch (cause) {
@@ -131,7 +143,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
     } finally {
       setLoading(false);
     }
-  }, [spaceID, title, includeExcluded, oneSlidePerThought, t]);
+  }, [spaceID, title, includeExcluded, oneSlidePerThought, nameGroups, t]);
 
   useEffect(() => {
     if (!opened) return;
@@ -144,7 +156,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
     setBusy(true);
     setFailure(null);
     try {
-      const body: Record<string, unknown> = { includeExcluded, oneSlidePerThought };
+      const body: Record<string, unknown> = { includeExcluded, oneSlidePerThought, nameGroups };
       if (title.trim()) body.title = title.trim();
       // Only when the person asked for it: a selection that silently narrowed
       // the deck would drop thoughts they expected to see.
@@ -234,6 +246,16 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
             checked={oneSlidePerThought}
             onChange={(event) => setOneSlidePerThought(event.currentTarget.checked)}
           />
+          {/* Opt-in, and only the headings. The sentences on the slides are the
+              person's either way — that is what makes the deck theirs to stand
+              behind. */}
+          {!oneSlidePerThought && (
+            <Switch
+              label={t('묶음 제목을 AI가 짓기')}
+              checked={nameGroups}
+              onChange={(event) => setNameGroups(event.currentTarget.checked)}
+            />
+          )}
         </Group>
 
         {failure && (
@@ -290,6 +312,16 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
                 </Stack>
               </Alert>
             )}
+            {/* Which headings are not the person's. The words on the slides
+                are theirs whether or not a model was asked, and saying exactly
+                what it touched is what lets someone check it. */}
+            {(storyline?.NamedHeadings ?? 0) > 0 && (
+              <Text size="xs" c="dimmed">
+                {t('묶음 제목 {count}개를 AI가 지었습니다. 슬라이드 본문은 그대로 당신이 쓴 문장입니다.', {
+                  count: storyline?.NamedHeadings ?? 0,
+                })}
+              </Text>
+            )}
             {storyline && slides.length > 0 && (
               <Group gap="xs">
                 <Badge variant="light">
@@ -330,6 +362,11 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
                         {index + 1 + (storyline?.Title ? 1 : 0)}
                       </Text>
                       <Text fw={620}>{slide.Title}</Text>
+                      {slide.Named && (
+                        <Badge size="xs" variant="light" color="grape">
+                          {t('AI 제목')}
+                        </Badge>
+                      )}
                       {slide.Role === 'comparison' && (
                         <Tooltip label={t('서로 어긋난다고 표시해 둔 두 생각입니다.')}>
                           <Badge size="xs" variant="light" color="orange">

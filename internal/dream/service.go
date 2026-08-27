@@ -1236,3 +1236,49 @@ func (s *Service) Metrics(ctx context.Context) (map[string]any, error) {
 	out["estimatedMonthlyCostMicros"] = expectedCalls * estimatedCostPerCall
 	return out, nil
 }
+
+// Complete asks the configured chat model one question, for a part of umm that
+// is not Dream.
+//
+// This package owns talking to the gateway — the quota, the circuit breaker,
+// the credential, and redaction — so a second caller reaching past it would be
+// a second set of those rules to keep in step. v0.59.1 was one path that had
+// been left out of one of them; a narrow shared door is how that stops being
+// possible.
+//
+// The user text is redacted here rather than by the caller, for the same
+// reason. A caller that forgets is the whole failure mode.
+//
+// The caller is responsible for having established that the person may read
+// what they are sending: this takes text, not note ids, and cannot check.
+func (s *Service) Complete(ctx context.Context, userID uuid.UUID, system, user string, maxTokens int) (string, error) {
+	var cfg Config
+	var gateway GatewayConfig
+	if s.Store.GetSetting(ctx, "dream", &cfg) != nil || s.Store.GetSetting(ctx, "ai_gateway", &gateway) != nil {
+		return "", errors.New("AI settings unavailable")
+	}
+	if cfg.Model == "" {
+		return "", ErrChatModelNotConfigured
+	}
+	if _, err := chatCompletionsEndpoint(gateway.BaseURL); err != nil {
+		return "", errors.New("invalid AI gateway URL")
+	}
+	if strings.HasPrefix(gateway.APIKey, "enc:") {
+		if _, err := s.Cipher.Decrypt(strings.TrimPrefix(gateway.APIKey, "enc:")); err != nil {
+			return "", err
+		}
+	}
+	reservationID, err := s.acquireAIQuota(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	redacted := redact(truncate(user, 6000))
+	text, inTokens, outTokens, latency, callErr := s.callTextForUser(
+		ctx, uuid.Nil, gateway, cfg.Model, .2, NormalizeTokenLimit(maxTokens), system, redacted)
+	s.recordAICall(ctx, userID, uuid.Nil, cfg.Model, inTokens, outTokens, latency, callErr, gateway, redacted)
+	if callErr != nil {
+		s.cancelAIQuotaBeforeCall(reservationID)
+		return "", callErr
+	}
+	return visibleModelResponse(text), nil
+}

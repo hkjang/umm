@@ -175,7 +175,7 @@ func huddleSlides(group []uuid.UUID, byID map[uuid.UUID]Thought, reading []Thoug
 		members = members[take:]
 
 		lead := chunk[0]
-		slide := Slide{Role: RoleContent, Title: headline(lead), From: []uuid.UUID{lead.ID}}
+		slide := Slide{Role: RoleContent, Title: headline(lead), From: []uuid.UUID{lead.ID}, Grouped: true}
 		if rest := body(lead); rest != "" && rest != slide.Title {
 			slide.Lead = rest
 		}

@@ -21,8 +21,16 @@ import (
 
 // presentations returns the service, built from the store each time so the
 // Ptium address and credential are read fresh rather than cached past a change.
-func (s *Server) presentations() *presentation.Service {
-	return &presentation.Service{Spaces: s.Store, Links: s.Store, Settings: s.Store, Cipher: s.Cipher}
+func (s *Server) presentations(r *http.Request) *presentation.Service {
+	svc := &presentation.Service{Spaces: s.Store, Links: s.Store, Settings: s.Store, Cipher: s.Cipher}
+	// The namer is what proposes a heading for a group of thoughts nobody
+	// connected. Absent when there is no Dream service to reach a chat model
+	// through, which is the same as having no chat model configured: the deck
+	// compiles with the headings umm derived itself.
+	if s.Dreams != nil {
+		svc.Namer = presentation.GatewayNamer{AI: s.Dreams, UserID: principal(r).User.ID}
+	}
+	return svc
 }
 
 // presentationRequest is what a caller may ask for.
@@ -31,6 +39,10 @@ type presentationRequest struct {
 	// OneSlidePerThought turns off grouping thoughts by where they sit, for a
 	// space whose arrangement means nothing.
 	OneSlidePerThought bool `json:"oneSlidePerThought"`
+	// NameGroups asks the chat model to name each group. Opt-in: it sends those
+	// thoughts to the gateway, and it makes the deck stop being the same every
+	// time. The sentences on the slides are the person's either way.
+	NameGroups bool `json:"nameGroups"`
 	// NoteIDs restricts the deck to a selection, so a cluster or a few chosen
 	// thoughts can become a talk without the rest of the space.
 	NoteIDs []uuid.UUID `json:"noteIds"`
@@ -56,9 +68,10 @@ func (s *Server) previewPresentation(w http.ResponseWriter, r *http.Request) {
 		Title:              r.URL.Query().Get("title"),
 		IncludeExcluded:    r.URL.Query().Get("includeExcluded") == "true",
 		OneSlidePerThought: r.URL.Query().Get("oneSlidePerThought") == "true",
+		NameGroups:         r.URL.Query().Get("nameGroups") == "true",
 	}
 
-	svc := s.presentations()
+	svc := s.presentations(r)
 	deckID := r.URL.Query().Get("deckId")
 	preview, err := presentation.Preview{}, error(nil)
 	if deckID != "" {
@@ -91,12 +104,13 @@ func (s *Server) createPresentation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := s.presentations().Create(r.Context(), principal(r).User.ID, presentation.Request{
+	result, err := s.presentations(r).Create(r.Context(), principal(r).User.ID, presentation.Request{
 		SpaceID:            spaceID,
 		Title:              body.Title,
 		Only:               body.NoteIDs,
 		IncludeExcluded:    body.IncludeExcluded,
 		OneSlidePerThought: body.OneSlidePerThought,
+		NameGroups:         body.NameGroups,
 	})
 	if err != nil {
 		writePresentationError(w, r, err, "발표 자료를 만들지 못했습니다.")
@@ -206,7 +220,7 @@ func (s *Server) retryPresentation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, err := s.presentations().Retry(r.Context(), principal(r).User.ID, linkID)
+	result, err := s.presentations(r).Retry(r.Context(), principal(r).User.ID, linkID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, 404, "다시 시도할 수 있는 실패한 발표 자료가 없습니다.")

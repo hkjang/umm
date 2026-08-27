@@ -525,6 +525,10 @@ export const en: Dictionary = {
   '키 · 권한': 'Keys & permissions',
   '검토 프로세스': 'Approval process',
   '감사 로그': 'Audit log',
+  '묶음 제목을 AI가 짓기': 'Let AI name the groups',
+  'AI 제목': 'AI heading',
+  '묶음 제목 {count}개를 AI가 지었습니다. 슬라이드 본문은 그대로 당신이 쓴 문장입니다.':
+    'AI named {count} groups. The words on the slides are still the ones you wrote.',
   '생각 하나마다 슬라이드 하나': 'One slide per thought',
   '슬라이드가 {count}장입니다. 발표 하나로는 많고, Ptium이 한 번에 만들기에도 오래 걸려 실패할 수 있습니다.':
     'That is {count} slides. It is a lot for one talk, and long enough that Ptium may run out of time building it in one go.',

@@ -78,6 +78,16 @@ type Slide struct {
 	// From lists every thought that reached this slide, in the order they appear.
 	// It is what lets a reader of the deck get back to what they wrote.
 	From []uuid.UUID
+	// Grouped marks a slide whose thoughts were put together by where they sit
+	// rather than by anything the person said. Its heading is the first
+	// thought's — umm's guess at what the huddle is about, and the one heading
+	// worth improving. A slide led by a thought its author titled, or a claim
+	// with the evidence they attached, already says what it is.
+	Grouped bool
+	// Named marks a heading proposed by a model rather than derived from the
+	// person's own words. The screen says so, because a deck whose headings
+	// quietly changed source is one nobody can check.
+	Named bool
 }
 
 // Storyline is a talk: an ordered run of slides, and what was left out.
@@ -88,6 +98,10 @@ type Storyline struct {
 	// count on screen is the real one. Silently dropping a thought from someone's
 	// own space is the one thing this must not do.
 	Excluded []uuid.UUID
+	// NamedHeadings is how many headings a model proposed. Reported so the
+	// screen can say so: a deck whose headings quietly changed source is one
+	// nobody can check.
+	NamedHeadings int
 }
 
 // Options tunes what the compiler is allowed to use.
@@ -479,8 +493,22 @@ func supporting(id uuid.UUID, rel related, byID map[uuid.UUID]Thought) []uuid.UU
 	return out
 }
 
+// maxHeadlineRunes is how long a slide heading may be before it stops being one.
+//
+// A thought the person titled keeps that title whatever its length — they chose
+// it. This only bounds the heading umm falls back to when there is no title,
+// which is the thought's first line, and a first line is often the whole
+// thought: measured on ordinary working notes, 79 characters across the top of
+// a slide.
+//
+// Nothing is lost by cutting it. The heading and the body are separate fields,
+// and Lead is set whenever the two differ — so a thought whose first line is
+// too long to head a slide appears shortened at the top and complete
+// underneath.
+const maxHeadlineRunes = 28
+
 // headline is what the slide is called: the thought's title when it has one,
-// and otherwise its first line.
+// and otherwise the opening of its first line.
 func headline(t Thought) string {
 	if title := strings.TrimSpace(t.Title); title != "" {
 		return title
@@ -490,7 +518,42 @@ func headline(t Thought) string {
 		return ""
 	}
 	first, _, _ := strings.Cut(content, "\n")
-	return strings.TrimSpace(first)
+	return shorten(strings.TrimSpace(first))
+}
+
+// shorten cuts a line down to something that can head a slide.
+//
+// A sentence ending inside the limit is the best heading available, because the
+// person wrote it as a unit. Failing that it cuts at the last space, so a
+// heading never ends mid-word, and marks the cut so nobody reads a truncated
+// line as the whole thought.
+func shorten(line string) string {
+	runes := []rune(line)
+	if len(runes) <= maxHeadlineRunes {
+		return line
+	}
+	if end := firstSentenceEnd(runes); end > 0 && end <= maxHeadlineRunes {
+		return strings.TrimSpace(string(runes[:end]))
+	}
+	cut := maxHeadlineRunes
+	for i := maxHeadlineRunes; i > maxHeadlineRunes/2; i-- {
+		if runes[i] == ' ' {
+			cut = i
+			break
+		}
+	}
+	return strings.TrimSpace(string(runes[:cut])) + "…"
+}
+
+// firstSentenceEnd is one past the first sentence-ending mark, or 0 when the
+// line does not end a sentence.
+func firstSentenceEnd(runes []rune) int {
+	for i, r := range runes {
+		if r == '.' || r == '?' || r == '!' {
+			return i + 1
+		}
+	}
+	return 0
 }
 
 // body is the thought as it will be read aloud — its own words, unchanged.
