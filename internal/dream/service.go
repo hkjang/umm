@@ -436,7 +436,24 @@ type chatResponse struct {
 }
 
 var (
-	secretPattern       = regexp.MustCompile(`(?i)(password|passwd|secret|api[_ -]?key|token)\s*[:=]\s*\S+|umm_key_[a-zA-Z0-9_-]+`)
+	// What a person actually pastes into a thought.
+	//
+	// The first version matched `key: value` and nothing else, which misses the
+	// two shapes secrets arrive in most often: a JSON fragment copied out of a
+	// config file, where a quote sits between the name and the colon, and an
+	// Authorization header copied out of a curl command, where the credential is
+	// a word further along. Both went to the gateway intact.
+	//
+	// Authorization is taken to the end of the line rather than to the next
+	// space, because the value is "Bearer <token>" and stopping at the space
+	// would redact the word Bearer and send the token.
+	//
+	// Order matters: alternation is leftmost-first, so the header case has to
+	// come before the bare `token:` case it would otherwise lose to.
+	secretPattern = regexp.MustCompile(`(?i)\bauthorization\b\s*[:=]\s*\S.*` +
+		`|\bbearer\s+[^\s"',]+` +
+		`|"?\b(?:password|passwd|secret|api[_ -]?key|token)\b"?\s*[:=]\s*"?[^"'\s,}\]]+` +
+		`|umm_key_[a-zA-Z0-9_-]+`)
 	thoughtBlockPattern = regexp.MustCompile(`(?is)<(?:think|thinking|analysis)\b[^>]*>.*?</(?:think|thinking|analysis)\s*>`)
 	thoughtOpenPattern  = regexp.MustCompile(`(?is)<(?:think|thinking|analysis)\b[^>]*>`)
 	thoughtClosePattern = regexp.MustCompile(`(?is)</(?:think|thinking|analysis)\s*>`)
