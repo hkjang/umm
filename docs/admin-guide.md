@@ -313,6 +313,33 @@ go test ./internal/store -run ClustersAndRelated -v
 
 새 키를 `ENCRYPTION_KEY`, 현재 키를 `ENCRYPTION_KEY_PREVIOUS`에 배치한 뒤 재시작합니다. 보안 화면에서 fallback 1개 이상, unreadable 0을 확인하고 **현재 키로 회전**을 실행합니다. 이 작업은 OIDC/AI secret, 웹훅 secret, 암호화 AI prompt를 한 트랜잭션으로 다시 암호화하며 `enc:` wrapper 도입 전 raw v1 AI prompt도 현재 wrapper·v2 형식으로 정규화합니다. 회전 전에 열어 둔 OIDC·AI Gateway 화면에서 마스킹된 값을 동시에 저장해도 서버가 같은 설정 lock 뒤 최신 암호문을 병합합니다. pending 0을 확인하고 새 백업을 만든 후에만 이전 키 환경변수를 제거합니다.
 
+## 8-2. Ptium 발표 연동이 실패할 때
+
+사용자 화면에는 **무엇을 해야 하는지**가 적히고, 그중 절반은 "관리자에게 알려 주세요"입니다. 그 절반이 여기입니다.
+
+| 화면에 뜨는 말 | `failure` | 실제 원인 | 관리자가 할 일 |
+| :--- | :--- | :--- | :--- |
+| Ptium에 연결하지 못했습니다 | `unreachable` | 아무것도 응답하지 않음 | Ptium 프로세스와 네트워크 확인 |
+| Ptium이 제때 답하지 않았습니다 | `timed-out` | 제한 시간 초과 | 생각이 많은 공간이면 `timeout_seconds` 상향 |
+| Ptium이 umm의 자격 증명을 거부했습니다 | `unauthorized` | 401 · 403 | Ptium API 키 재발급 후 저장 |
+| 그 주소에 Ptium API가 없습니다 | `no-api` | 404 | 주소 오타, 또는 앞단 프록시가 가로챔 |
+| Ptium이 이 발표 구성을 받아들이지 않았습니다 | `rejected` | 4xx | **관리자 일이 아닙니다.** Ptium이 어느 슬라이드인지 알려 주므로 작성자가 고칩니다 |
+| Ptium 쪽에서 오류가 났습니다 | `remote-error` | 5xx | Ptium 로그 확인 |
+| Ptium이 예상과 다른 응답을 보냈습니다 | `unexpected-response` | 문서와 다른 형식 | 두 서비스 버전 확인 |
+| Ptium에는 만들어졌지만 umm이 기록하지 못했습니다 | `not-recorded` | 덱 생성 후 DB 기록 실패 | **그냥 다시 시도하면 덱이 하나 더 생깁니다.** Ptium에서 먼저 확인 |
+
+### 기술 정보는 관리자에게만 갑니다
+
+바탕이 된 오류 메시지는 내부 호스트 주소, Go 타입 이름, SQL 제약 이름을 담고 있습니다. 슬라이드를 만들려던 사람에게는 쓸 데가 없고 보여 줄 이유도 없으므로, **`admin` 역할일 때만** 응답의 `technical` 에 실립니다. 화면에서는 "기술 정보 (관리자에게만 보입니다)" 아래에 접혀 나옵니다.
+
+앞단 프록시가 Ptium 대신 HTML 오류 페이지로 답하는 경우, 그 페이지는 **Ptium의 설명이 아니므로 "Ptium이 보낸 설명"에 싣지 않습니다.** 프록시는 Ptium이 아니고, 그 페이지는 상태 코드 이상을 말해 주지 않습니다.
+
+### 지난 실패를 나중에 보기
+
+발표 목록의 **실패** 배지에 마우스를 올리면 같은 분류가 뜹니다. 바탕이 된 오류는 `presentation_links.error` 에, 분류는 `failure_kind` 에 남습니다. v0.60.0 이전에 기록된 행은 `failure_kind` 가 비어 있고, 그때는 저장된 원본 오류를 그대로 보여 줍니다.
+
+---
+
 ## 9. 서명 웹훅 운영
 
 사용자는 개인 설정에서 허용된 `webhooks:write` scope로 subscription을 관리합니다. 대상은 공개 HTTPS 443만 허용합니다. 도메인 변경과 PostgreSQL delivery outbox는 원자적으로 커밋되고, 재시작 시 대기 또는 lease가 만료된 항목을 이어서 처리합니다. 전달 worker는 구독·소유 사용자·이벤트 공간·현재 membership과 정확한 delivery claim을 실제 HTTP 응답까지 잠급니다. 권한 회수·사용자 비활성화·구독 중지가 먼저 확정되면 payload를 보내지 않고, 전송이 먼저 시작되면 변경 transaction은 delivery terminal 상태와 payload 삭제가 확정될 때까지 기다립니다. 수신 시스템은 timestamp와 raw body의 HMAC-SHA256, 허용 시간 창을 검증하고 at-least-once 요청의 delivery UUID를 멱등 처리해야 합니다. 일시 실패는 세 번 재시도하고 연속 10회 실패 subscription은 자동 중지됩니다. 외부 오류는 잘못된 UTF-8을 제거하고 500 byte의 완전한 rune 경계 안에서 기록하므로 다국어 오류도 실패 횟수와 자동 중지를 막지 않습니다. terminal payload는 즉시 제거되고 metadata도 30일 후 정리되므로 운영 지표와 개인 설정의 마지막 오류를 함께 확인하세요.

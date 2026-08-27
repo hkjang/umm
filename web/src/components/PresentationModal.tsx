@@ -1,7 +1,7 @@
 import { Alert, Badge, Button, Group, Modal, ScrollArea, Stack, Switch, Text, TextInput, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconExternalLink, IconPresentation, IconRefresh } from '@tabler/icons-react';
 import { useCallback, useEffect, useState } from 'react';
-import { api, json } from '../api';
+import { APIError, api, json } from '../api';
 import { useTranslation } from '../i18n';
 
 /**
@@ -43,7 +43,15 @@ export interface PresentationLink {
   ptiumId: string;
   title: string;
   status: 'pending' | 'generating' | 'ready' | 'failed';
+  /** The underlying error. Kept for whoever fixes it, not for the tooltip. */
   error?: string;
+  /**
+   * What sort of failure it was. This is what decides the sentence a person
+   * reads: the stored `error` names internal hosts and Go types, which says
+   * what happened and not what to do about it. Empty on decks recorded before
+   * v0.60.0.
+   */
+  failureKind?: string;
   thoughtCount: number;
   excludedCount: number;
   /** Where the deck can be opened. Absent when no Ptium is configured. */
@@ -88,7 +96,11 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
   const [preview, setPreview] = useState<PresentationPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  // Not just a sentence: a Ptium failure has a kind, sometimes Ptium's own
+  // words, and — for administrators — the underlying error. Keeping them apart
+  // is what lets the screen say who fixes this instead of pasting a Go error
+  // into the middle of a Korean sentence.
+  const [failure, setFailure] = useState<PtiumFailure | null>(null);
   const [made, setMade] = useState<{ id: string; warnings: string[] } | null>(null);
   const [history, setHistory] = useState<PresentationLink[]>([]);
 
@@ -104,7 +116,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError('');
+    setFailure(null);
     try {
       const params = new URLSearchParams();
       if (title.trim()) params.set('title', title.trim());
@@ -113,7 +125,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
       setPreview(await api<PresentationPreview>(`/spaces/${spaceID}/presentation/preview${query ? `?${query}` : ''}`));
     } catch (cause) {
       setPreview(null);
-      setError(cause instanceof Error ? cause.message : t('발표 구성을 만들지 못했습니다.'));
+      setFailure(readFailure(cause, t('발표 구성을 만들지 못했습니다.')));
     } finally {
       setLoading(false);
     }
@@ -128,7 +140,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
 
   const create = async () => {
     setBusy(true);
-    setError('');
+    setFailure(null);
     try {
       const body: Record<string, unknown> = { includeExcluded };
       if (title.trim()) body.title = title.trim();
@@ -142,7 +154,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
       setMade({ id: result.link.ptiumId, warnings: result.warnings ?? [] });
       void loadHistory();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : t('발표 자료를 만들지 못했습니다.'));
+      setFailure(readFailure(cause, t('발표 자료를 만들지 못했습니다.')));
     } finally {
       setBusy(false);
     }
@@ -180,11 +192,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
           )}
         </Group>
 
-        {error && (
-          <Alert color="red" icon={<IconAlertTriangle size={17} />}>
-            {error}
-          </Alert>
-        )}
+        {failure && <PtiumFailureAlert failure={failure} onRetry={failure.retryable ? () => void load() : undefined} />}
 
         {made ? (
           <Alert color="green" icon={<IconPresentation size={17} />} title={t('발표 자료를 만들었습니다.')}>
@@ -239,7 +247,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
             <ScrollArea.Autosize mah={340} type="auto">
               <Stack gap={4} className="storyline-preview">
                 {loading && <Text c="dimmed">{t('구성을 만드는 중입니다…')}</Text>}
-                {!loading && slides.length === 0 && !error && (
+                {!loading && slides.length === 0 && !failure && (
                   <Text c="dimmed">{t('발표로 만들 생각이 없습니다.')}</Text>
                 )}
                 {slides.map((slide, index) => (
@@ -299,7 +307,10 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
                   {link.title || t('제목 없음')}
                 </Text>
                 {link.status === 'failed' ? (
-                  <Tooltip label={link.error || t('만들지 못했습니다.')} multiline w={260}>
+                  /* The kind, not the stored error: a dial-tcp message naming
+                     an internal host, shown under the word 실패, tells a person
+                     nothing they can act on. */
+                  <Tooltip label={failureSummary(link, t)} multiline w={280}>
                     <Badge size="sm" variant="light" color="red">
                       {t('실패')}
                     </Badge>
@@ -369,4 +380,129 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
       </Stack>
     </Modal>
   );
+}
+
+/**
+ * A Ptium failure as the screen needs it.
+ *
+ * `message` is umm's sentence about who fixes this. `ptiumDetail` is Ptium's
+ * own words, present only when Ptium said something worth repeating — a proxy's
+ * HTML error page is dropped before it gets here. `technical` is the underlying
+ * error, which the server sends only to administrators.
+ */
+interface PtiumFailure {
+  kind: string;
+  title: string;
+  message: string;
+  ptiumDetail?: string;
+  technical?: string;
+  requestId?: string;
+  retryable: boolean;
+}
+
+// The kinds worth offering a retry for: something was momentarily wrong rather
+// than misconfigured. Offering "try again" for a wrong API key would be the
+// screen promising something it knows cannot work.
+const retryableFailures = new Set(['unreachable', 'timed-out', 'remote-error']);
+
+function readFailure(cause: unknown, fallback: string): PtiumFailure {
+  if (cause instanceof APIError) {
+    const payload = cause.payload ?? {};
+    const kind = typeof payload.failure === 'string' ? payload.failure : '';
+    return {
+      kind,
+      title: typeof payload.title === 'string' ? payload.title : '',
+      message: cause.message || fallback,
+      ptiumDetail: typeof payload.ptiumDetail === 'string' ? payload.ptiumDetail : undefined,
+      technical: typeof payload.technical === 'string' ? payload.technical : undefined,
+      requestId: typeof payload.requestId === 'string' && payload.requestId ? payload.requestId : undefined,
+      retryable: retryableFailures.has(kind),
+    };
+  }
+  return {
+    kind: '',
+    title: '',
+    message: cause instanceof Error ? cause.message : fallback,
+    retryable: false,
+  };
+}
+
+function PtiumFailureAlert({ failure, onRetry }: { failure: PtiumFailure; onRetry?: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <Alert color="red" icon={<IconAlertTriangle size={17} />} title={failure.title || undefined}>
+      <Stack gap={8}>
+        <Text size="sm">{failure.message}</Text>
+        {/* Ptium's own words, marked as Ptium's. The 422 case is the one that
+            actually tells an author what to change, and it names the slide. */}
+        {failure.ptiumDetail && (
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed">
+              {t('Ptium이 보낸 설명')}
+            </Text>
+            <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {failure.ptiumDetail}
+            </Text>
+          </Stack>
+        )}
+        {/* Only administrators are sent this, because it names internal hosts,
+            Go types and SQL constraints — things the person who wanted slides
+            can neither use nor act on. */}
+        {failure.technical && (
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed">
+              {t('기술 정보 (관리자에게만 보입니다)')}
+            </Text>
+            <Text size="xs" c="dimmed" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              {failure.technical}
+            </Text>
+          </Stack>
+        )}
+        <Group gap="xs">
+          {onRetry && (
+            <Button size="xs" variant="light" color="red" onClick={onRetry}>
+              {t('다시 시도')}
+            </Button>
+          )}
+          {/* The one thing a person can carry to whoever fixes it. */}
+          {failure.requestId && (
+            <Text size="xs" c="dimmed">
+              {t('요청 번호 {id}', { id: failure.requestId })}
+            </Text>
+          )}
+        </Group>
+      </Stack>
+    </Alert>
+  );
+}
+
+/**
+ * One sentence for a deck that failed, chosen by what kind of failure it was.
+ *
+ * Decks recorded before v0.60.0 have no kind, and for those the stored error is
+ * still better than nothing — it is at least what happened.
+ */
+function failureSummary(link: PresentationLink, t: (key: string) => string): string {
+  switch (link.failureKind) {
+    case 'unreachable':
+      return t('Ptium 서버에 연결하지 못했습니다. 잠시 뒤 다시 만들어 보세요.');
+    case 'timed-out':
+      return t('Ptium이 제때 답하지 않았습니다. 다시 만들어 보세요.');
+    case 'unauthorized':
+      return t('Ptium이 umm의 API 키를 거부했습니다. 관리자가 키를 다시 설정해야 합니다.');
+    case 'no-api':
+      return t('설정된 주소에 Ptium API가 없습니다. 관리자가 주소를 확인해야 합니다.');
+    case 'rejected':
+      return t(
+        'Ptium이 이 발표 구성을 슬라이드로 만들 수 없다고 답했습니다. 생각을 줄이거나 나눈 뒤 다시 시도해 보세요.',
+      );
+    case 'remote-error':
+      return t('Ptium 쪽에서 오류가 났습니다. 잠시 뒤 다시 만들어 보세요.');
+    case 'unexpected-response':
+      return t('Ptium이 예상과 다른 형식으로 답했습니다. 관리자가 Ptium 버전을 확인해야 합니다.');
+    case 'not-recorded':
+      return t('덱은 Ptium에 만들어졌지만 umm이 기록하지 못했습니다. Ptium에서 먼저 확인해 주세요.');
+    default:
+      return link.error || t('만들지 못했습니다.');
+  }
 }

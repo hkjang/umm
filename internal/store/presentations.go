@@ -56,6 +56,10 @@ type PresentationLink struct {
 	Title   string `json:"title"`
 	Status  string `json:"status"`
 	Error   string `json:"error,omitempty"`
+	// FailureKind is what sort of failure it was. It decides the sentence a
+	// person reads and whether retrying can help; Error holds the underlying
+	// message, which is for whoever fixes it.
+	FailureKind string `json:"failureKind,omitempty"`
 	// CompiledSource is the deck source umm sent. Without it, "why does slide 4
 	// say that" has no answer that does not involve guessing at a compiler run
 	// that no longer exists.
@@ -91,9 +95,9 @@ func (s *Store) CreatePresentationLink(ctx context.Context, userID, spaceID uuid
 			SELECT 1 FROM spaces sp
 			LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
 			WHERE sp.id=$1 AND (sp.owner_id=$2 OR m.permission IN ('edit','manage')))
-		RETURNING id,space_id,ptium_presentation_id,title,status,error,thought_count,excluded_count,created_by`,
+		RETURNING id,space_id,ptium_presentation_id,title,status,error,failure_kind,thought_count,excluded_count,created_by`,
 		spaceID, userID, ptiumID, strings.TrimSpace(title)).
-		Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status, &link.Error,
+		Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status, &link.Error, &link.FailureKind,
 			&link.ThoughtCount, &link.ExcludedCount, &link.CreatedBy)
 	if err != nil {
 		return PresentationLink{}, err
@@ -107,7 +111,7 @@ func (s *Store) CreatePresentationLink(ctx context.Context, userID, spaceID uuid
 // One transaction: a link that says "ready" while its sources are missing would
 // show a deck whose slides cannot say where they came from, which is exactly
 // the claim this table exists to support.
-func (s *Store) CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []SlideSource, thoughtCount, excludedCount int, failure string) error {
+func (s *Store) CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []SlideSource, thoughtCount, excludedCount int, failure, failureKind string) error {
 	if !validPresentationStatus(status) {
 		return ErrUnknownPresentationStatus
 	}
@@ -119,13 +123,13 @@ func (s *Store) CompletePresentationLink(ctx context.Context, userID, linkID uui
 
 	cmd, err := tx.Exec(ctx, `
 		UPDATE presentation_links l
-		SET status=$3, compiled_source=$4, thought_count=$5, excluded_count=$6, error=$7, updated_at=now()
+		SET status=$3, compiled_source=$4, thought_count=$5, excluded_count=$6, error=$7, failure_kind=$8, updated_at=now()
 		WHERE l.id=$1
 		  AND EXISTS(
 			SELECT 1 FROM spaces sp
 			LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
 			WHERE sp.id=l.space_id AND (sp.owner_id=$2 OR m.permission IN ('edit','manage')))`,
-		linkID, userID, status, source, thoughtCount, excludedCount, strings.TrimSpace(failure))
+		linkID, userID, status, source, thoughtCount, excludedCount, strings.TrimSpace(failure), strings.TrimSpace(failureKind))
 	if err != nil {
 		return err
 	}
@@ -166,7 +170,7 @@ func (s *Store) CompletePresentationLink(ctx context.Context, userID, linkID uui
 // few rows.
 func (s *Store) ListPresentationLinks(ctx context.Context, userID, spaceID uuid.UUID) ([]PresentationLink, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT l.id,l.space_id,l.ptium_presentation_id,l.title,l.status,l.error,
+		SELECT l.id,l.space_id,l.ptium_presentation_id,l.title,l.status,l.error,l.failure_kind,
 		       l.thought_count,l.excluded_count,l.created_by
 		FROM presentation_links l
 		JOIN spaces sp ON sp.id=l.space_id
@@ -182,7 +186,7 @@ func (s *Store) ListPresentationLinks(ctx context.Context, userID, spaceID uuid.
 	for rows.Next() {
 		var link PresentationLink
 		if err := rows.Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status,
-			&link.Error, &link.ThoughtCount, &link.ExcludedCount, &link.CreatedBy); err != nil {
+			&link.Error, &link.FailureKind, &link.ThoughtCount, &link.ExcludedCount, &link.CreatedBy); err != nil {
 			return nil, err
 		}
 		links = append(links, link)
@@ -224,7 +228,7 @@ func (s *Store) PresentationSources(ctx context.Context, userID, linkID uuid.UUI
 // only umm is in a position to tell them which they are doing.
 func (s *Store) PresentationsUsingNote(ctx context.Context, userID, noteID uuid.UUID) ([]PresentationLink, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT DISTINCT l.id,l.space_id,l.ptium_presentation_id,l.title,l.status,l.error,
+		SELECT DISTINCT l.id,l.space_id,l.ptium_presentation_id,l.title,l.status,l.error,l.failure_kind,
 		       l.thought_count,l.excluded_count,l.created_by,l.created_at
 		FROM presentation_sources ps
 		JOIN presentation_links l ON l.id=ps.presentation_link_id
@@ -242,7 +246,7 @@ func (s *Store) PresentationsUsingNote(ctx context.Context, userID, noteID uuid.
 		var link PresentationLink
 		var createdAt any
 		if err := rows.Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status,
-			&link.Error, &link.ThoughtCount, &link.ExcludedCount, &link.CreatedBy, &createdAt); err != nil {
+			&link.Error, &link.FailureKind, &link.ThoughtCount, &link.ExcludedCount, &link.CreatedBy, &createdAt); err != nil {
 			return nil, err
 		}
 		links = append(links, link)
