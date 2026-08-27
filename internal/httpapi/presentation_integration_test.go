@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -272,7 +273,7 @@ func TestANoteReportsWhichTalksQuoteItIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.db.CompletePresentationLink(ctx, h.userID, link.ID, store.PresentationReady, "# 임원 보고\n",
-		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, ""); err != nil {
+		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -343,7 +344,7 @@ func TestAPastDeckCarriesWhereToOpenItIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.db.CompletePresentationLink(ctx, h.userID, link.ID, store.PresentationReady, "# 임원 보고\n",
-		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, ""); err != nil {
+		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -411,7 +412,7 @@ func TestBothViewsOfADeckAgreeOnWhatChangedIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.db.CompletePresentationLink(ctx, h.userID, link.ID, store.PresentationReady, "# 임원 보고\n",
-		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, ""); err != nil {
+		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.db.Pool.Exec(ctx, `UPDATE notes SET content='고쳐 썼다' WHERE id=$1`, h.notes[0]); err != nil {
@@ -559,5 +560,235 @@ func TestTestingAnUnchangedPtiumUsesTheStoredKeyIntegration(t *testing.T) {
 	}
 	if seenAuth != "Bearer ptium_stored" {
 		t.Fatalf("the stored key was not used: %q", seenAuth)
+	}
+}
+
+// What a person is told when making a deck fails.
+//
+// Every failure that was not one of the three named cases used to come back as
+// the same 502 carrying the Go error that produced it — an internal address, a
+// Go type name, a SQL constraint. Each said what happened, none said what to
+// do, and because they were all the same shape the screen could not tell them
+// apart either.
+func TestPtiumFailuresSayWhoCanFixThemIntegration(t *testing.T) {
+	deck := 0
+	newDeck := func(w http.ResponseWriter) {
+		deck++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{"id": fmt.Sprintf("deck-%d", deck), "title": "t"},
+		})
+	}
+	cases := []struct {
+		name       string
+		handler    http.HandlerFunc
+		wantStatus int
+		wantKind   string
+		wantDetail string
+		// mustNotSay is what a person who wanted slides must never be shown.
+		mustNotSay []string
+	}{
+		{
+			name: "a refused credential is the administrator's",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(401)
+				_, _ = w.Write([]byte(`{"detail":"api key is invalid or expired"}`))
+			},
+			wantStatus: 502, wantKind: "unauthorized",
+			mustNotSay: []string{"api key is invalid or expired", "ptium status"},
+		},
+		{
+			name: "a wrong address is the administrator's",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(404)
+				_, _ = w.Write([]byte(`{"detail":"not found"}`))
+			},
+			wantStatus: 502, wantKind: "no-api",
+			mustNotSay: []string{"ptium status"},
+		},
+		{
+			// The one case where Ptium's own words tell the author what to
+			// change, so they are repeated verbatim and marked as Ptium's.
+			name: "a rejected deck is the author's, and Ptium names the slide",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					newDeck(w)
+					return
+				}
+				w.WriteHeader(422)
+				_, _ = w.Write([]byte(`{"detail":"slide 3: layout \"two-column\" is not in template basic"}`))
+			},
+			wantStatus: 422, wantKind: "rejected",
+			wantDetail: `slide 3: layout "two-column" is not in template basic`,
+		},
+		{
+			name: "a proxy error page is not Ptium explaining itself",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					newDeck(w)
+					return
+				}
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(502)
+				_, _ = w.Write([]byte("<html><title>502 Bad Gateway</title><body>nginx/1.24.0</body></html>"))
+			},
+			wantStatus: 502, wantKind: "remote-error",
+			mustNotSay: []string{"nginx", "<html>"},
+		},
+		{
+			name: "an answer this version cannot read names no Go types",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(`["unexpected","array"]`))
+			},
+			wantStatus: 502, wantKind: "unexpected-response",
+			mustNotSay: []string{"deckEnvelope", "unmarshal"},
+		},
+	}
+
+	h := presentationAPI(t)
+	for _, c := range cases {
+		server := httptest.NewServer(c.handler)
+		if err := h.db.PutSetting(context.Background(), "ptium", map[string]any{
+			"base_url": server.URL, "api_key": "ptium_test", "timeout_seconds": 5,
+		}, h.userID); err != nil {
+			t.Fatal(err)
+		}
+		response := h.do(t, http.MethodPost, "/spaces/"+h.spaceID.String()+"/presentations", `{}`)
+		server.Close()
+
+		body := response.Body.String()
+		if response.Code != c.wantStatus {
+			t.Errorf("%s: status %d, want %d: %s", c.name, response.Code, c.wantStatus, body)
+		}
+		var problem struct {
+			Type        string `json:"type"`
+			Title       string `json:"title"`
+			Detail      string `json:"detail"`
+			Failure     string `json:"failure"`
+			PtiumDetail string `json:"ptiumDetail"`
+			Technical   string `json:"technical"`
+		}
+		if err := json.Unmarshal([]byte(body), &problem); err != nil {
+			t.Fatalf("%s: %v\n%s", c.name, err, body)
+		}
+		if problem.Failure != c.wantKind {
+			t.Errorf("%s: failure %q, want %q", c.name, problem.Failure, c.wantKind)
+		}
+		if !strings.Contains(problem.Type, c.wantKind) {
+			t.Errorf("%s: type %q does not carry the kind, so a client cannot tell it from the others", c.name, problem.Type)
+		}
+		// The sentence has to be umm's own and has to say something. A type and
+		// a status a screen can branch on are no use if the words are still the
+		// Go error.
+		if problem.Title == "" || problem.Detail == "" {
+			t.Errorf("%s: title %q detail %q", c.name, problem.Title, problem.Detail)
+		}
+		if problem.PtiumDetail != c.wantDetail {
+			t.Errorf("%s: ptiumDetail %q, want %q", c.name, problem.PtiumDetail, c.wantDetail)
+		}
+		// This user is not an admin, so the underlying error must not be here.
+		if problem.Technical != "" {
+			t.Errorf("%s: a non-administrator was sent the underlying error: %q", c.name, problem.Technical)
+		}
+		for _, forbidden := range c.mustNotSay {
+			if strings.Contains(problem.Detail, forbidden) || strings.Contains(problem.PtiumDetail, forbidden) {
+				t.Errorf("%s: %q reached the reader: %s", c.name, forbidden, body)
+			}
+		}
+	}
+
+	// Nothing listening: the message must not carry the address it tried.
+	if err := h.db.PutSetting(context.Background(), "ptium", map[string]any{
+		"base_url": "http://127.0.0.1:1", "api_key": "ptium_test", "timeout_seconds": 2,
+	}, h.userID); err != nil {
+		t.Fatal(err)
+	}
+	response := h.do(t, http.MethodPost, "/spaces/"+h.spaceID.String()+"/presentations", `{}`)
+	body := response.Body.String()
+	if !strings.Contains(body, `"failure":"unreachable"`) {
+		t.Errorf("unreachable: %s", body)
+	}
+	if strings.Contains(body, "127.0.0.1:1") || strings.Contains(body, "/api/v1/presentations") {
+		t.Errorf("the address umm tried to reach was shown to the reader: %s", body)
+	}
+}
+
+// An administrator is the one who can act on the underlying error, so they are
+// the one who gets it. Without this, the test above would pass just as happily
+// if `technical` were never sent to anybody.
+func TestAdministratorsAreSentTheUnderlyingErrorIntegration(t *testing.T) {
+	h := presentationAPI(t)
+	if _, err := h.db.Pool.Exec(context.Background(), `UPDATE users SET role='admin' WHERE id=$1`, h.userID); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(401)
+		_, _ = w.Write([]byte(`{"detail":"api key is invalid or expired"}`))
+	}))
+	defer server.Close()
+	if err := h.db.PutSetting(context.Background(), "ptium", map[string]any{
+		"base_url": server.URL, "api_key": "ptium_test", "timeout_seconds": 5,
+	}, h.userID); err != nil {
+		t.Fatal(err)
+	}
+	response := h.do(t, http.MethodPost, "/spaces/"+h.spaceID.String()+"/presentations", `{}`)
+	var problem struct {
+		Technical string `json:"technical"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(problem.Technical, "401") {
+		t.Fatalf("an administrator was not sent the underlying error: %q", problem.Technical)
+	}
+}
+
+// A failed deck stays in the list, and the list has to say something about it
+// that a person can act on. The stored error is the Go one; the kind is what
+// decides the sentence.
+func TestAFailedDeckRecordsWhatKindOfFailureItWasIntegration(t *testing.T) {
+	h := presentationAPI(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": "deck-kind", "title": "t"}})
+			return
+		}
+		w.WriteHeader(422)
+		_, _ = w.Write([]byte(`{"detail":"slide 3: layout is not in template"}`))
+	}))
+	defer server.Close()
+	if err := h.db.PutSetting(context.Background(), "ptium", map[string]any{
+		"base_url": server.URL, "api_key": "ptium_test", "timeout_seconds": 5,
+	}, h.userID); err != nil {
+		t.Fatal(err)
+	}
+	if code := h.do(t, http.MethodPost, "/spaces/"+h.spaceID.String()+"/presentations", `{}`).Code; code != 422 {
+		t.Fatalf("status %d", code)
+	}
+
+	listed := h.do(t, http.MethodGet, "/spaces/"+h.spaceID.String()+"/presentations", "")
+	var body struct {
+		Presentations []struct {
+			Status      string `json:"status"`
+			FailureKind string `json:"failureKind"`
+			Error       string `json:"error"`
+		} `json:"presentations"`
+	}
+	if err := json.Unmarshal(listed.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Presentations) != 1 {
+		t.Fatalf("%d decks listed", len(body.Presentations))
+	}
+	deck := body.Presentations[0]
+	if deck.Status != "failed" {
+		t.Fatalf("status %q", deck.Status)
+	}
+	if deck.FailureKind != "rejected" {
+		t.Fatalf("failureKind %q — without it the list can only show the stored Go error", deck.FailureKind)
+	}
+	// And the underlying message is still kept, because whoever fixes it needs
+	// it even though the list does not show it.
+	if deck.Error == "" {
+		t.Fatal("the underlying error was not recorded")
 	}
 }

@@ -34,7 +34,7 @@ type Spaces interface {
 // Links is the part of the store this needs to record what happened.
 type Links interface {
 	CreatePresentationLink(ctx context.Context, userID, spaceID uuid.UUID, ptiumID, title string) (store.PresentationLink, error)
-	CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []store.SlideSource, thoughtCount, excludedCount int, failure string) error
+	CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []store.SlideSource, thoughtCount, excludedCount int, failure, failureKind string) error
 }
 
 // Settings reads umm's configuration.
@@ -187,21 +187,23 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req Request) (Re
 		// The deck exists in Ptium and umm could not record it. Said plainly
 		// rather than swallowed, because the two are now out of step and only a
 		// person can decide what to do about it.
-		return Result{}, fmt.Errorf("ptium made deck %s but umm could not record it: %w", deck.ID, err)
+		return Result{}, fmt.Errorf("%w: deck %s: %v", ErrDeckNotRecorded, deck.ID, err)
 	}
 
 	result, applyErr := client.ApplySource(ctx, deck.ID, source, false)
 	if applyErr != nil {
-		failure := applyErr.Error()
+		// Both: the kind decides the sentence a person reads and whether
+		// retrying can help, and the message is what whoever fixes it needs.
+		classified := Classify(applyErr)
 		if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationFailed, source, nil,
-			len(story.usedThoughts()), len(story.Excluded), failure); err != nil {
+			len(story.usedThoughts()), len(story.Excluded), applyErr.Error(), string(classified.Kind)); err != nil {
 			return Result{}, fmt.Errorf("%w (and recording the failure also failed: %v)", applyErr, err)
 		}
 		return Result{}, applyErr
 	}
 
 	if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationReady, source,
-		story.SlideSources(), len(story.usedThoughts()), len(story.Excluded), ""); err != nil {
+		story.SlideSources(), len(story.usedThoughts()), len(story.Excluded), "", ""); err != nil {
 		return Result{}, err
 	}
 	link.Status = store.PresentationReady

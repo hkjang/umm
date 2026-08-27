@@ -525,6 +525,24 @@ export const en: Dictionary = {
   '키 · 권한': 'Keys & permissions',
   '검토 프로세스': 'Approval process',
   '감사 로그': 'Audit log',
+  'Ptium 서버에 연결하지 못했습니다. 잠시 뒤 다시 만들어 보세요.':
+    'Could not reach the Ptium server. Try making it again in a moment.',
+  'Ptium이 제때 답하지 않았습니다. 다시 만들어 보세요.': 'Ptium did not answer in time. Try making it again.',
+  'Ptium이 umm의 API 키를 거부했습니다. 관리자가 키를 다시 설정해야 합니다.':
+    'Ptium refused umm\u2019s API key. An administrator has to set it again.',
+  '설정된 주소에 Ptium API가 없습니다. 관리자가 주소를 확인해야 합니다.':
+    'There is no Ptium API at the configured address. An administrator has to check it.',
+  'Ptium이 이 발표 구성을 슬라이드로 만들 수 없다고 답했습니다. 생각을 줄이거나 나눈 뒤 다시 시도해 보세요.':
+    'Ptium said it could not turn this arrangement into slides. Try fewer thoughts, or split them up.',
+  'Ptium 쪽에서 오류가 났습니다. 잠시 뒤 다시 만들어 보세요.':
+    'Ptium failed on its own side. Try making it again in a moment.',
+  'Ptium이 예상과 다른 형식으로 답했습니다. 관리자가 Ptium 버전을 확인해야 합니다.':
+    'Ptium answered in a format umm does not recognise. An administrator has to check its version.',
+  '덱은 Ptium에 만들어졌지만 umm이 기록하지 못했습니다. Ptium에서 먼저 확인해 주세요.':
+    'The deck was made in Ptium but umm could not record it. Check Ptium before trying again.',
+  'Ptium이 보낸 설명': 'What Ptium said',
+  '기술 정보 (관리자에게만 보입니다)': 'Technical detail (administrators only)',
+  '요청 번호 {id}': 'Request {id}',
   '지금 데이터로 미리 보기': 'Preview against current data',
   '지금 값으로 재보기': 'Measure these values',
   '저장하지 않고 위 두 기준이 지금 있는 생각에 무엇을 할지 재봅니다.':

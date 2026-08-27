@@ -63,7 +63,7 @@ func (s *Server) previewPresentation(w http.ResponseWriter, r *http.Request) {
 		preview, err = svc.Preview(r.Context(), principal(r).User.ID, req)
 	}
 	if err != nil {
-		writePresentationError(w, err, "발표 구성을 만들지 못했습니다.")
+		writePresentationError(w, r, err, "발표 구성을 만들지 못했습니다.")
 		return
 	}
 	writeJSON(w, 200, preview)
@@ -94,7 +94,7 @@ func (s *Server) createPresentation(w http.ResponseWriter, r *http.Request) {
 		IncludeExcluded: body.IncludeExcluded,
 	})
 	if err != nil {
-		writePresentationError(w, err, "발표 자료를 만들지 못했습니다.")
+		writePresentationError(w, r, err, "발표 자료를 만들지 못했습니다.")
 		return
 	}
 	writeJSON(w, 201, result)
@@ -241,20 +241,92 @@ func (s *Server) notePresentations(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"presentations": s.decks(r, links)})
 }
 
-// writePresentationError turns the service's errors into the right status.
+// writePresentationError turns the service's errors into something the reader
+// can act on.
 //
-// Each of these is something a person can act on, and answering 500 for all of
-// them would tell them only that it broke — when the actual answers are
-// "connect Ptium", "there is nothing here yet" and "Ptium said no".
-func writePresentationError(w http.ResponseWriter, err error, fallback string) {
+// Before this, every failure that was not one of the three named cases came
+// back as one 502 carrying the Go error that produced it:
+//
+//	발표 자료를 만들지 못했습니다. ptium is unreachable: Post "http://ptium.internal:8080/…": dial tcp: connection refused
+//	발표 자료를 만들지 못했습니다. ptium status 401: api key is invalid or expired
+//	발표 자료를 만들지 못했습니다. … json: cannot unmarshal array into Go value of type presentation.deckEnvelope
+//
+// All three say what happened. None says what to do, they are all the same
+// shape so the screen cannot tell them apart, and two of them show a person who
+// wanted slides an internal address and a Go type name.
+//
+// So each kind gets its own problem type, its own sentence about who fixes it,
+// and — only where Ptium said something worth repeating — Ptium's own words.
+// The Go error is kept as `technical`, which the screen shows to administrators
+// and nobody else.
+func writePresentationError(w http.ResponseWriter, r *http.Request, err error, fallback string) {
 	switch {
 	case errors.Is(err, presentation.ErrNotConfigured):
-		writeError(w, 409, "Ptium이 연결되어 있지 않습니다. 서비스 관리자에서 주소를 설정해 주세요.")
+		writeProblem(w, r, 409, "ptium-not-configured", "Ptium이 연결되어 있지 않습니다",
+			"Ptium이 연결되어 있지 않습니다. 서비스 관리자에서 주소를 설정해 주세요.", nil)
+		return
 	case errors.Is(err, presentation.ErrNothingToPresent):
-		writeError(w, 400, "발표로 만들 생각이 없습니다.")
+		writeProblem(w, r, 400, "presentation-nothing-to-present", "발표로 만들 생각이 없습니다",
+			"발표로 만들 생각이 없습니다.", nil)
+		return
 	case errors.Is(err, pgx.ErrNoRows):
 		writeError(w, 404, "공간을 찾을 수 없습니다.")
+		return
+	}
+
+	failure := presentation.Classify(err)
+	status, title, detail := presentationFailureMessage(failure, fallback)
+	extra := map[string]any{"failure": string(failure.Kind)}
+	if failure.Status != 0 {
+		extra["ptiumStatus"] = failure.Status
+	}
+	// Ptium's own words, kept separate from umm's sentence so the screen can
+	// show them as what they are — another service talking — rather than
+	// pasting them into the middle of a Korean sentence.
+	if failure.Detail != "" {
+		extra["ptiumDetail"] = failure.Detail
+	}
+	// The Go error names internal hosts, Go types and SQL constraints. An
+	// administrator is the one who can use that; for anyone else it is noise
+	// they cannot act on and something they should not be shown.
+	if failure.Technical != "" && principal(r).User.Role == "admin" {
+		extra["technical"] = failure.Technical
+	}
+	writeProblem(w, r, status, "ptium-"+string(failure.Kind), title, detail, extra)
+}
+
+// presentationFailureMessage says who fixes each kind and how.
+//
+// Cut by who can act, not by status code: a rejected deck is the author's to
+// fix and Ptium already named the slide, a refused credential is the
+// administrator's, and a service that is down is nobody's until it is back.
+func presentationFailureMessage(failure presentation.Failure, fallback string) (int, string, string) {
+	switch failure.Kind {
+	case presentation.FailureUnreachable:
+		return 502, "Ptium에 연결하지 못했습니다",
+			"Ptium 서버에 연결하지 못했습니다. 서버가 내려가 있거나 주소가 닿지 않습니다. 잠시 뒤 다시 시도해 보시고, 계속되면 서비스 관리자에게 알려 주세요."
+	case presentation.FailureTimedOut:
+		return 504, "Ptium이 제때 답하지 않았습니다",
+			"Ptium이 정해진 시간 안에 답하지 않았습니다. 생각이 많은 공간은 오래 걸릴 수 있습니다. 다시 시도해 보시고, 계속되면 관리자에게 제한 시간을 늘려 달라고 요청하세요."
+	case presentation.FailureUnauthorized:
+		return 502, "Ptium이 umm의 자격 증명을 거부했습니다",
+			"Ptium이 umm의 API 키를 받아들이지 않았습니다. 키가 만료됐거나 잘못 설정된 것이며, 여기서 고칠 수 있는 것이 아닙니다. 서비스 관리자에게 Ptium 키를 다시 설정해 달라고 알려 주세요."
+	case presentation.FailureNoAPI:
+		return 502, "그 주소에 Ptium API가 없습니다",
+			"설정된 주소가 응답은 했지만 Ptium API가 아닙니다. 주소가 잘못됐거나 앞단의 프록시가 가로채고 있습니다. 서비스 관리자에게 Ptium 주소를 확인해 달라고 알려 주세요."
+	case presentation.FailureRejected:
+		return 422, "Ptium이 이 발표 구성을 받아들이지 않았습니다",
+			"Ptium이 이 발표 구성을 슬라이드로 만들 수 없다고 답했습니다. 아래 Ptium의 설명이 어느 슬라이드가 문제인지 알려 줍니다. 생각을 줄이거나 나눈 뒤 다시 시도해 보세요."
+	case presentation.FailureRemote:
+		return 502, "Ptium 쪽에서 오류가 났습니다",
+			"Ptium이 요청을 받았지만 처리하는 중에 오류가 났습니다. umm 설정 문제가 아니므로 잠시 뒤 다시 시도해 보시고, 계속되면 Ptium 쪽 로그를 관리자에게 확인 요청하세요."
+	case presentation.FailureUnexpected:
+		return 502, "Ptium이 예상과 다른 응답을 보냈습니다",
+			"주소와 키는 맞지만 Ptium이 umm이 아는 것과 다른 형식으로 답했습니다. 두 서비스의 버전이 맞지 않을 때 생깁니다. 서비스 관리자에게 Ptium 버전을 확인해 달라고 알려 주세요."
+	case presentation.FailureNotRecorded:
+		return 500, "Ptium에는 만들어졌지만 umm이 기록하지 못했습니다",
+			"덱은 Ptium에 실제로 만들어졌고 umm이 그 사실을 저장하지 못했습니다. 그대로 다시 시도하면 덱이 하나 더 생깁니다. Ptium에서 방금 만들어진 덱을 먼저 확인해 주세요."
 	default:
-		writeError(w, 502, fallback+" "+err.Error())
+		return 502, "발표 자료를 만들지 못했습니다", fallback
 	}
 }

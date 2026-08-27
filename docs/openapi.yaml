@@ -398,7 +398,9 @@ paths:
         '201': { description: The deck, content: { application/json: { schema: { type: object, properties: { link: { $ref: '#/components/schemas/PresentationLink' }, warnings: { type: array, items: { type: string } } } } } } }
         '400': { description: Nothing in this space can become a talk }
         '409': { description: No Ptium is configured }
-        '502': { description: Ptium refused or was unreachable }
+        '422': { $ref: '#/components/responses/PtiumFailure' }
+        '502': { $ref: '#/components/responses/PtiumFailure' }
+        '504': { $ref: '#/components/responses/PtiumFailure' }
   /presentations/{linkId}/sources:
     parameters:
       - { in: path, name: linkId, required: true, schema: { type: string, format: uuid } }
@@ -1742,6 +1744,30 @@ components:
     Cursor: { in: query, name: cursor, description: Opaque cursor returned as nextCursor, schema: { type: string } }
     IdempotencyKey: { in: header, name: Idempotency-Key, description: 'Replay-safe Canvas mutation key; the live-renewed 2-minute lease and response complete atomically with the mutation, and successful responses are retained for 24 hours', schema: { type: string, minLength: 8, maxLength: 128, pattern: '^[A-Za-z0-9._:-]+$' } }
   responses:
+    PtiumFailure:
+      description: >-
+        A Ptium call that did not work, sorted by who can do something about it.
+        `type` ends in the kind and `failure` repeats it as a bare string, so a
+        client can branch without parsing the URL. `detail` is umm's own
+        sentence about what to do. `ptiumDetail` is Ptium's own explanation,
+        present only when Ptium said something worth repeating — a proxy's HTML
+        error page is not passed through. `technical` is the underlying error
+        and is sent to administrators only, because it names internal hosts, Go
+        types and SQL constraints.
+      content:
+        application/problem+json:
+          schema:
+            type: object
+            properties:
+              type: { type: string }
+              title: { type: string }
+              status: { type: integer }
+              detail: { type: string }
+              failure: { type: string, enum: [unreachable, timed-out, unauthorized, no-api, rejected, remote-error, unexpected-response, not-recorded, other] }
+              ptiumStatus: { type: integer, description: The status Ptium answered with, when it answered. }
+              ptiumDetail: { type: string }
+              technical: { type: string, description: Administrators only. }
+              requestId: { type: string }
     Error: { description: RFC 9457 Problem Details, content: { application/problem+json: { schema: { $ref: '#/components/schemas/Error' } } } }
   schemas:
     Error:
@@ -1908,7 +1934,8 @@ components:
         ptiumId: { type: string, description: Ptium's identifier for the deck. Opaque to umm. }
         title: { type: string }
         status: { type: string, enum: [pending, generating, ready, failed] }
-        error: { type: string, description: What Ptium said, when it failed. }
+        error: { type: string, description: The underlying error, when it failed. Names internal hosts and Go types, so it is for whoever fixes it rather than for display. }
+        failureKind: { type: string, description: "What sort of failure it was, which decides the sentence a reader is shown and whether retrying can help. One of unreachable, timed-out, unauthorized, no-api, rejected, remote-error, unexpected-response, not-recorded, other. Empty on decks recorded before v0.60.0 and on decks that did not fail." }
         compiledSource: { type: string, description: The deck source umm sent. Omitted from list responses. }
         thoughtCount: { type: integer }
         excludedCount: { type: integer, description: Thoughts deliberately left out, so the count on screen is the real one. }
