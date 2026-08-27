@@ -25,11 +25,61 @@ func TestNormalizeTokenLimit(t *testing.T) {
 	}
 }
 
-func TestRedactSecrets(t *testing.T) {
-	input := "password=hello API_KEY: sk-test umm_key_abc_secret"
-	got := redact(input)
-	if strings.Contains(got, "hello") || strings.Contains(got, "sk-test") || strings.Contains(got, "umm_key_") {
-		t.Fatalf("secret was not redacted: %s", got)
+// redact guards what leaves the installation: note content on its way to the AI
+// gateway. So it has two jobs, and a test that only checks one of them passes
+// just as happily when the other is broken — an earlier version of this test
+// asserted only that the secrets were gone, which a redact that returned the
+// empty string satisfies perfectly while sending Dream nothing to work with.
+func TestRedactRemovesSecrets(t *testing.T) {
+	// The shapes people actually paste into a thought. The JSON fragment and the
+	// Authorization header were both sent to the gateway intact until v0.59: the
+	// first has a quote between the name and the colon, and the second keeps its
+	// credential a word further along than the pattern looked.
+	for _, input := range []string{
+		"password=hello",
+		"API_KEY: sk-test",
+		"umm_key_abc_secret",
+		`{"api_key":"sk-live-abcdef"}`,
+		`{"token": "sk-live-abcdef"}`,
+		"Authorization: Bearer sk-live-abcdef",
+		"authorization=Bearer sk-live-abcdef",
+		"배포 메모\nAPI_KEY = sk-live-abcdef\n화요일 회의",
+	} {
+		got := redact(input)
+		for _, secret := range []string{"hello", "sk-test", "sk-live-abcdef", "umm_key_"} {
+			if strings.Contains(input, secret) && strings.Contains(got, secret) {
+				t.Fatalf("redact(%q) = %q — %q survived and would be sent to the gateway", input, got, secret)
+			}
+		}
+		if !strings.Contains(got, "[민감정보 제거됨]") {
+			t.Fatalf("redact(%q) = %q — nothing marks what was taken out", input, got)
+		}
+	}
+}
+
+// The other half. Without this, deleting everything would count as redaction.
+func TestRedactKeepsTheThoughtAroundTheSecret(t *testing.T) {
+	got := redact("배포 메모\nAPI_KEY = sk-live-abcdef\n화요일 회의")
+	for _, kept := range []string{"배포 메모", "화요일 회의"} {
+		if !strings.Contains(got, kept) {
+			t.Fatalf("redact() = %q — %q was removed too, and Dream reasons over what is left", got, kept)
+		}
+	}
+}
+
+// And text with nothing to hide must come back exactly as it was. Redaction
+// that fires on ordinary writing quietly degrades every Dream in the
+// installation, and nothing would report it.
+func TestRedactLeavesOrdinaryThoughtsAlone(t *testing.T) {
+	for _, input := range []string{
+		"gateway rejected request (model=bge-m3): 401 unauthorized",
+		"토큰 한도를 4096으로 올렸다",
+		"이번 스프린트 회고: 배포 절차를 문서로 남기기",
+		"the token limit was raised to 4096",
+	} {
+		if got := redact(input); got != input {
+			t.Fatalf("redact(%q) = %q — ordinary writing was altered", input, got)
+		}
 	}
 }
 

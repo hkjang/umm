@@ -52,7 +52,8 @@ TLS는 서비스 앞의 reverse proxy에서 종료하는 구성을 권장합니�
 
 - Dream은 기본 OFF, 자동 생성도 별도 OFF
 - 필요한 최근 메모만 최대 개수/기간 내에서 전송
-- 알려진 password/API key/token 패턴 사전 redaction
+- 알려진 password/API key/token 패턴 사전 redaction. v0.59.0부터 **JSON 조각**(`{"api_key":"…"}`)과 **Authorization 헤더**(`Authorization: Bearer …`)도 포함합니다 — 설정 파일과 `curl` 출력을 그대로 붙여 넣는 것이 실제로 가장 흔한 경로인데, 그 두 모양은 그전까지 게이트웨이로 그대로 나갔습니다. Authorization 은 값이 한 단어 뒤에 있으므로 줄 끝까지 지웁니다
+- redaction 은 지운 자리에 `[민감정보 제거됨]` 을 남기고 **나머지 생각은 건드리지 않습니다.** Dream 은 남은 글로 추론하므로, 전부 지우는 것은 안전이 아니라 고장입니다
 - 원문 prompt 저장 기본 OFF. ON이면 redaction 후 `ENCRYPTION_KEY`로 암호화하며 관리자 설정의 보존 기간 후 자동 삭제
 - AI call 로그는 상태, token, 비용, latency와 짧은 error만 기록
 - 관리자 원문 접근 API 없음
