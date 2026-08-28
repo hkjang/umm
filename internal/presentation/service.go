@@ -87,6 +87,9 @@ type Service struct {
 	// strongest sense: nil, or one that fails, leaves the deck exactly as it
 	// compiled. Polish that breaks must not break the thing it was polishing.
 	Namer Namer
+	// Sectioner proposes where a long talk divides into parts. Optional on the
+	// same terms.
+	Sectioner Sectioner
 }
 
 // Request is what a person asked for.
@@ -101,6 +104,11 @@ type Request struct {
 	IncludeExcluded bool
 	// OneSlidePerThought turns off grouping thoughts by where they sit.
 	OneSlidePerThought bool
+	// SectionDeck asks the chat model where a long talk divides into parts. It
+	// adds heading slides and moves nothing: the order is a follows chain or the
+	// layout the person made, and rearranging that would override what they
+	// said.
+	SectionDeck bool
 	// NameGroups asks the chat model to name each group of thoughts that were
 	// put together by position. Opt-in, because it sends those thoughts to the
 	// gateway and because it makes the deck stop being the same every time.
@@ -268,10 +276,18 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 	// Only the headings, only the groups, and only when asked. The slides
 	// themselves are already final at this point — a thought reaches its slide
 	// unchanged whether or not a model is involved.
-	if req.NameGroups {
+	if req.NameGroups || req.SectionDeck {
 		var cfg Config
 		_ = s.Settings.GetSetting(ctx, "ptium", &cfg)
-		story.NamedHeadings = nameGroups(ctx, s.Namer, &story, cfg.Language)
+		if req.NameGroups {
+			story.NamedHeadings = nameGroups(ctx, s.Namer, &story, cfg.Language)
+		}
+		// After naming: the headings a part is proposed over should be the ones
+		// that will actually be on the slides, or the model is dividing a talk
+		// it cannot see.
+		if req.SectionDeck {
+			story.Sections = sectionDeck(ctx, s.Sectioner, &story, cfg.Language)
+		}
 	}
 	if len(story.Slides) == 0 {
 		return Storyline{}, "", ErrNothingToPresent

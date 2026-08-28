@@ -525,6 +525,9 @@ export const en: Dictionary = {
   '키 · 권한': 'Keys & permissions',
   '검토 프로세스': 'Approval process',
   '감사 로그': 'Audit log',
+  '긴 발표를 부로 나누기': 'Divide a long talk into parts',
+  'AI가 {count}개 부로 나눴습니다. 슬라이드 순서는 그대로이고 제목만 사이에 들어갔습니다.':
+    'AI divided this into {count} parts. The slides are in the same order; only the headings were added between them.',
   '묶음 제목을 AI가 짓기': 'Let AI name the groups',
   'AI 제목': 'AI heading',
   '묶음 제목 {count}개를 AI가 지었습니다. 슬라이드 본문은 그대로 당신이 쓴 문장입니다.':
