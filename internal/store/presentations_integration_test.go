@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -34,7 +35,7 @@ func TestPresentationLinkRoundTripIntegration(t *testing.T) {
 	db, userID, spaceID, notes := presentationFixture(t)
 	ctx := context.Background()
 
-	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_abc", "회고 주기 재검토")
+	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_abc", "회고 주기 재검토", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +94,7 @@ func TestRecompilingReplacesTheSourceMappingIntegration(t *testing.T) {
 	db, userID, spaceID, notes := presentationFixture(t)
 	ctx := context.Background()
 
-	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_recompile", "덱")
+	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_recompile", "덱", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +124,7 @@ func TestANoteKnowsWhichTalksUsedItIntegration(t *testing.T) {
 	ctx := context.Background()
 
 	for _, name := range []string{"pt_one", "pt_two"} {
-		link, err := db.CreatePresentationLink(ctx, userID, spaceID, name, name)
+		link, err := db.CreatePresentationLink(ctx, userID, spaceID, name, name, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -165,7 +166,7 @@ func TestASlideCannotCiteAThoughtFromAnotherSpaceIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_outsider", "덱")
+	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_outsider", "덱", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,11 +197,11 @@ func TestAStrangerCannotMakeOrReadALinkIntegration(t *testing.T) {
 	}
 	defer db.Pool.Exec(context.Background(), `DELETE FROM users WHERE id=$1`, stranger)
 
-	if _, err := db.CreatePresentationLink(ctx, stranger, spaceID, "pt_nope", "덱"); err == nil {
+	if _, err := db.CreatePresentationLink(ctx, stranger, spaceID, "pt_nope", "덱", nil); err == nil {
 		t.Fatal("a stranger made a deck from someone else's space")
 	}
 
-	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_private", "덱")
+	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_private", "덱", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +231,7 @@ func TestAnUnknownStatusIsRefusedIntegration(t *testing.T) {
 	db, userID, spaceID, _ := presentationFixture(t)
 	ctx := context.Background()
 
-	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_status", "덱")
+	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_status", "덱", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,11 +242,58 @@ func TestAnUnknownStatusIsRefusedIntegration(t *testing.T) {
 	}
 }
 
+// What was asked for comes back with the deck that failed.
+//
+// Retrying compiles the space again into the deck Ptium already opened, and the
+// request that produced it is gone by then: it lived in the HTTP call that
+// failed. Without this row a retry asks for the whole space with every default
+// — a different talk, into the same deck, saying nothing about it.
+func TestAFailedLinkCarriesWhatWasAskedForIntegration(t *testing.T) {
+	db, userID, spaceID, notes := presentationFixture(t)
+	ctx := context.Background()
+
+	wanted := json.RawMessage(`{"only":["` + notes[0].String() + `"],"maxSlides":20,"sectionDeck":true}`)
+	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_asked", "임원 보고", wanted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationFailed, "", nil, 0, 0, 0, "시간 초과", "timed-out"); err != nil {
+		t.Fatal(err)
+	}
+
+	failed, err := db.FailedPresentationLink(ctx, userID, link.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(failed.Request, &stored); err != nil {
+		t.Fatalf("what was asked for did not survive the round trip: %q (%v)", failed.Request, err)
+	}
+	if stored["maxSlides"] != float64(20) || stored["sectionDeck"] != true {
+		t.Fatalf("a choice was lost: %+v", stored)
+	}
+	only, ok := stored["only"].([]any)
+	if !ok || len(only) != 1 || only[0] != notes[0].String() {
+		t.Fatalf("the selection was lost: %+v", stored["only"])
+	}
+
+	// A deck made before umm kept the request reads as no choices at all, which
+	// is what a retry did then. Not null: nothing downstream should have to
+	// tell "asked for nothing" from "cannot be read".
+	plain, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_plain", "덱", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(plain.Request) != "{}" {
+		t.Fatalf("a link with nothing asked for recorded %q", plain.Request)
+	}
+}
+
 func TestAFailedCompileKeepsWhatPtiumSaidIntegration(t *testing.T) {
 	db, userID, spaceID, _ := presentationFixture(t)
 	ctx := context.Background()
 
-	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_failed", "덱")
+	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_failed", "덱", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +317,7 @@ func TestDeletingASpaceTakesItsLinksIntegration(t *testing.T) {
 	db, userID, spaceID, notes := presentationFixture(t)
 	ctx := context.Background()
 
-	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_cascade", "덱")
+	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_cascade", "덱", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +350,7 @@ func TestDeletingASpaceTakesItsLinksIntegration(t *testing.T) {
 func freshDeck(t *testing.T, db *Store, userID, spaceID uuid.UUID, notes []uuid.UUID) PresentationLink {
 	t.Helper()
 	ctx := context.Background()
-	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_"+uuid.NewString(), "덱")
+	link, err := db.CreatePresentationLink(ctx, userID, spaceID, "pt_"+uuid.NewString(), "덱", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

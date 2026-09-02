@@ -269,7 +269,7 @@ func TestANoteReportsWhichTalksQuoteItIntegration(t *testing.T) {
 	h := presentationAPI(t)
 	ctx := context.Background()
 
-	link, err := h.db.CreatePresentationLink(ctx, h.userID, h.spaceID, "pt_api", "임원 보고")
+	link, err := h.db.CreatePresentationLink(ctx, h.userID, h.spaceID, "pt_api", "임원 보고", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestAPastDeckCarriesWhereToOpenItIntegration(t *testing.T) {
 	h := presentationAPI(t)
 	ctx := context.Background()
 
-	link, err := h.db.CreatePresentationLink(ctx, h.userID, h.spaceID, "pt link/with space", "임원 보고")
+	link, err := h.db.CreatePresentationLink(ctx, h.userID, h.spaceID, "pt link/with space", "임원 보고", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func TestBothViewsOfADeckAgreeOnWhatChangedIntegration(t *testing.T) {
 	h := presentationAPI(t)
 	ctx := context.Background()
 
-	link, err := h.db.CreatePresentationLink(ctx, h.userID, h.spaceID, "pt_agree", "임원 보고")
+	link, err := h.db.CreatePresentationLink(ctx, h.userID, h.spaceID, "pt_agree", "임원 보고", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
