@@ -294,11 +294,16 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 			story.Sections = sectionDeck(ctx, s.Sectioner, &story, cfg.Language)
 			// Part headings are slides too. A person who asked for twenty and
 			// was handed twenty-four did not get the length they asked for, so
-			// the cap is applied again over the finished deck. Headings and
-			// comparisons outrank ordinary slides in that pass, which means
-			// dividing a long talk into parts costs content slides — that is
-			// what asking for a length means.
-			fit(&story, req.MaxSlides)
+			// the cap is applied again over the finished deck. A part whose
+			// slides all fall out of the length loses its heading with them,
+			// which means dividing a long talk into parts costs content slides
+			// — that is what asking for a length means.
+			if fit(&story, req.MaxSlides) > 0 {
+				// And then the deck is divided into however many parts are
+				// still in it. "AI가 3개 부로 나눴습니다" over a deck holding two
+				// headings is the same deck saying two different things.
+				story.Sections = story.parts()
+			}
 		}
 	}
 	if len(story.Slides) == 0 {
@@ -382,6 +387,17 @@ func (s Storyline) SlideSources() []store.SlideSource {
 		}
 	}
 	return out
+}
+
+// parts is how many part headings are in the deck as it stands.
+func (s Storyline) parts() int {
+	count := 0
+	for _, slide := range s.Slides {
+		if slide.Sectioned {
+			count++
+		}
+	}
+	return count
 }
 
 // usedThoughts is every thought that reached a slide, counted once.
