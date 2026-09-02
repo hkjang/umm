@@ -63,10 +63,15 @@ type PresentationLink struct {
 	// CompiledSource is the deck source umm sent. Without it, "why does slide 4
 	// say that" has no answer that does not involve guessing at a compiler run
 	// that no longer exists.
-	CompiledSource string     `json:"compiledSource,omitempty"`
-	ThoughtCount   int        `json:"thoughtCount"`
-	ExcludedCount  int        `json:"excludedCount"`
-	CreatedBy      *uuid.UUID `json:"createdBy,omitempty"`
+	CompiledSource string `json:"compiledSource,omitempty"`
+	ThoughtCount   int    `json:"thoughtCount"`
+	ExcludedCount  int    `json:"excludedCount"`
+	// TrimmedCount is how many thoughts a length cap left out. Apart from
+	// ExcludedCount because the reason differs and so does the remedy: raising
+	// the cap brings these back, and nothing brings back a thought its author
+	// held out of analysis.
+	TrimmedCount int        `json:"trimmedCount"`
+	CreatedBy    *uuid.UUID `json:"createdBy,omitempty"`
 }
 
 // SlideSource is one thought that reached one slide.
@@ -95,10 +100,10 @@ func (s *Store) CreatePresentationLink(ctx context.Context, userID, spaceID uuid
 			SELECT 1 FROM spaces sp
 			LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
 			WHERE sp.id=$1 AND (sp.owner_id=$2 OR m.permission IN ('edit','manage')))
-		RETURNING id,space_id,ptium_presentation_id,title,status,error,failure_kind,thought_count,excluded_count,created_by`,
+		RETURNING id,space_id,ptium_presentation_id,title,status,error,failure_kind,thought_count,excluded_count,trimmed_count,created_by`,
 		spaceID, userID, ptiumID, strings.TrimSpace(title)).
 		Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status, &link.Error, &link.FailureKind,
-			&link.ThoughtCount, &link.ExcludedCount, &link.CreatedBy)
+			&link.ThoughtCount, &link.ExcludedCount, &link.TrimmedCount, &link.CreatedBy)
 	if err != nil {
 		return PresentationLink{}, err
 	}
@@ -111,7 +116,7 @@ func (s *Store) CreatePresentationLink(ctx context.Context, userID, spaceID uuid
 // One transaction: a link that says "ready" while its sources are missing would
 // show a deck whose slides cannot say where they came from, which is exactly
 // the claim this table exists to support.
-func (s *Store) CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []SlideSource, thoughtCount, excludedCount int, failure, failureKind string) error {
+func (s *Store) CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []SlideSource, thoughtCount, excludedCount, trimmedCount int, failure, failureKind string) error {
 	if !validPresentationStatus(status) {
 		return ErrUnknownPresentationStatus
 	}
@@ -123,13 +128,13 @@ func (s *Store) CompletePresentationLink(ctx context.Context, userID, linkID uui
 
 	cmd, err := tx.Exec(ctx, `
 		UPDATE presentation_links l
-		SET status=$3, compiled_source=$4, thought_count=$5, excluded_count=$6, error=$7, failure_kind=$8, updated_at=now()
+		SET status=$3, compiled_source=$4, thought_count=$5, excluded_count=$6, trimmed_count=$9, error=$7, failure_kind=$8, updated_at=now()
 		WHERE l.id=$1
 		  AND EXISTS(
 			SELECT 1 FROM spaces sp
 			LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
 			WHERE sp.id=l.space_id AND (sp.owner_id=$2 OR m.permission IN ('edit','manage')))`,
-		linkID, userID, status, source, thoughtCount, excludedCount, strings.TrimSpace(failure), strings.TrimSpace(failureKind))
+		linkID, userID, status, source, thoughtCount, excludedCount, strings.TrimSpace(failure), strings.TrimSpace(failureKind), trimmedCount)
 	if err != nil {
 		return err
 	}
@@ -171,7 +176,7 @@ func (s *Store) CompletePresentationLink(ctx context.Context, userID, linkID uui
 func (s *Store) ListPresentationLinks(ctx context.Context, userID, spaceID uuid.UUID) ([]PresentationLink, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT l.id,l.space_id,l.ptium_presentation_id,l.title,l.status,l.error,l.failure_kind,
-		       l.thought_count,l.excluded_count,l.created_by
+		       l.thought_count,l.excluded_count,l.trimmed_count,l.created_by
 		FROM presentation_links l
 		JOIN spaces sp ON sp.id=l.space_id
 		LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
@@ -186,7 +191,7 @@ func (s *Store) ListPresentationLinks(ctx context.Context, userID, spaceID uuid.
 	for rows.Next() {
 		var link PresentationLink
 		if err := rows.Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status,
-			&link.Error, &link.FailureKind, &link.ThoughtCount, &link.ExcludedCount, &link.CreatedBy); err != nil {
+			&link.Error, &link.FailureKind, &link.ThoughtCount, &link.ExcludedCount, &link.TrimmedCount, &link.CreatedBy); err != nil {
 			return nil, err
 		}
 		links = append(links, link)
@@ -229,7 +234,7 @@ func (s *Store) PresentationSources(ctx context.Context, userID, linkID uuid.UUI
 func (s *Store) PresentationsUsingNote(ctx context.Context, userID, noteID uuid.UUID) ([]PresentationLink, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT DISTINCT l.id,l.space_id,l.ptium_presentation_id,l.title,l.status,l.error,l.failure_kind,
-		       l.thought_count,l.excluded_count,l.created_by,l.created_at
+		       l.thought_count,l.excluded_count,l.trimmed_count,l.created_by,l.created_at
 		FROM presentation_sources ps
 		JOIN presentation_links l ON l.id=ps.presentation_link_id
 		JOIN spaces sp ON sp.id=l.space_id
@@ -246,7 +251,7 @@ func (s *Store) PresentationsUsingNote(ctx context.Context, userID, noteID uuid.
 		var link PresentationLink
 		var createdAt any
 		if err := rows.Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status,
-			&link.Error, &link.FailureKind, &link.ThoughtCount, &link.ExcludedCount, &link.CreatedBy, &createdAt); err != nil {
+			&link.Error, &link.FailureKind, &link.ThoughtCount, &link.ExcludedCount, &link.TrimmedCount, &link.CreatedBy, &createdAt); err != nil {
 			return nil, err
 		}
 		links = append(links, link)
@@ -380,14 +385,14 @@ func (s *Store) FailedPresentationLink(ctx context.Context, userID, linkID uuid.
 	var link PresentationLink
 	err := s.Pool.QueryRow(ctx, `
 		SELECT l.id,l.space_id,l.ptium_presentation_id,l.title,l.status,l.error,l.failure_kind,
-		       l.thought_count,l.excluded_count,l.created_by
+		       l.thought_count,l.excluded_count,l.trimmed_count,l.created_by
 		FROM presentation_links l
 		JOIN spaces sp ON sp.id=l.space_id
 		LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
 		WHERE l.id=$1 AND l.status=$3
 		  AND (sp.owner_id=$2 OR m.permission IN ('edit','manage'))`, linkID, userID, PresentationFailed).
 		Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status, &link.Error, &link.FailureKind,
-			&link.ThoughtCount, &link.ExcludedCount, &link.CreatedBy)
+			&link.ThoughtCount, &link.ExcludedCount, &link.TrimmedCount, &link.CreatedBy)
 	if err != nil {
 		return PresentationLink{}, err
 	}

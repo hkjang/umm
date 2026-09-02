@@ -180,3 +180,75 @@ test('groups thoughts placed together, and can be told not to', async ({ page })
   }, space);
   expect(made).toBe(0);
 });
+
+/**
+ * Fitting a talk into the time there is.
+ *
+ * Nobody gives a thirty-slide talk in ten minutes, and the answer umm gives is
+ * deterministic: the graph decides what survives, so the same space and the
+ * same length always produce the same deck. What is checked here is the part a
+ * person can see — the talk really gets shorter, and it says what did not fit
+ * rather than dropping thoughts out of their space in silence.
+ */
+test('fits a talk into a chosen length and says what did not fit', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signIn(page);
+
+  const marker = unique('분량');
+  const space = await page.evaluate(async (text) => {
+    const post = async (path: string, body: unknown) =>
+      (
+        await fetch(path, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      ).json();
+    const created = await post('/api/v1/spaces', { name: text });
+    // Far apart, so each one is its own slide and the count is the thing under
+    // test rather than the grouping.
+    for (let i = 0; i < 24; i++) {
+      await post(`/api/v1/spaces/${created.id}/notes`, {
+        content: `${text} 메모 ${i}`,
+        x: i * 2000,
+        y: 0,
+      });
+    }
+    return created.id as string;
+  }, marker);
+
+  await page.goto(`/space/${space}`);
+  await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+  await page.getByLabel('이 공간을 발표 자료로').click();
+
+  const modal = page.getByRole('dialog');
+  await expect(modal).toBeVisible();
+  const count = modal.getByText(/^슬라이드 \d+장$/);
+  await expect(count).toBeVisible();
+  const full = Number((await count.innerText()).replace(/[^0-9]/g, ''));
+  expect(full).toBeGreaterThan(10);
+
+  // Nothing is said about length until a length is chosen.
+  await expect(modal.getByText(/분량에 들어가지 못했습니다/)).toHaveCount(0);
+
+  // The radio itself is visually hidden by the segmented control; a person
+  // clicks the label, so this does too.
+  await modal
+    .locator('label')
+    .filter({ hasText: /^10장$/ })
+    .click();
+
+  // Ten slides plus the title slide.
+  await expect.poll(async () => Number((await count.innerText()).replace(/[^0-9]/g, ''))).toBe(11);
+
+  // And what did not fit is named rather than dropped in silence.
+  await expect(modal.getByText(/분량에 들어가지 못했습니다/)).toBeVisible();
+  await expect(modal.getByText(/개 분량 밖$/)).toBeVisible();
+
+  // Looking at a shorter version of a space creates nothing.
+  const made = await page.evaluate(async (id) => {
+    const body = await (await fetch(`/api/v1/spaces/${id}/presentations`)).json();
+    return (body.presentations ?? []).length as number;
+  }, space);
+  expect(made).toBe(0);
+});

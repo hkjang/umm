@@ -526,6 +526,14 @@ export const en: Dictionary = {
   '검토 프로세스': 'Approval process',
   '감사 로그': 'Audit log',
   '긴 발표를 부로 나누기': 'Divide a long talk into parts',
+  분량: 'Length',
+  '제한 없음': 'No limit',
+  '{count}장': '{count} slides',
+  '생각 {count}개는 분량에 들어가지 못했습니다. 연결이 적은 슬라이드부터 빠집니다.':
+    '{count} thoughts did not fit the length. Slides with the fewest connections go first.',
+  '분량에 들어가지 못한 생각입니다. 분량을 늘리면 돌아옵니다.':
+    'Thoughts that did not fit the length. Raise the length and they come back.',
+  '{count}개 분량 밖': '{count} over length',
   'AI가 {count}개 부로 나눴습니다. 슬라이드 순서는 그대로이고 제목만 사이에 들어갔습니다.':
     'AI divided this into {count} parts. The slides are in the same order; only the headings were added between them.',
   '묶음 제목을 AI가 짓기': 'Let AI name the groups',
@@ -535,8 +543,8 @@ export const en: Dictionary = {
   '생각 하나마다 슬라이드 하나': 'One slide per thought',
   '슬라이드가 {count}장입니다. 발표 하나로는 많고, Ptium이 한 번에 만들기에도 오래 걸려 실패할 수 있습니다.':
     'That is {count} slides. It is a lot for one talk, and long enough that Ptium may run out of time building it in one go.',
-  '생각을 골라서 만들거나, 공간을 나눈 뒤 다시 시도해 보세요.':
-    'Select the thoughts you want, or split the space, and try again.',
+  '위에서 분량을 정하거나, 생각을 골라서 만들거나, 공간을 나눈 뒤 다시 시도해 보세요.':
+    'Set a length above, select the thoughts you want, or split the space, and try again.',
   'Ptium에는 빈 발표 자료가 이미 만들어져 있습니다. 다시 만들면 하나가 더 생기므로, 있는 것에 이어서 넣습니다.':
     'An empty presentation already exists in Ptium. Making another would leave that one behind, so this compiles into it instead.',
   '만들어진 발표 자료에 이어서 넣기': 'Compile into the one already made',

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -47,6 +48,9 @@ type presentationRequest struct {
 	// SectionDeck asks where a long talk divides into parts. It adds heading
 	// slides and moves nothing.
 	SectionDeck bool `json:"sectionDeck"`
+	// MaxSlides caps how long the talk may be. Zero, the default, means no cap:
+	// a deck is a whole space until somebody says how long they have.
+	MaxSlides int `json:"maxSlides"`
 	// NoteIDs restricts the deck to a selection, so a cluster or a few chosen
 	// thoughts can become a talk without the rest of the space.
 	NoteIDs []uuid.UUID `json:"noteIds"`
@@ -58,6 +62,38 @@ type presentationRequest struct {
 	// that already exists. Nothing is written either way.
 	DeckID string `json:"deckId"`
 }
+
+// maxSlidesParam reads a length cap off the query string.
+//
+// Anything that is not a number is no cap rather than an error: a preview is
+// the cheapest thing in this feature, and refusing to draw one over a typo in
+// an optional parameter costs more than ignoring it.
+func maxSlidesParam(raw string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return 0
+	}
+	return clampMaxSlides(n)
+}
+
+// clampMaxSlides keeps a cap inside what a talk can be.
+//
+// Negative and zero both mean no cap. The ceiling is not a limit on decks —
+// an uncapped deck of any size still compiles — it only stops a cap larger
+// than any real talk from being stored as though somebody chose it.
+func clampMaxSlides(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	if n > maxSlidesCeiling {
+		return maxSlidesCeiling
+	}
+	return n
+}
+
+// maxSlidesCeiling is well past the longest talk anyone gives; past this a cap
+// is not shortening anything.
+const maxSlidesCeiling = 500
 
 func (s *Server) previewPresentation(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:read") {
@@ -74,6 +110,7 @@ func (s *Server) previewPresentation(w http.ResponseWriter, r *http.Request) {
 		OneSlidePerThought: r.URL.Query().Get("oneSlidePerThought") == "true",
 		NameGroups:         r.URL.Query().Get("nameGroups") == "true",
 		SectionDeck:        r.URL.Query().Get("sectionDeck") == "true",
+		MaxSlides:          maxSlidesParam(r.URL.Query().Get("maxSlides")),
 	}
 
 	svc := s.presentations(r)
@@ -117,6 +154,7 @@ func (s *Server) createPresentation(w http.ResponseWriter, r *http.Request) {
 		OneSlidePerThought: body.OneSlidePerThought,
 		NameGroups:         body.NameGroups,
 		SectionDeck:        body.SectionDeck,
+		MaxSlides:          clampMaxSlides(body.MaxSlides),
 	})
 	if err != nil {
 		writePresentationError(w, r, err, "발표 자료를 만들지 못했습니다.")

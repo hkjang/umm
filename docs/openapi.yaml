@@ -365,6 +365,7 @@ paths:
         - { in: query, name: oneSlidePerThought, schema: { type: boolean }, description: Turn off grouping thoughts by where they sit on the canvas. }
         - { in: query, name: nameGroups, schema: { type: boolean }, description: "Ask the chat model to name each group. Only the headings; the sentences on the slides are the author's either way." }
         - { in: query, name: sectionDeck, schema: { type: boolean }, description: Ask the chat model where a long talk divides into parts. Adds heading slides and moves nothing. }
+        - { in: query, name: maxSlides, schema: { type: integer, minimum: 1, maximum: 500 }, description: "Cap the talk at this many slides. Omitted or 0 means no cap. The slides carrying least are dropped and what they held is reported in the storyline's Trimmed, never silently. Anything that is not a number is read as no cap rather than refused." }
         - { in: query, name: deckId, schema: { type: string } }
       responses:
         '200': { description: The compiled talk, content: { application/json: { schema: { $ref: '#/components/schemas/PresentationPreview' } } } }
@@ -400,6 +401,7 @@ paths:
                 oneSlidePerThought: { type: boolean, description: Turn off grouping thoughts by where they sit on the canvas. What the person connected still travels together. }
                 nameGroups: { type: boolean, description: "Ask the chat model to name each group of thoughts that were put together by position. Only the headings: the sentences on the slides are the author's either way. Opt-in, because it sends those thoughts to the gateway and makes the deck stop being the same every time. Ignored when no chat model is configured." }
                 sectionDeck: { type: boolean, description: "Ask the chat model where a long talk divides into parts. Adds heading slides and moves nothing: the order is a follows chain or the layout the author made, and rearranging it would override what they said. Ignored below 12 slides or with no chat model." }
+                maxSlides: { type: integer, minimum: 1, maximum: 500, description: "Cap the talk at this many slides. Omitted or 0 means no cap. Ranking is deterministic and reads only the graph — how many thoughts reached a slide, whether it holds a recorded disagreement — so the same space and the same cap always give the same deck. Part headings count against it too. What did not fit is recorded as trimmedCount." }
       responses:
         '201': { description: The deck, content: { application/json: { schema: { type: object, properties: { link: { $ref: '#/components/schemas/PresentationLink' }, warnings: { type: array, items: { type: string } } } } } } }
         '400': { description: Nothing in this space can become a talk }
@@ -1969,6 +1971,7 @@ components:
         compiledSource: { type: string, description: The deck source umm sent. Omitted from list responses. }
         thoughtCount: { type: integer }
         excludedCount: { type: integer, description: Thoughts deliberately left out, so the count on screen is the real one. }
+        trimmedCount: { type: integer, description: "Thoughts left out only because the talk was capped at a length. Apart from excludedCount because the remedy differs: raising the cap brings these back, and nothing brings back a thought its author held out of analysis. 0 on decks recorded before v0.64.0." }
         createdBy: { type: string, format: uuid, nullable: true }
         url: { type: string, description: Where the deck can be opened. Computed on every read, never stored. Absent when no Ptium is configured. }
         staleSlides:

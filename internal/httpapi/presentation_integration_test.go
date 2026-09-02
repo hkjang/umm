@@ -274,7 +274,7 @@ func TestANoteReportsWhichTalksQuoteItIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.db.CompletePresentationLink(ctx, h.userID, link.ID, store.PresentationReady, "# 임원 보고\n",
-		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, "", ""); err != nil {
+		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -345,7 +345,7 @@ func TestAPastDeckCarriesWhereToOpenItIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.db.CompletePresentationLink(ctx, h.userID, link.ID, store.PresentationReady, "# 임원 보고\n",
-		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, "", ""); err != nil {
+		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -413,7 +413,7 @@ func TestBothViewsOfADeckAgreeOnWhatChangedIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.db.CompletePresentationLink(ctx, h.userID, link.ID, store.PresentationReady, "# 임원 보고\n",
-		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, "", ""); err != nil {
+		[]store.SlideSource{{SlidePosition: 2, NoteID: h.notes[0]}}, 1, 0, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.db.Pool.Exec(ctx, `UPDATE notes SET content='고쳐 썼다' WHERE id=$1`, h.notes[0]); err != nil {
