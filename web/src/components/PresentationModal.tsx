@@ -1,4 +1,17 @@
-import { Alert, Badge, Button, Group, Modal, ScrollArea, Stack, Switch, Text, TextInput, Tooltip } from '@mantine/core';
+import {
+  Alert,
+  Badge,
+  Button,
+  Group,
+  Modal,
+  ScrollArea,
+  SegmentedControl,
+  Stack,
+  Switch,
+  Text,
+  TextInput,
+  Tooltip,
+} from '@mantine/core';
 import { IconAlertTriangle, IconExternalLink, IconPresentation, IconRefresh } from '@tabler/icons-react';
 import { useCallback, useEffect, useState } from 'react';
 import { APIError, api, json } from '../api';
@@ -51,6 +64,12 @@ export interface Storyline {
   NamedHeadings?: number;
   /** How many part headings the model proposed. */
   Sections?: number;
+  /** Thoughts left out only because the talk was capped at a length. Apart
+   *  from Excluded because the remedy differs: raising the cap brings these
+   *  back, and nothing brings back a thought held out of analysis. */
+  Trimmed?: string[] | null;
+  /** How many slides the cap removed. */
+  TrimmedSlides?: number;
 }
 
 export interface PresentationLink {
@@ -69,6 +88,9 @@ export interface PresentationLink {
   failureKind?: string;
   thoughtCount: number;
   excludedCount: number;
+  /** How many thoughts a length cap left out. Absent on decks recorded before
+   *  v0.64.0. */
+  trimmedCount?: number;
   /** Where the deck can be opened. Absent when no Ptium is configured. */
   url?: string;
   /**
@@ -114,6 +136,10 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
   const [oneSlidePerThought, setOneSlidePerThought] = useState(false);
   const [nameGroups, setNameGroups] = useState(false);
   const [sectionDeck, setSectionDeck] = useState(false);
+  // A length rather than a number to type: "how long do I have" has a handful
+  // of real answers, and a free field would send a request per keystroke while
+  // someone typed one of them.
+  const [maxSlides, setMaxSlides] = useState('0');
   // Not just a sentence: a Ptium failure has a kind, sometimes Ptium's own
   // words, and — for administrators — the underlying error. Keeping them apart
   // is what lets the screen say who fixes this instead of pasting a Go error
@@ -142,6 +168,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
       if (oneSlidePerThought) params.set('oneSlidePerThought', 'true');
       if (nameGroups) params.set('nameGroups', 'true');
       if (sectionDeck) params.set('sectionDeck', 'true');
+      if (maxSlides !== '0') params.set('maxSlides', maxSlides);
       const query = params.toString();
       setPreview(await api<PresentationPreview>(`/spaces/${spaceID}/presentation/preview${query ? `?${query}` : ''}`));
     } catch (cause) {
@@ -150,7 +177,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
     } finally {
       setLoading(false);
     }
-  }, [spaceID, title, includeExcluded, oneSlidePerThought, nameGroups, sectionDeck, t]);
+  }, [spaceID, title, includeExcluded, oneSlidePerThought, nameGroups, sectionDeck, maxSlides, t]);
 
   useEffect(() => {
     if (!opened) return;
@@ -164,6 +191,9 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
     setFailure(null);
     try {
       const body: Record<string, unknown> = { includeExcluded, oneSlidePerThought, nameGroups, sectionDeck };
+      // The deck is made to the length the preview showed. Sending it without
+      // the cap would hand over a talk nobody reviewed.
+      if (maxSlides !== '0') body.maxSlides = Number(maxSlides);
       if (title.trim()) body.title = title.trim();
       // Only when the person asked for it: a selection that silently narrowed
       // the deck would drop thoughts they expected to see.
@@ -217,6 +247,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
   const storyline = preview?.storyline;
   const slides = storyline?.Slides ?? [];
   const excluded = storyline?.Excluded ?? [];
+  const trimmed = storyline?.Trimmed ?? [];
 
   return (
     <Modal opened={opened} onClose={busy ? () => undefined : onClose} title={t('발표로 만들기')} centered size="lg">
@@ -273,6 +304,29 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
           />
         </Group>
 
+        {/* Which slides survive is decided by the graph, not by a model: how
+            many thoughts reached a slide, whether it holds a recorded
+            disagreement. So the same space and the same length always give the
+            same talk, which is what makes this preview worth reading. */}
+        <Stack gap={4}>
+          <Text size="sm" fw={500}>
+            {t('분량')}
+          </Text>
+          <SegmentedControl
+            size="xs"
+            value={maxSlides}
+            onChange={setMaxSlides}
+            data={[
+              { value: '0', label: t('제한 없음') },
+              { value: '10', label: t('{count}장', { count: 10 }) },
+              { value: '15', label: t('{count}장', { count: 15 }) },
+              { value: '20', label: t('{count}장', { count: 20 }) },
+              { value: '30', label: t('{count}장', { count: 30 }) },
+              { value: '40', label: t('{count}장', { count: 40 }) },
+            ]}
+          />
+        </Stack>
+
         {failure && (
           <PtiumFailureAlert
             failure={failure}
@@ -322,7 +376,7 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
                     )}
                   </Text>
                   <Text size="xs" c="dimmed">
-                    {t('생각을 골라서 만들거나, 공간을 나눈 뒤 다시 시도해 보세요.')}
+                    {t('위에서 분량을 정하거나, 생각을 골라서 만들거나, 공간을 나눈 뒤 다시 시도해 보세요.')}
                   </Text>
                 </Stack>
               </Alert>
@@ -334,6 +388,18 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
               <Text size="xs" c="dimmed">
                 {t('묶음 제목 {count}개를 AI가 지었습니다. 슬라이드 본문은 그대로 당신이 쓴 문장입니다.', {
                   count: storyline?.NamedHeadings ?? 0,
+                })}
+              </Text>
+            )}
+            {/* Nothing may be dropped out of somebody's own space in silence.
+                Said as a count of thoughts rather than slides because a thought
+                is what they wrote, and separately from the excluded count
+                because the remedy is different: this one comes back by
+                raising the length. */}
+            {trimmed.length > 0 && (
+              <Text size="xs" c="dimmed">
+                {t('생각 {count}개는 분량에 들어가지 못했습니다. 연결이 적은 슬라이드부터 빠집니다.', {
+                  count: trimmed.length,
                 })}
               </Text>
             )}
@@ -352,6 +418,13 @@ export default function PresentationModal({ opened, onClose, spaceID, spaceName,
                 <Badge variant="light" color="gray">
                   {t('생각 {count}개', { count: thoughtsUsed(storyline) })}
                 </Badge>
+                {trimmed.length > 0 && (
+                  <Tooltip label={t('분량에 들어가지 못한 생각입니다. 분량을 늘리면 돌아옵니다.')}>
+                    <Badge variant="light" color="orange">
+                      {t('{count}개 분량 밖', { count: trimmed.length })}
+                    </Badge>
+                  </Tooltip>
+                )}
                 {excluded.length > 0 && (
                   <Tooltip label={t('분석에서 제외한 생각입니다. 위 스위치로 넣을 수 있습니다.')}>
                     <Badge variant="light" color="grape">

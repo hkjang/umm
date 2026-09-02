@@ -41,6 +41,7 @@ type recordedComplete struct {
 	sources       []store.SlideSource
 	thoughtCount  int
 	excludedCount int
+	trimmedCount  int
 	failure       string
 }
 
@@ -68,8 +69,8 @@ func (f *fakeLinks) CreatePresentationLink(_ context.Context, _, spaceID uuid.UU
 	return store.PresentationLink{ID: uuid.New(), SpaceID: spaceID, PtiumID: ptiumID, Title: title, Status: store.PresentationPending}, nil
 }
 
-func (f *fakeLinks) CompletePresentationLink(_ context.Context, _, _ uuid.UUID, status, source string, sources []store.SlideSource, thoughtCount, excludedCount int, failure, failureKind string) error {
-	f.complete = append(f.complete, recordedComplete{status, source, sources, thoughtCount, excludedCount, failure})
+func (f *fakeLinks) CompletePresentationLink(_ context.Context, _, _ uuid.UUID, status, source string, sources []store.SlideSource, thoughtCount, excludedCount, trimmedCount int, failure, failureKind string) error {
+	f.complete = append(f.complete, recordedComplete{status, source, sources, thoughtCount, excludedCount, trimmedCount, failure})
 	return f.completeE
 }
 

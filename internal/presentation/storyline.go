@@ -109,6 +109,15 @@ type Storyline struct {
 	// screen can say so: a deck whose headings quietly changed source is one
 	// nobody can check.
 	NamedHeadings int
+	// Trimmed names thoughts left out only because the talk was capped at a
+	// number of slides. Kept apart from Excluded because the reason is
+	// different and so is the remedy: raising the cap brings these back, and
+	// nothing brings back a thought its author held out of analysis.
+	Trimmed []uuid.UUID
+	// TrimmedSlides is how many slides the cap removed. Counted separately
+	// because one slide can carry several thoughts, and "3 slides did not fit"
+	// is the sentence a person asked for a length can act on.
+	TrimmedSlides int
 }
 
 // Options tunes what the compiler is allowed to use.
@@ -127,6 +136,11 @@ type Options struct {
 	// something inferred. This is for a space whose arrangement means nothing,
 	// where being read the notes one at a time is the honest result.
 	OneSlidePerThought bool
+	// MaxSlides caps the talk. Zero means no cap, which is the default: a deck
+	// is a whole space until somebody says how long they have. When it is set,
+	// the slides carrying least are dropped and what they held is recorded on
+	// the storyline, never silently.
+	MaxSlides int
 }
 
 // Compile turns thoughts and their connections into a talk.
@@ -206,6 +220,10 @@ func Compile(thoughts []Thought, links []Link, opts Options) Storyline {
 	}
 
 	story.Slides = slides
+	// Last: cutting decides what is in the talk, and it can only judge that
+	// once every slide exists. Whatever does not fit is recorded on the
+	// storyline rather than dropped quietly.
+	fit(&story, opts.MaxSlides)
 	return story
 }
 

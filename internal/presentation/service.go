@@ -34,7 +34,7 @@ type Spaces interface {
 // Links is the part of the store this needs to record what happened.
 type Links interface {
 	CreatePresentationLink(ctx context.Context, userID, spaceID uuid.UUID, ptiumID, title string) (store.PresentationLink, error)
-	CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []store.SlideSource, thoughtCount, excludedCount int, failure, failureKind string) error
+	CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []store.SlideSource, thoughtCount, excludedCount, trimmedCount int, failure, failureKind string) error
 	FailedPresentationLink(ctx context.Context, userID, linkID uuid.UUID) (store.PresentationLink, error)
 }
 
@@ -115,6 +115,8 @@ type Request struct {
 	// Nothing else about the deck changes: the sentences on the slides stay the
 	// person's either way.
 	NameGroups bool
+	// MaxSlides caps how long the talk may be. Zero means no cap.
+	MaxSlides int
 }
 
 // Preview is what a space would become, without anything having happened.
@@ -221,7 +223,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req Request) (Re
 		// retrying can help, and the message is what whoever fixes it needs.
 		classified := Classify(applyErr)
 		if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationFailed, source, nil,
-			len(story.usedThoughts()), len(story.Excluded), applyErr.Error(), string(classified.Kind)); err != nil {
+			len(story.usedThoughts()), len(story.Excluded), len(story.Trimmed), applyErr.Error(), string(classified.Kind)); err != nil {
 			return Result{}, fmt.Errorf("%w (and recording the failure also failed: %v)", applyErr, err)
 		}
 		// The deck is open in Ptium and empty. Saying so is what stops the next
@@ -230,13 +232,14 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req Request) (Re
 	}
 
 	if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationReady, source,
-		story.SlideSources(), len(story.usedThoughts()), len(story.Excluded), "", ""); err != nil {
+		story.SlideSources(), len(story.usedThoughts()), len(story.Excluded), len(story.Trimmed), "", ""); err != nil {
 		return Result{}, err
 	}
 	link.Status = store.PresentationReady
 	link.CompiledSource = source
 	link.ThoughtCount = len(story.usedThoughts())
 	link.ExcludedCount = len(story.Excluded)
+	link.TrimmedCount = len(story.Trimmed)
 
 	warnings := result.Warnings
 	if warnings == nil {
@@ -272,7 +275,8 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 	}
 
 	story := Compile(thoughts, links, Options{Title: title, Only: req.Only,
-		IncludeExcluded: req.IncludeExcluded, OneSlidePerThought: req.OneSlidePerThought})
+		IncludeExcluded: req.IncludeExcluded, OneSlidePerThought: req.OneSlidePerThought,
+		MaxSlides: req.MaxSlides})
 	// Only the headings, only the groups, and only when asked. The slides
 	// themselves are already final at this point — a thought reaches its slide
 	// unchanged whether or not a model is involved.
@@ -287,6 +291,13 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 		// it cannot see.
 		if req.SectionDeck {
 			story.Sections = sectionDeck(ctx, s.Sectioner, &story, cfg.Language)
+			// Part headings are slides too. A person who asked for twenty and
+			// was handed twenty-four did not get the length they asked for, so
+			// the cap is applied again over the finished deck. Headings and
+			// comparisons outrank ordinary slides in that pass, which means
+			// dividing a long talk into parts costs content slides — that is
+			// what asking for a length means.
+			fit(&story, req.MaxSlides)
 		}
 	}
 	if len(story.Slides) == 0 {
@@ -416,14 +427,14 @@ func (s *Service) Retry(ctx context.Context, userID uuid.UUID, linkID uuid.UUID)
 	if applyErr != nil {
 		classified := Classify(applyErr)
 		if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationFailed, source, nil,
-			len(story.usedThoughts()), len(story.Excluded), applyErr.Error(), string(classified.Kind)); err != nil {
+			len(story.usedThoughts()), len(story.Excluded), len(story.Trimmed), applyErr.Error(), string(classified.Kind)); err != nil {
 			return Result{}, fmt.Errorf("%w (and recording the failure also failed: %v)", applyErr, err)
 		}
 		return Result{}, applyErr
 	}
 
 	if err := s.Links.CompletePresentationLink(ctx, userID, link.ID, store.PresentationReady, source,
-		story.SlideSources(), len(story.usedThoughts()), len(story.Excluded), "", ""); err != nil {
+		story.SlideSources(), len(story.usedThoughts()), len(story.Excluded), len(story.Trimmed), "", ""); err != nil {
 		return Result{}, err
 	}
 	link.Status = store.PresentationReady
@@ -431,6 +442,7 @@ func (s *Service) Retry(ctx context.Context, userID uuid.UUID, linkID uuid.UUID)
 	link.CompiledSource = source
 	link.ThoughtCount = len(story.usedThoughts())
 	link.ExcludedCount = len(story.Excluded)
+	link.TrimmedCount = len(story.Trimmed)
 
 	warnings := result.Warnings
 	if warnings == nil {

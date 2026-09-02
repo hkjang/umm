@@ -50,7 +50,10 @@ func TestPresentationLinkRoundTripIntegration(t *testing.T) {
 		{SlidePosition: 2, NoteID: notes[2]},
 	}
 	const source = "# 회고\n@cover\n"
-	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, source, sources, 3, 1, "", ""); err != nil {
+	// Three counts that mean three different things, given three different
+	// values so that reading them back proves they did not get crossed: used,
+	// held out of analysis by their author, and left out only by a length cap.
+	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, source, sources, 3, 1, 7, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,6 +63,9 @@ func TestPresentationLinkRoundTripIntegration(t *testing.T) {
 	}
 	if len(links) != 1 || links[0].Status != PresentationReady || links[0].ThoughtCount != 3 || links[0].ExcludedCount != 1 {
 		t.Fatalf("link not recorded as expected: %+v", links)
+	}
+	if links[0].TrimmedCount != 7 {
+		t.Fatalf("trimmed count came back as %d, want 7: %+v", links[0].TrimmedCount, links[0])
 	}
 	// The list is read far more often than any one source, so it must not carry
 	// megabytes of deck text to draw a few rows.
@@ -92,11 +98,11 @@ func TestRecompilingReplacesTheSourceMappingIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := []SlideSource{{SlidePosition: 1, NoteID: notes[0]}, {SlidePosition: 2, NoteID: notes[1]}}
-	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "a", first, 2, 0, "", ""); err != nil {
+	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "a", first, 2, 0, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	second := []SlideSource{{SlidePosition: 1, NoteID: notes[2]}}
-	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "b", second, 1, 0, "", ""); err != nil {
+	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "b", second, 1, 0, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -122,7 +128,7 @@ func TestANoteKnowsWhichTalksUsedItIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "x",
-			[]SlideSource{{SlidePosition: 1, NoteID: notes[0]}}, 1, 0, "", ""); err != nil {
+			[]SlideSource{{SlidePosition: 1, NoteID: notes[0]}}, 1, 0, 0, "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -166,7 +172,7 @@ func TestASlideCannotCiteAThoughtFromAnotherSpaceIntegration(t *testing.T) {
 	err = db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "x", []SlideSource{
 		{SlidePosition: 1, NoteID: notes[0]},
 		{SlidePosition: 1, NoteID: outsider},
-	}, 2, 0, "", "")
+	}, 2, 0, 0, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,11 +205,11 @@ func TestAStrangerCannotMakeOrReadALinkIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "비밀 소스",
-		[]SlideSource{{SlidePosition: 1, NoteID: notes[0]}}, 1, 0, "", ""); err != nil {
+		[]SlideSource{{SlidePosition: 1, NoteID: notes[0]}}, 1, 0, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := db.CompletePresentationLink(ctx, stranger, link.ID, PresentationFailed, "x", nil, 0, 0, "hacked", ""); !errors.Is(err, pgx.ErrNoRows) {
+	if err := db.CompletePresentationLink(ctx, stranger, link.ID, PresentationFailed, "x", nil, 0, 0, 0, "hacked", ""); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("a stranger wrote to someone else's link: %v", err)
 	}
 	if links, err := db.ListPresentationLinks(ctx, stranger, spaceID); err != nil || len(links) != 0 {
@@ -230,7 +236,7 @@ func TestAnUnknownStatusIsRefusedIntegration(t *testing.T) {
 	}
 	// Refused in Go rather than left to the CHECK constraint, so the API can
 	// answer 400 instead of 500.
-	if err := db.CompletePresentationLink(ctx, userID, link.ID, "exploded", "x", nil, 0, 0, "", ""); !errors.Is(err, ErrUnknownPresentationStatus) {
+	if err := db.CompletePresentationLink(ctx, userID, link.ID, "exploded", "x", nil, 0, 0, 0, "", ""); !errors.Is(err, ErrUnknownPresentationStatus) {
 		t.Fatalf("an unknown status was accepted: %v", err)
 	}
 }
@@ -244,7 +250,7 @@ func TestAFailedCompileKeepsWhatPtiumSaidIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	const why = "템플릿에 해당 레이아웃이 없습니다"
-	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationFailed, "", nil, 0, 0, why, ""); err != nil {
+	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationFailed, "", nil, 0, 0, 0, why, ""); err != nil {
 		t.Fatal(err)
 	}
 	links, err := db.ListPresentationLinks(ctx, userID, spaceID)
@@ -268,7 +274,7 @@ func TestDeletingASpaceTakesItsLinksIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "x",
-		[]SlideSource{{SlidePosition: 1, NoteID: notes[0]}}, 1, 0, "", ""); err != nil {
+		[]SlideSource{{SlidePosition: 1, NoteID: notes[0]}}, 1, 0, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Pool.Exec(ctx, `DELETE FROM spaces WHERE id=$1`, spaceID); err != nil {
@@ -304,7 +310,7 @@ func freshDeck(t *testing.T, db *Store, userID, spaceID uuid.UUID, notes []uuid.
 	for i, id := range notes {
 		sources = append(sources, SlideSource{SlidePosition: i + 2, NoteID: id})
 	}
-	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "x", sources, len(notes), 0, "", ""); err != nil {
+	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "x", sources, len(notes), 0, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	return link
@@ -478,7 +484,7 @@ func TestRecompilingClearsTheWarningIntegration(t *testing.T) {
 	}
 
 	sources := []SlideSource{{SlidePosition: 2, NoteID: notes[0]}}
-	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "x", sources, 1, 0, "", ""); err != nil {
+	if err := db.CompletePresentationLink(ctx, userID, link.ID, PresentationReady, "x", sources, 1, 0, 0, "", ""); err != nil {
 		t.Fatal(err)
 	}
 	stale, err := db.StaleSlides(ctx, userID, link.ID)
