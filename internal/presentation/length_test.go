@@ -16,6 +16,45 @@ func contentSlide(title string, thoughts int) Slide {
 	return slide
 }
 
+// partHeading is a slide that is only a part heading: no words of the person's,
+// no thought quoted.
+func partHeading(title string) Slide {
+	return Slide{Role: RoleSection, Title: title, Sectioned: true}
+}
+
+// dividedStory is a talk in three parts of five, five and two slides.
+func dividedStory() Storyline {
+	story := Storyline{Slides: []Slide{partHeading("문제")}}
+	for i := 0; i < 5; i++ {
+		story.Slides = append(story.Slides, contentSlide("문제 슬라이드", 1))
+	}
+	story.Slides = append(story.Slides, partHeading("대안"))
+	for i := 0; i < 5; i++ {
+		story.Slides = append(story.Slides, contentSlide("대안 슬라이드", 1))
+	}
+	story.Slides = append(story.Slides, partHeading("결정"))
+	for i := 0; i < 2; i++ {
+		story.Slides = append(story.Slides, contentSlide("결정 슬라이드", 1))
+	}
+	return story
+}
+
+// openHeadings reports the part headings that have a slide under them, and the
+// ones that open nothing.
+func openHeadings(story Storyline) (open, empty []string) {
+	for index, slide := range story.Slides {
+		if !slide.Sectioned {
+			continue
+		}
+		if index+1 < len(story.Slides) && !story.Slides[index+1].Sectioned {
+			open = append(open, slide.Title)
+			continue
+		}
+		empty = append(empty, slide.Title)
+	}
+	return open, empty
+}
+
 // The whole point: what survives is what the person built most around.
 func TestFitKeepsTheSlidesCarryingMost(t *testing.T) {
 	story := Storyline{Slides: []Slide{
@@ -185,6 +224,77 @@ func TestCompileHonoursTheCap(t *testing.T) {
 	}
 }
 
+// A part heading outliving the part it opens is a title over nothing, and two
+// of them in a row is a talk that says a part began twice and held nothing
+// either time.
+func TestALengthCapNeverLeavesAHeadingOverNothing(t *testing.T) {
+	story := dividedStory()
+
+	fit(&story, 8)
+
+	open, empty := openHeadings(story)
+	if len(empty) > 0 {
+		t.Fatalf("part headings over nothing: %v (kept %v)", empty, titles(story))
+	}
+	if len(open) == 0 {
+		t.Fatal("every part heading was cut, so this proves nothing")
+	}
+	// The parts that are left are the ones whose slides are left, and the one
+	// whose slides all fell out of the length went with them.
+	if len(open) != 2 || open[0] != "문제" || open[1] != "대안" {
+		t.Fatalf("parts left: %v, want 문제 and 대안", open)
+	}
+}
+
+// A heading spends a slot of the length on a title carrying none of the
+// person's words. Spending it on a part that holds nothing spends it twice.
+func TestALengthCapSpendsEverySlotItHas(t *testing.T) {
+	story := dividedStory()
+
+	fit(&story, 8)
+
+	if len(story.Slides) != 8 {
+		t.Fatalf("%d slides for a cap of 8: %v", len(story.Slides), titles(story))
+	}
+	// Six of the eight are the person's own slides; before, two were headings
+	// over nothing and only five were.
+	content := 0
+	for _, slide := range story.Slides {
+		if !slide.Sectioned {
+			content++
+		}
+	}
+	if content != 6 {
+		t.Fatalf("%d of 8 slides carry the person's thoughts, want 6", content)
+	}
+	if story.TrimmedSlides != 7 || len(story.Trimmed) != 6 {
+		t.Fatalf("reported %d slides / %d thoughts left out, want 7 / 6",
+			story.TrimmedSlides, len(story.Trimmed))
+	}
+}
+
+// A part that keeps one slide keeps its heading. It is thin, but dropping it
+// silently extends the part before it, and that division is one nobody
+// proposed.
+func TestAPartWithOneSlideLeftKeepsItsHeading(t *testing.T) {
+	story := dividedStory()
+
+	// Fourteen leaves the last part exactly one of its two slides.
+	fit(&story, 14)
+
+	open, empty := openHeadings(story)
+	if len(empty) > 0 {
+		t.Fatalf("part headings over nothing: %v", empty)
+	}
+	if len(open) != 3 {
+		t.Fatalf("%d parts left, want all 3: %v", len(open), titles(story))
+	}
+	last := story.Slides[len(story.Slides)-1]
+	if last.Sectioned {
+		t.Fatalf("the talk ends on a part heading: %v", titles(story))
+	}
+}
+
 // Part headings are slides too. Someone who asked for fifteen and was handed
 // eighteen did not get the length they asked for.
 //
@@ -222,5 +332,46 @@ func TestPartHeadingsCountAgainstTheCap(t *testing.T) {
 	}
 	if headings == 0 {
 		t.Fatal("no part heading survived, so the cap was not tested against headings")
+	}
+	if preview.Storyline.Sections != headings {
+		t.Fatalf("the deck says it is in %d parts and holds %d headings",
+			preview.Storyline.Sections, headings)
+	}
+}
+
+// The screen says "AI가 3개 부로 나눴습니다". Over a deck the length cut down to
+// two, that is the same deck saying two different things — and the count is
+// what tells the person how much of the shape is the model's.
+func TestTheReportedPartCountIsThePartsInTheDeck(t *testing.T) {
+	spaces := &fakeSpaces{name: "긴 발표"}
+	for i := 0; i < 30; i++ {
+		spaces.notes = append(spaces.notes, note(byte(i+1), "생각", float64(i)*2000))
+	}
+	// The last part opens two slides from the end of a fifteen-slide deck, so
+	// the second pass over the finished deck cannot afford to open it.
+	sectioner := &fakeSectioner{sections: []Section{
+		{Start: 0, Title: "문제"}, {Start: 5, Title: "대안"}, {Start: 13, Title: "결정"},
+	}}
+	svc := serviceWith(spaces, &fakeLinks{}, &fakePtium{}, Config{})
+	svc.Sectioner = sectioner
+
+	preview, err := svc.Preview(context.Background(), uuid.New(),
+		Request{SpaceID: id(9), OneSlidePerThought: true, SectionDeck: true, MaxSlides: 15})
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	story := preview.Storyline
+	open, empty := openHeadings(story)
+	if len(empty) > 0 {
+		t.Fatalf("part headings over nothing: %v", empty)
+	}
+	if len(open) != 2 {
+		t.Fatalf("%d parts in the deck, want 2 — the third had no room to open", len(open))
+	}
+	if story.Sections != 2 {
+		t.Fatalf("the deck says it is in %d parts and holds %d", story.Sections, len(open))
+	}
+	if len(story.Slides) != 15 {
+		t.Fatalf("%d slides for a cap of 15", len(story.Slides))
 	}
 }

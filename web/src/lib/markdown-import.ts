@@ -37,6 +37,9 @@ export interface ImportedConnection {
   from: string;
   to: string;
   relation: string;
+  /** Why the connection was drawn, in the author's own words. Absent from
+   *  files exported before v0.65.0, and from connections nobody explained. */
+  reason?: string;
 }
 
 export interface ImportedDocument {
@@ -99,8 +102,15 @@ const exportedLineLabel = /^-\s+line:\s+`([^`]+)`/m;
 /** A line of the Lines of thinking section: `- **name** — status: why`. */
 const exportedLine = /^-\s+\*\*(.+?)\*\*\s+—\s+([a-z]+)(?::\s*([\s\S]*))?$/;
 
-/** A line of the Connections section: `` `a` --relates--> `b` ``. */
-const exportedConnection = /^-\s+`([^`]+)`\s*--([a-z_-]+)-->\s*`([^`]+)`/;
+/**
+ * A line of the Connections section: `` `a` --relates--> `b` ``, optionally
+ * followed by `(origin)` and then `— why it was drawn`.
+ *
+ * The origin is read past rather than captured: it says who made the
+ * connection, and that is not something a file may claim on import — the same
+ * rule the API enforces on a request body.
+ */
+const exportedConnection = /^-\s+`([^`]+)`\s*--([a-z_-]+)-->\s*`([^`]+)`(?:\s*\([a-z_-]+\))?(?:\s*—\s*(.*))?$/;
 
 /** The heading the exporter writes for a thought that has no title. */
 const untitledThought = 'Thought';
@@ -211,7 +221,10 @@ export function readMarkdownDocument(source: string): ImportedDocument {
         // on this canvas what a thought is joined to is half of what it means.
         for (const line of content.split('\n')) {
           const found = exportedConnection.exec(line.trim());
-          if (found) connections.push({ from: found[1], to: found[3], relation: found[2] });
+          if (found) {
+            const reason = (found[4] ?? '').trim();
+            connections.push({ from: found[1], to: found[3], relation: found[2], ...(reason ? { reason } : {}) });
+          }
         }
         continue;
       }
@@ -312,7 +325,11 @@ export function formatImportedThoughts(
   );
   if (kept.length > 0) {
     sections.push(
-      ['## Connections', '', ...kept.map((c) => `- \`${c.from}\` --${c.relation}--> \`${c.to}\``)].join('\n'),
+      [
+        '## Connections',
+        '',
+        ...kept.map((c) => `- \`${c.from}\` --${c.relation}--> \`${c.to}\`${c.reason ? ` — ${c.reason}` : ''}`),
+      ].join('\n'),
     );
   }
   const names = new Set(thoughts.map((thought) => thought.line).filter(Boolean));

@@ -2,6 +2,7 @@ package presentation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -33,7 +34,7 @@ type Spaces interface {
 
 // Links is the part of the store this needs to record what happened.
 type Links interface {
-	CreatePresentationLink(ctx context.Context, userID, spaceID uuid.UUID, ptiumID, title string) (store.PresentationLink, error)
+	CreatePresentationLink(ctx context.Context, userID, spaceID uuid.UUID, ptiumID, title string, request json.RawMessage) (store.PresentationLink, error)
 	CompletePresentationLink(ctx context.Context, userID, linkID uuid.UUID, status, source string, sources []store.SlideSource, thoughtCount, excludedCount, trimmedCount int, failure, failureKind string) error
 	FailedPresentationLink(ctx context.Context, userID, linkID uuid.UUID) (store.PresentationLink, error)
 }
@@ -117,6 +118,67 @@ type Request struct {
 	NameGroups bool
 	// MaxSlides caps how long the talk may be. Zero means no cap.
 	MaxSlides int
+}
+
+// asked is what the person chose, in the form it is stored beside the deck.
+//
+// Only the choices. The space and the title are already columns on the link,
+// and taking them from there rather than from here keeps one answer to "which
+// space is this deck of" instead of two that can disagree.
+//
+// The two that reach a model — naming groups, dividing into parts — are kept
+// like the rest. A retry is meant to produce the talk that was asked for, and
+// leaving them out would quietly hand back a deck with neither, which is the
+// same silent substitution this exists to stop. That the model may name a group
+// differently the second time is what asking a model for headings means, and
+// the screen already says the headings are its.
+type asked struct {
+	Only               []uuid.UUID `json:"only,omitempty"`
+	IncludeExcluded    bool        `json:"includeExcluded,omitempty"`
+	OneSlidePerThought bool        `json:"oneSlidePerThought,omitempty"`
+	NameGroups         bool        `json:"nameGroups,omitempty"`
+	SectionDeck        bool        `json:"sectionDeck,omitempty"`
+	MaxSlides          int         `json:"maxSlides,omitempty"`
+}
+
+// recorded renders what was asked for, to be kept with the deck it produced.
+func (r Request) recorded() json.RawMessage {
+	raw, err := json.Marshal(asked{
+		Only:               r.Only,
+		IncludeExcluded:    r.IncludeExcluded,
+		OneSlidePerThought: r.OneSlidePerThought,
+		NameGroups:         r.NameGroups,
+		SectionDeck:        r.SectionDeck,
+		MaxSlides:          r.MaxSlides,
+	})
+	if err != nil {
+		// Nothing in here can fail to marshal. If that ever changes, recording
+		// nothing is what a link written before this looks like, and a retry
+		// still makes a deck.
+		return nil
+	}
+	return raw
+}
+
+// asRequest rebuilds what to compile from a link that failed.
+//
+// A link written before umm kept the choices — or one whose record cannot be
+// read — decodes to none of them, which is exactly what a retry did then: the
+// whole space, uncapped, with every switch off. That is worse than the talk
+// they asked for and better than refusing to retry at all.
+func asRequest(link store.PresentationLink) Request {
+	req := Request{SpaceID: link.SpaceID, Title: link.Title}
+	var a asked
+	if len(link.Request) == 0 || json.Unmarshal(link.Request, &a) != nil {
+		return req
+	}
+	req.Only = a.Only
+	req.IncludeExcluded = a.IncludeExcluded
+	req.OneSlidePerThought = a.OneSlidePerThought
+	req.NameGroups = a.NameGroups
+	req.SectionDeck = a.SectionDeck
+	req.MaxSlides = a.MaxSlides
+	return req
 }
 
 // Preview is what a space would become, without anything having happened.
@@ -209,7 +271,7 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, req Request) (Re
 	if err != nil {
 		return Result{}, err
 	}
-	link, err := s.Links.CreatePresentationLink(ctx, userID, req.SpaceID, deck.ID, story.Title)
+	link, err := s.Links.CreatePresentationLink(ctx, userID, req.SpaceID, deck.ID, story.Title, req.recorded())
 	if err != nil {
 		// The deck exists in Ptium and umm could not record it. Said plainly
 		// rather than swallowed, because the two are now out of step and only a
@@ -271,7 +333,8 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 	}
 	links := make([]Link, 0, len(edges))
 	for _, edge := range edges {
-		links = append(links, Link{From: edge.SourceID, To: edge.TargetID, Relation: edge.Relation, Origin: edge.Origin})
+		links = append(links, Link{From: edge.SourceID, To: edge.TargetID, Relation: edge.Relation,
+			Origin: edge.Origin, Reason: edge.Reason})
 	}
 
 	story := Compile(thoughts, links, Options{Title: title, Only: req.Only,
@@ -293,11 +356,16 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 			story.Sections = sectionDeck(ctx, s.Sectioner, &story, cfg.Language)
 			// Part headings are slides too. A person who asked for twenty and
 			// was handed twenty-four did not get the length they asked for, so
-			// the cap is applied again over the finished deck. Headings and
-			// comparisons outrank ordinary slides in that pass, which means
-			// dividing a long talk into parts costs content slides — that is
-			// what asking for a length means.
-			fit(&story, req.MaxSlides)
+			// the cap is applied again over the finished deck. A part whose
+			// slides all fall out of the length loses its heading with them,
+			// which means dividing a long talk into parts costs content slides
+			// — that is what asking for a length means.
+			if fit(&story, req.MaxSlides) > 0 {
+				// And then the deck is divided into however many parts are
+				// still in it. "AI가 3개 부로 나눴습니다" over a deck holding two
+				// headings is the same deck saying two different things.
+				story.Sections = story.parts()
+			}
 		}
 	}
 	if len(story.Slides) == 0 {
@@ -383,6 +451,17 @@ func (s Storyline) SlideSources() []store.SlideSource {
 	return out
 }
 
+// parts is how many part headings are in the deck as it stands.
+func (s Storyline) parts() int {
+	count := 0
+	for _, slide := range s.Slides {
+		if slide.Sectioned {
+			count++
+		}
+	}
+	return count
+}
+
 // usedThoughts is every thought that reached a slide, counted once.
 func (s Storyline) usedThoughts() map[uuid.UUID]bool {
 	seen := map[uuid.UUID]bool{}
@@ -414,7 +493,13 @@ func (s *Service) Retry(ctx context.Context, userID uuid.UUID, linkID uuid.UUID)
 	// Recompiled rather than replayed from the stored source: the thinking has
 	// probably moved on since it failed, and a retry that resurrects an old
 	// deck source would put stale sentences on the slides.
-	story, source, err := s.compile(ctx, userID, Request{SpaceID: link.SpaceID, Title: link.Title})
+	//
+	// Recompiled from what was asked for, though, not from the defaults. A talk
+	// built from six selected thoughts and capped at twenty slides used to come
+	// back as the whole space, uncapped, into the same deck and without a word
+	// about it — the space had moved on, which is the point, but the request had
+	// not.
+	story, source, err := s.compile(ctx, userID, asRequest(link))
 	if err != nil {
 		return Result{}, err
 	}

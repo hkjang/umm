@@ -48,6 +48,9 @@ type recordedComplete struct {
 type fakeLinks struct {
 	created   []string
 	createErr error
+	// made keeps the whole link each create produced, so a test can hand one
+	// back to a retry the way the store would.
+	made      []store.PresentationLink
 	complete  []recordedComplete
 	completeE error
 	failed    store.PresentationLink
@@ -61,12 +64,15 @@ func (f *fakeLinks) FailedPresentationLink(_ context.Context, _, _ uuid.UUID) (s
 	return f.failed, nil
 }
 
-func (f *fakeLinks) CreatePresentationLink(_ context.Context, _, spaceID uuid.UUID, ptiumID, title string) (store.PresentationLink, error) {
+func (f *fakeLinks) CreatePresentationLink(_ context.Context, _, spaceID uuid.UUID, ptiumID, title string, request json.RawMessage) (store.PresentationLink, error) {
 	if f.createErr != nil {
 		return store.PresentationLink{}, f.createErr
 	}
 	f.created = append(f.created, ptiumID)
-	return store.PresentationLink{ID: uuid.New(), SpaceID: spaceID, PtiumID: ptiumID, Title: title, Status: store.PresentationPending}, nil
+	link := store.PresentationLink{ID: uuid.New(), SpaceID: spaceID, PtiumID: ptiumID, Title: title,
+		Status: store.PresentationPending, Request: request}
+	f.made = append(f.made, link)
+	return link, nil
 }
 
 func (f *fakeLinks) CompletePresentationLink(_ context.Context, _, _ uuid.UUID, status, source string, sources []store.SlideSource, thoughtCount, excludedCount, trimmedCount int, failure, failureKind string) error {
@@ -435,5 +441,105 @@ func TestAnUnreadableCredentialSaysSoRatherThanFailingAsA401(t *testing.T) {
 	_, err := svc.Create(context.Background(), uuid.New(), Request{SpaceID: id(9)})
 	if err == nil || !strings.Contains(err.Error(), "encrypted") {
 		t.Fatalf("got %v, want an error naming the unreadable credential", err)
+	}
+}
+
+// Retrying is asking for the same talk again.
+//
+// Making a deck is two calls, and when the second fails umm offers to compile
+// into the deck Ptium already opened. It recompiles the space on purpose — the
+// thinking has usually moved on — but the request had not moved on, and it was
+// being thrown away: a talk built from two chosen thoughts and capped at one
+// slide came back as the whole space, uncapped, into that same deck.
+func TestARetryAsksForTheSameTalkAgain(t *testing.T) {
+	spaces := &fakeSpaces{name: "회고 주기 재검토", notes: []store.Note{
+		note(1, "회고 주기를 격주로 줄여 보자", 0),
+		note(2, "회고 준비에 두 시간이 든다", 2000),
+		note(3, "격주 회고는 논의가 얕아진다", 4000),
+		note(4, "지난 분기 회고 기록", 6000),
+	}}
+	links := &fakeLinks{}
+	ptium := &fakePtium{deckID: "pt_retry", applyErr: errors.New("ptium status 504: timed out")}
+	svc := serviceWith(spaces, links, ptium, Config{BaseURL: "https://ptium.internal"})
+	user := uuid.New()
+
+	wanted := Request{SpaceID: id(9), Only: []uuid.UUID{id(1), id(2)}, MaxSlides: 1}
+	if _, err := svc.Create(context.Background(), user, wanted); err == nil {
+		t.Fatal("a failed compile was reported as success")
+	}
+	if len(links.made) != 1 {
+		t.Fatalf("the deck was not recorded: %+v", links.made)
+	}
+
+	// The deck is open in Ptium and empty, so the person presses 다시 시도.
+	links.failed = links.made[0]
+	ptium.applyErr = nil
+	if _, err := svc.Retry(context.Background(), user, links.made[0].ID); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	if len(ptium.applied) != 2 {
+		t.Fatalf("the retry did not compile into the deck: %+v", ptium.applied)
+	}
+	if ptium.applied[1] != ptium.applied[0] {
+		t.Fatalf("a retry made a different talk:\nasked for:\n%s\ngot:\n%s", ptium.applied[0], ptium.applied[1])
+	}
+	if strings.Contains(ptium.applied[1], "격주 회고는 논의가 얕아진다") {
+		t.Fatal("a retry pulled in a thought the person had not selected")
+	}
+}
+
+// Every switch, including the two that reach a model. A retry that quietly
+// turned them off would hand back a deck with neither the names nor the parts
+// that were asked for.
+func TestARetryKeepsTheSwitchesThatWereOn(t *testing.T) {
+	links := &fakeLinks{}
+	ptium := &fakePtium{deckID: "pt_switches", applyErr: errors.New("ptium status 504: timed out")}
+	svc := serviceWith(spaceFixture(), links, ptium, Config{BaseURL: "https://ptium.internal"})
+	user := uuid.New()
+
+	wanted := Request{SpaceID: id(9), OneSlidePerThought: true, IncludeExcluded: true,
+		NameGroups: true, SectionDeck: true, MaxSlides: 12}
+	if _, err := svc.Create(context.Background(), user, wanted); err == nil {
+		t.Fatal("a failed compile was reported as success")
+	}
+	if len(links.made) != 1 {
+		t.Fatalf("the deck was not recorded: %+v", links.made)
+	}
+
+	var stored asked
+	if err := json.Unmarshal(links.made[0].Request, &stored); err != nil {
+		t.Fatalf("what was asked for was not recorded readably: %v", err)
+	}
+	if !stored.IncludeExcluded || !stored.OneSlidePerThought || !stored.NameGroups ||
+		!stored.SectionDeck || stored.MaxSlides != 12 {
+		t.Fatalf("a choice was not recorded: %+v", stored)
+	}
+
+	again := asRequest(links.made[0])
+	if again.SpaceID != id(9) || !again.OneSlidePerThought || !again.IncludeExcluded ||
+		!again.NameGroups || !again.SectionDeck || again.MaxSlides != 12 {
+		t.Fatalf("the request a retry would compile: %+v", again)
+	}
+}
+
+// A deck recorded before umm kept the request still retries. It compiles the
+// whole space with every default, which is exactly what a retry did then —
+// worse than the talk that was asked for, and better than refusing.
+func TestARetryOfADeckFromBeforeTheRequestWasKept(t *testing.T) {
+	spaces := &fakeSpaces{name: "회고 주기 재검토", notes: []store.Note{
+		note(1, "회고 주기를 격주로 줄여 보자", 0),
+		note(2, "격주 회고는 논의가 얕아진다", 2000),
+	}}
+	links := &fakeLinks{failed: store.PresentationLink{ID: uuid.New(), SpaceID: id(9), Title: "회고 주기 재검토",
+		PtiumID: "pt_old", Status: store.PresentationFailed}}
+	ptium := &fakePtium{deckID: "pt_old"}
+	svc := serviceWith(spaces, links, ptium, Config{BaseURL: "https://ptium.internal"})
+
+	if _, err := svc.Retry(context.Background(), uuid.New(), links.failed.ID); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(ptium.applied) != 1 || !strings.Contains(ptium.applied[0], "격주 회고는 논의가 얕아진다") {
+		t.Fatalf("a link with no recorded request did not compile the whole space: %+v", ptium.applied)
 	}
 }

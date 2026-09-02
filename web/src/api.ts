@@ -93,6 +93,15 @@ export interface ThoughtEdge {
   origin: EdgeOrigin;
   /** Present only on inferred edges; a drawn line carries no probability. */
   confidence?: number;
+  /**
+   * Why this connection was drawn, in the words of whoever drew it. The
+   * relation says what kind of connection it is; nothing else says why, and
+   * that is the half that disappears first.
+   *
+   * Empty is the normal case and means its author did not feel the need — not
+   * that a reason is missing. Never render it as an absence.
+   */
+  reason?: string;
 }
 
 /** Why a suggestion run produced what it did — including when it produced nothing. */
@@ -336,6 +345,7 @@ export const offlineQueueCount = () => loadOfflineQueue().length;
 
 export async function discardOfflineMutation(id?: string) {
   if (!id) return;
+  raisedConflicts.delete(id);
   const storageKey = queueStorageKey();
   await withOfflineQueueLock(storageKey, () => {
     const current = readOfflineQueue(storageKey);
@@ -374,6 +384,22 @@ const isIdempotencyInProgress = (payload: Record<string, any>) =>
   typeof payload?.type === 'string' && payload.type.endsWith('/idempotency-in-progress');
 
 const retryableOfflineStatus = (status: number) => status === 408 || status === 425 || status === 429 || status >= 500;
+
+// How long to wait before coming back to a queue a flush left work in, when the
+// thing that held it up clears by itself and the browser will not say so.
+//
+// An `online` event is the only thing that brings a flush back unasked, and it
+// fires when connectivity returns — not when another tab finishes writing the
+// same change, and not when a request throws while the browser still believes
+// it is connected. Without a timer those two leave the change sitting in the
+// queue, under a banner that says it is waiting for a connection the reader
+// already has, until somebody presses sync.
+//
+// A reservation held by another request is measured in the time that request
+// takes; a server or a network that faltered is given the same five seconds the
+// retryable statuses default to.
+const inProgressRetrySeconds = 2;
+const unreachableRetrySeconds = 5;
 let offlineRetryTimer: number | undefined;
 
 function scheduleOfflineRetry(delaySeconds: number) {
@@ -498,6 +524,18 @@ export interface FlushResult {
  */
 let inFlightFlush: Promise<FlushResult> | undefined;
 
+/**
+ * Mutations whose version conflict has already been put in front of the reader.
+ *
+ * A conflict is a decision, not a delay. The queued change carries the version
+ * it was written against, so replaying it answers 409 for as long as it exists
+ * — and every replay raises the event again, which reopens the merge dialog and
+ * throws away whatever the person had typed into it. So a change that raised a
+ * conflict is held, counted and left alone until they choose; resolving it,
+ * whichever way, discards the mutation and takes it out of here.
+ */
+const raisedConflicts = new Set<string>();
+
 export function flushOfflineQueue(): Promise<FlushResult> {
   inFlightFlush ??= runFlush().finally(() => {
     inFlightFlush = undefined;
@@ -516,6 +554,10 @@ async function runFlush(): Promise<FlushResult> {
   let retryAfterSeconds = 0;
   for (let index = 0; index < queued.length; index += 1) {
     const item = queued[index];
+    if (raisedConflicts.has(item.id)) {
+      remaining.push(item);
+      continue;
+    }
     try {
       const response = await fetch(`/api/v1${item.path}`, {
         credentials: 'same-origin',
@@ -533,9 +575,12 @@ async function runFlush(): Promise<FlushResult> {
         // A reservation that is still in progress is not a version conflict:
         // the same change is already being applied, so it must be retried
         // rather than shown to the reader as two competing versions.
-        if (!isIdempotencyInProgress(payload)) {
-          window.dispatchEvent(new CustomEvent('umm:offline-conflict', { detail: { item, payload } }));
+        if (isIdempotencyInProgress(payload)) {
+          retryAfterSeconds = Math.max(retryAfterSeconds, inProgressRetrySeconds);
+          continue;
         }
+        raisedConflicts.add(item.id);
+        window.dispatchEvent(new CustomEvent('umm:offline-conflict', { detail: { item, payload } }));
         continue;
       }
       if (isTerminalOfflineRejection(response.status, payload.type)) {
@@ -563,6 +608,10 @@ async function runFlush(): Promise<FlushResult> {
       remaining.push(item);
     } catch {
       remaining.push(...queued.slice(index));
+      // The browser going offline mid-flush raises its own event, and the
+      // guard below skips the timer while it is offline. What is left is a
+      // request that failed with the connection apparently intact.
+      retryAfterSeconds = Math.max(retryAfterSeconds, unreachableRetrySeconds);
       break;
     }
   }
@@ -585,6 +634,10 @@ async function runFlush(): Promise<FlushResult> {
   }
   const snapshotIDs = new Set(queued.map((item) => item.id));
   const addedDuringFlush = reconciled.some((item) => !snapshotIDs.has(item.id));
+  // A change that left the queue — resolved, discarded, or coalesced away — has
+  // no conflict left to hold.
+  const reconciledIDs = new Set(reconciled.map((item) => item.id));
+  for (const id of raisedConflicts) if (!reconciledIDs.has(id)) raisedConflicts.delete(id);
   if (persistence.saved && navigator.onLine && reconciled.length > 0) {
     if (retryAfterSeconds > 0) scheduleOfflineRetry(retryAfterSeconds);
     else if (addedDuringFlush) scheduleOfflineRetry(1);

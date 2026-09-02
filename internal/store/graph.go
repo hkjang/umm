@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"strings"
+	"unicode/utf8"
 )
 
 // A connection between two thoughts carries two separate facts: what the
@@ -101,6 +102,31 @@ func ParseRelation(value string) (Relation, error) {
 	}
 	if !knownRelations[trimmed] {
 		return "", ErrUnknownRelation
+	}
+	return trimmed, nil
+}
+
+// ErrEdgeReasonTooLong is returned for a reason past MaxEdgeReason. Refused
+// rather than truncated: cutting somebody's sentence in half and storing the
+// half is worse than telling them it did not fit.
+var ErrEdgeReasonTooLong = errors.New("edge reason too long")
+
+// ParseEdgeReason accepts what a client sent as the why behind a connection.
+//
+// Empty is the normal answer and stays empty: most connections do not need a
+// sentence, and an empty reason means the author did not feel the need rather
+// than that one is missing. Whitespace-only collapses to empty for the same
+// reason — a blank line is not a reason someone wrote.
+//
+// The bound is checked here as well as in SQL because a request that would
+// violate the constraint should come back as a sentence about length, not as a
+// database error that says nothing to whoever typed it.
+func ParseEdgeReason(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	// Counted in runes: the limit is how much someone may write, and in Korean
+	// a byte count would silently cut the allowance to a third.
+	if utf8.RuneCountInString(trimmed) > MaxEdgeReason {
+		return "", ErrEdgeReasonTooLong
 	}
 	return trimmed, nil
 }

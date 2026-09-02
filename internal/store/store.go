@@ -109,7 +109,18 @@ type Edge struct {
 	// Confidence is set only for inferred edges. A person who drew a line is not
 	// expressing a probability, so it stays null for everything else.
 	Confidence *float64 `json:"confidence,omitempty"`
+	// Reason is why this connection was drawn, in the words of whoever drew it.
+	// Relation says what kind of connection this is; nothing else says why, and
+	// six months later that is the question people actually have.
+	//
+	// Empty is the normal case and means the author did not feel the need — not
+	// that a reason is missing. Nothing may render it as an absence.
+	Reason string `json:"reason,omitempty"`
 }
+
+// MaxEdgeReason bounds the sentence beside a connection. It is a line, not a
+// second note; someone with more to say already has somewhere to say it.
+const MaxEdgeReason = 200
 
 type RelatedNote struct {
 	Note   Note    `json:"note"`
@@ -751,7 +762,7 @@ func (s *Store) listNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 		}
 	}
 	edgeRows, err := s.Pool.Query(ctx, `
-		SELECT e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation,e.origin,e.confidence
+		SELECT e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation,e.origin,e.confidence,e.reason
 		FROM note_edges e
 		JOIN spaces sp ON sp.id=e.space_id
 		LEFT JOIN space_members sm ON sm.space_id=sp.id AND sm.user_id=$3
@@ -764,7 +775,7 @@ func (s *Store) listNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 	edges := []Edge{}
 	for edgeRows.Next() {
 		var e Edge
-		if err := edgeRows.Scan(&e.ID, &e.SpaceID, &e.SourceID, &e.TargetID, &e.Relation, &e.Origin, &e.Confidence); err != nil {
+		if err := edgeRows.Scan(&e.ID, &e.SpaceID, &e.SourceID, &e.TargetID, &e.Relation, &e.Origin, &e.Confidence, &e.Reason); err != nil {
 			return nil, nil, err
 		}
 		edges = append(edges, e)
@@ -907,22 +918,71 @@ func (s *Store) createEdge(ctx context.Context, userID uuid.UUID, e Edge, origin
 	e.Relation = relation
 	e.Origin = origin
 	e.Confidence = nil
+	reason, err := ParseEdgeReason(e.Reason)
+	if err != nil {
+		return Edge{}, err
+	}
+	e.Reason = reason
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return Edge{}, err
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `
-		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,origin,created_by)
-		SELECT $1,$2,$3,$4,$6,$5
+		INSERT INTO note_edges(space_id,source_note_id,target_note_id,relation,origin,created_by,reason)
+		SELECT $1,$2,$3,$4,$6,$5,$7
 		WHERE EXISTS(SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$5 WHERE s.id=$1 AND (s.owner_id=$5 OR m.permission IN ('edit','manage')))
 		  AND EXISTS(SELECT 1 FROM notes WHERE id=$2 AND space_id=$1 AND deleted_at IS NULL)
 		  AND EXISTS(SELECT 1 FROM notes WHERE id=$3 AND space_id=$1 AND deleted_at IS NULL)
-		RETURNING id`, e.SpaceID, e.SourceID, e.TargetID, e.Relation, userID, e.Origin).Scan(&e.ID)
+		RETURNING id`, e.SpaceID, e.SourceID, e.TargetID, e.Relation, userID, e.Origin, e.Reason).Scan(&e.ID)
 	if err != nil {
 		return Edge{}, err
 	}
 	if err = s.AppendSpaceEvent(ctx, tx, userID, e.SpaceID, "edge.created", e.ID, e); err != nil {
+		return Edge{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Edge{}, err
+	}
+	return e, nil
+}
+
+// SetEdgeReason records, or clears, why a connection was drawn.
+//
+// Separate from creating the edge because that is when it is least likely to be
+// known. Someone drags a line because two thoughts belong together and works
+// out why afterwards; making them say so up front would either interrupt the
+// gesture or fill the column with sentences written to satisfy a prompt. The
+// reason has to be addable later or it will not be added at all.
+//
+// Edit permission, the same as drawing the line: this is part of the space's
+// content, and someone who may not change the space may not annotate it either.
+func (s *Store) SetEdgeReason(ctx context.Context, userID, edgeID uuid.UUID, reason string) (Edge, error) {
+	parsed, err := ParseEdgeReason(reason)
+	if err != nil {
+		return Edge{}, err
+	}
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return Edge{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var e Edge
+	err = tx.QueryRow(ctx, `
+		UPDATE note_edges e
+		SET reason=$3
+		WHERE e.id=$1
+		  AND EXISTS(
+		    SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2
+		    WHERE s.id=e.space_id AND (s.owner_id=$2 OR m.permission IN ('edit','manage')))
+		RETURNING e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation,e.origin,e.confidence,e.reason`,
+		edgeID, userID, parsed).
+		Scan(&e.ID, &e.SpaceID, &e.SourceID, &e.TargetID, &e.Relation, &e.Origin, &e.Confidence, &e.Reason)
+	if err != nil {
+		return Edge{}, err
+	}
+	if err = s.AppendSpaceEvent(ctx, tx, userID, e.SpaceID, "edge.updated", e.ID, e); err != nil {
 		return Edge{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {

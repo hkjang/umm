@@ -75,28 +75,7 @@ func fit(story *Storyline, max int) int {
 		return 0
 	}
 
-	// Ranked on a copy of the indexes, so the slides themselves never move.
-	order := make([]int, len(story.Slides))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(a, b int) bool {
-		x, y := story.Slides[order[a]], story.Slides[order[b]]
-		if keepAlways(x) != keepAlways(y) {
-			return keepAlways(x)
-		}
-		if wx, wy := weight(x), weight(y); wx != wy {
-			return wx > wy
-		}
-		// A tie goes to whichever comes first in the talk, so the opening
-		// survives a tie with the middle.
-		return order[a] < order[b]
-	})
-
-	keep := make([]bool, len(story.Slides))
-	for _, index := range order[:max] {
-		keep[index] = true
-	}
+	keep := choose(story.Slides, max)
 
 	kept := make([]Slide, 0, max)
 	removed := 0
@@ -111,4 +90,77 @@ func fit(story *Storyline, max int) int {
 	story.Slides = kept
 	story.TrimmedSlides += removed
 	return removed
+}
+
+// choose marks at most max slides to keep.
+//
+// Part headings are not ranked against the person's own slides. A heading
+// carries none of their words and quotes no thought, so weighing it against a
+// claim they built five thoughts around is comparing two different kinds of
+// thing — and the answer that comparison gives is the wrong one twice over: the
+// heading outlives the part it opens, and it spends a slot of the length asked
+// for on a title over nothing.
+//
+// So a heading is in the talk exactly when the part it opens still has a slide
+// in it, and the budget is spent on the person's slides. A part that keeps one
+// slide keeps its heading: a heading over one slide is thin, but dropping it
+// silently extends the part before it, which is a division nobody proposed.
+func choose(slides []Slide, max int) []bool {
+	// Ranked on a copy of the indexes, so the slides themselves never move.
+	order := make([]int, 0, len(slides))
+	for index, slide := range slides {
+		if !slide.Sectioned {
+			order = append(order, index)
+		}
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		x, y := slides[order[a]], slides[order[b]]
+		if keepAlways(x) != keepAlways(y) {
+			return keepAlways(x)
+		}
+		if wx, wy := weight(x), weight(y); wx != wy {
+			return wx > wy
+		}
+		// A tie goes to whichever comes first in the talk, so the opening
+		// survives a tie with the middle.
+		return order[a] < order[b]
+	})
+
+	keep := make([]bool, len(slides))
+	total := 0
+	for _, index := range order {
+		keep[index] = true
+		// Adding the first slide of a part adds its heading too, so a slide can
+		// cost two. One that does not fit is passed over rather than stopping
+		// the fill: what is left of the budget can still hold a slide in a part
+		// that is already open, and a length asked for should be used.
+		if total+1+len(openParts(slides, keep)) > max {
+			keep[index] = false
+			continue
+		}
+		total++
+	}
+	for _, index := range openParts(slides, keep) {
+		keep[index] = true
+	}
+	return keep
+}
+
+// openParts returns the indexes of the part headings that still have a slide
+// under them, given which of the person's slides are being kept.
+func openParts(slides []Slide, keep []bool) []int {
+	var open []int
+	for index, slide := range slides {
+		if !slide.Sectioned {
+			continue
+		}
+		// A part runs to the next heading, or to the end of the talk.
+		for under := index + 1; under < len(slides) && !slides[under].Sectioned; under++ {
+			if keep[under] {
+				open = append(open, index)
+				break
+			}
+		}
+	}
+	return open
 }

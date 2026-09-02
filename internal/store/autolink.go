@@ -314,8 +314,8 @@ func (s *Store) AcceptSuggestion(ctx context.Context, userID, edgeID uuid.UUID) 
 		  AND EXISTS(
 		    SELECT 1 FROM spaces s LEFT JOIN space_members m ON m.space_id=s.id AND m.user_id=$2
 		    WHERE s.id=e.space_id AND (s.owner_id=$2 OR m.permission IN ('edit','manage')))
-		RETURNING id,space_id,source_note_id,target_note_id,relation,origin,confidence`, edgeID, userID).
-		Scan(&edge.ID, &edge.SpaceID, &edge.SourceID, &edge.TargetID, &edge.Relation, &edge.Origin, &edge.Confidence)
+		RETURNING id,space_id,source_note_id,target_note_id,relation,origin,confidence,reason`, edgeID, userID).
+		Scan(&edge.ID, &edge.SpaceID, &edge.SourceID, &edge.TargetID, &edge.Relation, &edge.Origin, &edge.Confidence, &edge.Reason)
 	if err != nil {
 		return Edge{}, err
 	}
