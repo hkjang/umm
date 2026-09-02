@@ -41,6 +41,9 @@ type Link struct {
 	From, To uuid.UUID
 	Relation store.Relation
 	Origin   store.Origin
+	// Reason is why the connection was drawn, in the author's own words. Empty
+	// for most connections, and for every one drawn before umm could record it.
+	Reason string
 }
 
 // Role is what a slide is doing in the talk.
@@ -272,6 +275,11 @@ type related struct {
 	// hasPrev marks a thought something else leads into, so chains can be
 	// started only from their beginning.
 	hasPrev map[uuid.UUID]bool
+	// why[{a,b}] is the sentence someone wrote beside the connection between
+	// those two thoughts. Stored both ways round for a disagreement, which has
+	// no direction. Only their own words end up on a slide, so this is the one
+	// place a connection can speak on one.
+	why map[[2]uuid.UUID]string
 	// touched marks both ends of every link umm kept. The maps above are keyed
 	// by one side each, so neither of them answers "did the person say anything
 	// about this thought at all" — and that is the question that decides whether
@@ -292,6 +300,7 @@ func indexLinks(links []Link, byID map[uuid.UUID]Thought) related {
 		next:        map[uuid.UUID][]uuid.UUID{},
 		hasPrev:     map[uuid.UUID]bool{},
 		touched:     map[uuid.UUID]bool{},
+		why:         map[[2]uuid.UUID]string{},
 	}
 	for _, l := range links {
 		if _, ok := byID[l.From]; !ok {
@@ -304,6 +313,13 @@ func indexLinks(links []Link, byID map[uuid.UUID]Thought) related {
 		case store.RelationSupports, store.RelationRefines, store.RelationAnswers,
 			store.RelationContradicts, store.RelationFollows:
 			r.touched[l.From], r.touched[l.To] = true, true
+		}
+		if reason := strings.TrimSpace(l.Reason); reason != "" {
+			// Both ways round: a disagreement has no direction, and the slide
+			// that shows it is built from whichever side the compiler reached
+			// first.
+			r.why[[2]uuid.UUID{l.From, l.To}] = reason
+			r.why[[2]uuid.UUID{l.To, l.From}] = reason
 		}
 		switch l.Relation {
 		case store.RelationSupports:
@@ -428,6 +444,10 @@ func comparisonSlide(t Thought, rel related, byID map[uuid.UUID]Thought, consume
 		}
 		other := byID[id]
 		slide := Slide{Role: RoleComparison, Title: headline(t), From: []uuid.UUID{t.ID, other.ID}}
+		// Why they said these two disagree, if they said. It is their sentence,
+		// so it may go on a slide; and this is the slide where "why is this a
+		// disagreement" is the question an audience actually has.
+		slide.Lead = rel.why[[2]uuid.UUID{t.ID, other.ID}]
 		// The title is already this side of the disagreement, word for word, so
 		// repeating it as a point puts the same sentence on the slide twice.
 		// Dropped here rather than only when writing the source: the preview

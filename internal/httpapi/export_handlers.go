@@ -134,7 +134,15 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 			if e.Origin != store.OriginManual {
 				origin = fmt.Sprintf(" (%s)", e.Origin)
 			}
-			fmt.Fprintf(&out, "- `%s` --%s--> `%s`%s\n", e.SourceID, e.Relation, e.TargetID, origin)
+			// The why goes with the line. It is the part that disappears first
+			// from anybody's memory, so an export that kept the connection and
+			// dropped the reason would keep the half that can be reconstructed
+			// and lose the half that cannot.
+			reason := ""
+			if e.Reason != "" {
+				reason = " — " + strings.ReplaceAll(e.Reason, "\n", " ")
+			}
+			fmt.Fprintf(&out, "- `%s` --%s--> `%s`%s%s\n", e.SourceID, e.Relation, e.TargetID, origin, reason)
 		}
 	}
 	if len(branches) > 0 {

@@ -103,7 +103,8 @@ import {
   type ImportedDocument,
   type ImportThoughtsResult,
 } from '../lib/markdown-import';
-import { originLabel, relationLabel, relationOptions } from '../lib/edge-vocabulary';
+import BacklinkRow from '../components/BacklinkRow';
+import { relationLabel, relationOptions } from '../lib/edge-vocabulary';
 import { restoreAfterFailedWrite } from '../lib/optimistic-write';
 import ClusterNode, { type ClusterNodeData } from '../components/ClusterNode';
 import { showError, showInfo, showSuccess } from '../ui-notifications';
@@ -1089,7 +1090,7 @@ function CanvasInner() {
         if (!source || !target) continue;
         try {
           await api<ThoughtEdge>(`/spaces/${activeSpace}/edges`, {
-            ...json('POST', { source, target, relation: connection.relation }),
+            ...json('POST', { source, target, relation: connection.relation, reason: connection.reason ?? '' }),
             silent: true,
           });
           connected += 1;
@@ -2473,20 +2474,22 @@ function CanvasInner() {
               </Text>
               <Stack gap="xs" mt="xs">
                 {backlinks.map((item) => (
-                  <button
+                  <BacklinkRow
                     key={item.edge.id}
-                    className="related-row"
-                    onClick={() => flow.fitView({ nodes: [{ id: item.note.id }], duration: 500, padding: 0.8 })}
-                  >
-                    <Text lineClamp={2} ta="left">
-                      {item.note.title || item.note.content}
-                    </Text>
-                    <Text size="xs" c="dimmed" ta="left">
-                      {item.direction === 'incoming' ? t('이 생각을 가리킴') : t('이 생각이 가리킴')} ·{' '}
-                      {relationLabel(item.edge.relation)}
-                      {item.edge.origin && item.edge.origin !== 'manual' && ` · ${originLabel(item.edge.origin)}`}
-                    </Text>
-                  </button>
+                    edge={item.edge}
+                    title={item.note.title || item.note.content}
+                    direction={item.direction}
+                    readOnly={readOnly}
+                    onFocus={() => flow.fitView({ nodes: [{ id: item.note.id }], duration: 500, padding: 0.8 })}
+                    onSaved={(saved) => {
+                      setBacklinks((all) =>
+                        all.map((row) => (row.edge.id === saved.id ? { ...row, edge: saved } : row)),
+                      );
+                      // The canvas holds its own copy of every edge, and a deck
+                      // compiled from this space reads the reason off it.
+                      setRawEdges((all) => all.map((edge) => (edge.id === saved.id ? saved : edge)));
+                    }}
+                  />
                 ))}
               </Stack>
             </>

@@ -271,7 +271,8 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 	}
 	links := make([]Link, 0, len(edges))
 	for _, edge := range edges {
-		links = append(links, Link{From: edge.SourceID, To: edge.TargetID, Relation: edge.Relation, Origin: edge.Origin})
+		links = append(links, Link{From: edge.SourceID, To: edge.TargetID, Relation: edge.Relation,
+			Origin: edge.Origin, Reason: edge.Reason})
 	}
 
 	story := Compile(thoughts, links, Options{Title: title, Only: req.Only,

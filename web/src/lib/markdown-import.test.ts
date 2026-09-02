@@ -115,7 +115,7 @@ Exported from umm at 2026-08-26T16:01:02+09:00.
 
 ## Connections
 
-- \`f2543505-ca63-49a0-ba05-bd9d1cd37f13\` --related--> \`bfe3a64a-dfc4-4f41-af41-b95afb511003\`
+- \`f2543505-ca63-49a0-ba05-bd9d1cd37f13\` --related--> \`bfe3a64a-dfc4-4f41-af41-b95afb511003\` — 같은 회고록을 두 번 읽고 이었다
 ## Lines of thinking
 
 - **되돌리기 실험** — adopted: 되돌아왔습니다
@@ -300,8 +300,39 @@ describe('restoring a space rather than a list of sentences', () => {
         from: 'f2543505-ca63-49a0-ba05-bd9d1cd37f13',
         to: 'bfe3a64a-dfc4-4f41-af41-b95afb511003',
         relation: 'related',
+        reason: '같은 회고록을 두 번 읽고 이었다',
       },
     ]);
+  });
+
+  // The why is the half of a connection that disappears first from anybody's
+  // memory. A restore that brought the line back and left the reason in the
+  // file would return the part that can be reconstructed and lose the part
+  // that cannot.
+  it('brings back why a connection was drawn', () => {
+    const { connections } = readMarkdownDocument(ummExport);
+    expect(connections[0].reason).toBe('같은 회고록을 두 번 읽고 이었다');
+  });
+
+  // The origin says who made the connection, and a file may not claim it — the
+  // same rule the API enforces on a request body. It is read past, not into
+  // the reason.
+  it('reads past the origin without mistaking it for a reason', () => {
+    const withOrigin = ummExport.replace(
+      '--related--> `bfe3a64a-dfc4-4f41-af41-b95afb511003` —',
+      '--related--> `bfe3a64a-dfc4-4f41-af41-b95afb511003` (auto) —',
+    );
+    const { connections } = readMarkdownDocument(withOrigin);
+    expect(connections[0].reason).toBe('같은 회고록을 두 번 읽고 이었다');
+    expect(connections[0]).not.toHaveProperty('origin');
+  });
+
+  // Most connections have no reason, and an empty one must not come back as a
+  // reason made of nothing.
+  it('carries no reason for a connection nobody explained', () => {
+    const plain = ummExport.replace(' — 같은 회고록을 두 번 읽고 이었다', '');
+    const { connections } = readMarkdownDocument(plain);
+    expect(connections[0].reason).toBeUndefined();
   });
 
   // The ids in the Connections section have to be ids the thoughts actually

@@ -93,6 +93,15 @@ export interface ThoughtEdge {
   origin: EdgeOrigin;
   /** Present only on inferred edges; a drawn line carries no probability. */
   confidence?: number;
+  /**
+   * Why this connection was drawn, in the words of whoever drew it. The
+   * relation says what kind of connection it is; nothing else says why, and
+   * that is the half that disappears first.
+   *
+   * Empty is the normal case and means its author did not feel the need — not
+   * that a reason is missing. Never render it as an absence.
+   */
+  reason?: string;
 }
 
 /** Why a suggestion run produced what it did — including when it produced nothing. */

@@ -434,7 +434,7 @@ func (s *Service) MaterializeDevelopment(ctx context.Context, userID, dreamID uu
 	err = tx.QueryRow(ctx, `
 		SELECT n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
 		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at,
-		       e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation,e.origin,e.confidence
+		       e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation,e.origin,e.confidence,e.reason
 		FROM note_edges e
 		JOIN notes n ON n.id=e.target_note_id AND n.deleted_at IS NULL
 		WHERE e.space_id=$1 AND e.source_note_id=$2 AND e.relation='expands' AND e.origin='development'
@@ -446,7 +446,7 @@ func (s *Service) MaterializeDevelopment(ctx context.Context, userID, dreamID uu
 			&existing.Note.X, &existing.Note.Y, &existing.Note.Width, &existing.Note.Height, &existing.Note.Rotation,
 			&existing.Note.Version, &existing.Note.CreatedAt, &existing.Note.UpdatedAt,
 			&existing.Edge.ID, &existing.Edge.SpaceID, &existing.Edge.SourceID, &existing.Edge.TargetID, &existing.Edge.Relation,
-			&existing.Edge.Origin, &existing.Edge.Confidence)
+			&existing.Edge.Origin, &existing.Edge.Confidence, &existing.Edge.Reason)
 	if err == nil {
 		if err = tx.Commit(ctx); err != nil {
 			return DevelopmentMaterialization{}, err

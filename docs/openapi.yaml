@@ -865,6 +865,36 @@ paths:
       responses:
         '204': { description: Connection removed }
         '404': { $ref: '#/components/responses/Error' }
+  /edges/{edgeId}/reason:
+    put:
+      operationId: set_edge_reason
+      tags: [Notes]
+      summary: Record why a connection was drawn
+      description: |
+        Separate from creating the edge because that is when the reason is least
+        likely to be known: someone drags a line because two thoughts belong
+        together and works out why afterwards. A reason that could only be given
+        at the moment the line is drawn is one that mostly would not be given.
+
+        An empty or blank reason clears it, which is the normal state. Source,
+        target and relation are what the line is and cannot be changed here.
+        Requires edit or manage permission on the space, the same as drawing the
+        line: annotating a space is changing it.
+      parameters:
+        - { name: edgeId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason: { type: string, maxLength: 200 }
+      responses:
+        '200': { description: The connection, with its reason, content: { application/json: { schema: { $ref: '#/components/schemas/Edge' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /edges/{edgeId}/accept:
     post:
       operationId: accept_edge_suggestion
@@ -2098,6 +2128,23 @@ components:
             and an allowedRelations list rather than being rewritten, so a
             connection is never recorded that the caller did not describe.
             Provenance is not a request field: see Edge.origin.
+        reason:
+          type: string
+          maxLength: 200
+          description: |
+            Why this connection was drawn, in the author's own words. The
+            relation says what kind of connection it is; nothing else says why,
+            and that is the half that disappears first.
+
+            Optional, and usually empty here: someone draws a line because two
+            thoughts belong together and works out why afterwards, so it is
+            normally written later through PUT /edges/{edgeId}/reason. Empty
+            means the author did not feel the need rather than that a reason is
+            missing, and must never be rendered as an absence.
+
+            Past 200 characters the request is refused with 400 and a maxLength
+            rather than truncated: storing half of somebody's sentence is worse
+            than not storing it. The bound counts characters, not bytes.
     Branch:
       type: object
       required: [id, spaceId, name, status, resolution]

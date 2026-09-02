@@ -59,6 +59,17 @@ type edgeWriteRequest struct {
 	SourceID uuid.UUID       `json:"source"`
 	TargetID uuid.UUID       `json:"target"`
 	Relation string          `json:"relation"`
+	// Reason is why this connection was drawn, in the author's own words.
+	// Optional, and usually empty at this point: someone drags a line because
+	// two thoughts belong together and works out why afterwards.
+	Reason string `json:"reason"`
+}
+
+// edgeReasonRequest carries the sentence beside a connection, on its own,
+// because that is the only thing about an edge that can be changed after the
+// fact. Its source, target and meaning are what the line is.
+type edgeReasonRequest struct {
+	Reason string `json:"reason"`
 }
 
 func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
@@ -485,7 +496,7 @@ func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "연결 정보가 올바르지 않습니다.")
 		return
 	}
-	e := store.Edge{SourceID: body.SourceID, TargetID: body.TargetID, Relation: store.Relation(body.Relation)}
+	e := store.Edge{SourceID: body.SourceID, TargetID: body.TargetID, Relation: store.Relation(body.Relation), Reason: body.Reason}
 	e.ID = uuid.Nil
 	e.SpaceID = spaceID
 	p := principal(r)
@@ -497,6 +508,10 @@ func (s *Server) createEdge(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, r, http.StatusBadRequest, "unknown-edge-relation", "연결 종류가 올바르지 않습니다",
 				"umm이 아는 연결 종류가 아닙니다. allowedRelations 중에서 선택해 주세요.",
 				map[string]any{"allowedRelations": store.Relations()})
+			return
+		}
+		if errors.Is(err, store.ErrEdgeReasonTooLong) {
+			writeEdgeReasonTooLong(w, r)
 			return
 		}
 		status := createEdgeErrorStatus(err)
@@ -701,6 +716,12 @@ func (s *Server) suggestLinks(w http.ResponseWriter, r *http.Request) {
 
 // acceptSuggestion records that a person stands behind an inferred connection.
 func (s *Server) acceptSuggestion(w http.ResponseWriter, r *http.Request) {
+	// Accepting a suggestion writes a line into the graph, so it is a write.
+	// It went without this check while creating and deleting notes had one,
+	// which let a notes:read key turn umm's guesses into edges.
+	if !requireScope(w, r, "notes:write") {
+		return
+	}
 	edgeID, ok := parseID(w, r, "edgeID")
 	if !ok {
 		return
@@ -721,7 +742,57 @@ func (s *Server) acceptSuggestion(w http.ResponseWriter, r *http.Request) {
 
 // deleteEdge removes a connection: how a suggestion is dismissed, and the only
 // way any edge can be removed.
+// writeEdgeReasonTooLong says what the limit is rather than only that one was
+// exceeded. Someone who typed two hundred and ten characters needs to know how
+// much to cut, and the reason is refused rather than truncated: storing half of
+// somebody's sentence is worse than not storing it.
+func writeEdgeReasonTooLong(w http.ResponseWriter, r *http.Request) {
+	writeProblem(w, r, http.StatusBadRequest, "edge-reason-too-long", "연결 이유가 너무 깁니다",
+		"연결 옆에 적는 한 줄입니다. 더 길게 쓸 내용은 생각으로 남겨 주세요.",
+		map[string]any{"maxLength": store.MaxEdgeReason})
+}
+
+// setEdgeReason records, or clears, why a connection was drawn.
+//
+// Separate from creating the edge because that is when it is least likely to be
+// known. A reason that can only be given at the moment the line is drawn is one
+// that mostly does not get given.
+func (s *Server) setEdgeReason(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:write") {
+		return
+	}
+	edgeID, ok := parseID(w, r, "edgeID")
+	if !ok {
+		return
+	}
+	var body edgeReasonRequest
+	if decodeJSON(w, r, &body) != nil {
+		return
+	}
+	p := principal(r)
+	edge, err := s.Store.SetEdgeReason(r.Context(), p.User.ID, edgeID, body.Reason)
+	if err != nil {
+		if errors.Is(err, store.ErrEdgeReasonTooLong) {
+			writeEdgeReasonTooLong(w, r)
+			return
+		}
+		if notFound(err) {
+			writeError(w, 404, "연결을 찾을 수 없습니다.")
+			return
+		}
+		slog.Warn("set edge reason failed", "edge_id", edgeID, "user_id", p.User.ID, "error", err)
+		writeError(w, 500, "연결 이유를 저장하지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, edge)
+}
+
 func (s *Server) deleteEdge(w http.ResponseWriter, r *http.Request) {
+	// Same gap as accepting a suggestion: removing a line somebody drew is a
+	// write, and a key that may only read must not be able to do it.
+	if !requireScope(w, r, "notes:write") {
+		return
+	}
 	edgeID, ok := parseID(w, r, "edgeID")
 	if !ok {
 		return

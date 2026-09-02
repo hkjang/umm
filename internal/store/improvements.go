@@ -169,7 +169,7 @@ func (s *Store) noteViewAccess(ctx context.Context, userID, noteID uuid.UUID) (b
 }
 func (s *Store) Backlinks(ctx context.Context, userID, noteID uuid.UUID) ([]Backlink, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation,e.origin,e.confidence,
+		SELECT e.id,e.space_id,e.source_note_id,e.target_note_id,e.relation,e.origin,e.confidence,e.reason,
 		       n.id,n.space_id,n.author_id,n.content,n.title,n.color,n.kind,n.source,n.ai_excluded,
 		       n.x,n.y,n.width,n.height,n.rotation,n.version,n.created_at,n.updated_at,
 		       CASE WHEN e.target_note_id=$1 THEN 'incoming' ELSE 'outgoing' END
@@ -191,7 +191,7 @@ func (s *Store) Backlinks(ctx context.Context, userID, noteID uuid.UUID) ([]Back
 	for rows.Next() {
 		var item Backlink
 		if err := rows.Scan(&item.Edge.ID, &item.Edge.SpaceID, &item.Edge.SourceID, &item.Edge.TargetID, &item.Edge.Relation,
-			&item.Edge.Origin, &item.Edge.Confidence,
+			&item.Edge.Origin, &item.Edge.Confidence, &item.Edge.Reason,
 			&item.Note.ID, &item.Note.SpaceID, &item.Note.AuthorID, &item.Note.Content, &item.Note.Title, &item.Note.Color,
 			&item.Note.Kind, &item.Note.Source, &item.Note.AIExcluded, &item.Note.X, &item.Note.Y, &item.Note.Width,
 			&item.Note.Height, &item.Note.Rotation, &item.Note.Version, &item.Note.CreatedAt, &item.Note.UpdatedAt, &item.Direction); err != nil {

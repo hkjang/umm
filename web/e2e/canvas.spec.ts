@@ -386,4 +386,68 @@ test.describe('canvas', () => {
     await expect(page.getByText('생각이 사라진 것이 아니라 가져오지 못한 것입니다.')).toBeVisible();
     await expect(page.getByText('여기 아무 곳이나 더블클릭 해보세요.')).toHaveCount(0);
   });
+
+  /**
+   * Why a connection was drawn, written after the fact.
+   *
+   * Checked in a browser because reachability is the only thing a browser can
+   * settle: the store and the API can both be right while the panel has no way
+   * in — which is exactly what happened to lines of thinking for three
+   * releases. The reason is deliberately not asked for while the line is being
+   * drawn, so the only place it can be given is this panel.
+   */
+  test('records why a connection was drawn, after it was drawn', async ({ page }) => {
+    const marker = unique('이유');
+    const made = await page.evaluate(async (name) => {
+      const post = async (path: string, body: unknown) =>
+        (
+          await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          })
+        ).json();
+      const space = await post('/api/v1/spaces', { name: `${name}-공간` });
+      const claim = await post(`/api/v1/spaces/${space.id}/notes`, { content: `${name} 격주로 줄이자`, x: 0, y: 0 });
+      const evidence = await post(`/api/v1/spaces/${space.id}/notes`, {
+        content: `${name} 논의가 얕아진다`,
+        x: 600,
+        y: 0,
+      });
+      // Drawn with no reason, the way every connection starts.
+      await post(`/api/v1/spaces/${space.id}/edges`, {
+        source: evidence.id,
+        target: claim.id,
+        relation: 'supports',
+      });
+      return { space: space.id, claim: claim.id as string };
+    }, marker);
+
+    await page.goto(`/space/${made.space}`);
+    await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+
+    const card = page.getByRole('group', { name: new RegExp(`${marker} 격주로 줄이자`) }).first();
+    await card.getByRole('button', { name: '메모 메뉴' }).click();
+    await page.getByRole('menuitem', { name: '연결과 갈래' }).click();
+
+    // A connection nobody explained says nothing about a missing reason; it
+    // offers a way to give one.
+    await expect(page.getByText(/^왜:/)).toHaveCount(0);
+    await page.getByRole('button', { name: '왜 이었는지 적기' }).click();
+
+    const why = `${marker} 지난 두 분기 회고록이 같은 안건을 다시 올렸다`;
+    await page.getByPlaceholder('왜 이었는지 한 줄').fill(why);
+    await page.getByRole('button', { name: '저장' }).click();
+
+    await expect(page.getByText(why)).toBeVisible();
+
+    // And it is on the connection rather than on the screen: reload, reopen,
+    // and it is still there.
+    await page.reload();
+    await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
+    const again = page.getByRole('group', { name: new RegExp(`${marker} 격주로 줄이자`) }).first();
+    await again.getByRole('button', { name: '메모 메뉴' }).click();
+    await page.getByRole('menuitem', { name: '연결과 갈래' }).click();
+    await expect(page.getByText(why)).toBeVisible();
+  });
 });

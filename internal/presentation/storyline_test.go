@@ -436,3 +436,70 @@ func TestALongLineWithNoSentenceEndIsCutAtAWord(t *testing.T) {
 		t.Fatalf("heading is %d runes: %q", len([]rune(got)), got)
 	}
 }
+
+// Why they said two thoughts disagree belongs on the slide that shows the
+// disagreement — it is the question an audience actually has there, and it is
+// the person's own sentence, so putting it on a slide breaks no rule.
+func TestComparisonSlideCarriesWhyTheyDisagree(t *testing.T) {
+	const why = "같은 분기 수치를 서로 다르게 읽고 있다"
+	thoughts := []Thought{
+		{ID: id(1), Content: "회고를 격주로 줄이자", X: 0},
+		{ID: id(2), Content: "주기가 짧으면 논의가 얕아진다", X: 400},
+	}
+	links := []Link{{From: id(2), To: id(1), Relation: store.RelationContradicts,
+		Origin: store.OriginManual, Reason: why}}
+
+	story := Compile(thoughts, links, Options{Title: "회고"})
+	var comparison *Slide
+	for i := range story.Slides {
+		if story.Slides[i].Role == RoleComparison {
+			comparison = &story.Slides[i]
+		}
+	}
+	if comparison == nil {
+		t.Fatalf("no comparison slide: %v", titles(story))
+	}
+	if comparison.Lead != why {
+		t.Fatalf("the comparison slide reads %q, want the author's own %q", comparison.Lead, why)
+	}
+	// Both sides are still on it, word for word. The first side is the slide's
+	// title — repeating it as a point would put the same sentence on twice —
+	// so the other side is what has to be among the points.
+	if len(comparison.From) != 2 {
+		t.Fatalf("the slide no longer quotes both sides: %+v", comparison.From)
+	}
+	other := false
+	for _, point := range comparison.Points {
+		if point.Text == "주기가 짧으면 논의가 얕아진다" {
+			other = true
+		}
+	}
+	if !other {
+		t.Fatalf("the reason displaced a side of the disagreement: %+v", comparison.Points)
+	}
+
+	// A disagreement has no direction, so it must not matter which side the
+	// compiler reached first.
+	reversed := Compile(thoughts, []Link{{From: id(1), To: id(2),
+		Relation: store.RelationContradicts, Origin: store.OriginManual, Reason: why}}, Options{Title: "회고"})
+	for _, slide := range reversed.Slides {
+		if slide.Role == RoleComparison && slide.Lead != why {
+			t.Fatalf("drawn the other way round, the reason was lost: %q", slide.Lead)
+		}
+	}
+}
+
+// A connection nobody explained must not make the slide claim one was given.
+func TestComparisonSlideSaysNothingWhenNobodyExplained(t *testing.T) {
+	story := Compile([]Thought{
+		{ID: id(1), Content: "회고를 격주로 줄이자", X: 0},
+		{ID: id(2), Content: "주기가 짧으면 논의가 얕아진다", X: 400},
+	}, []Link{{From: id(2), To: id(1), Relation: store.RelationContradicts, Origin: store.OriginManual}},
+		Options{Title: "회고"})
+
+	for _, slide := range story.Slides {
+		if slide.Role == RoleComparison && slide.Lead != "" {
+			t.Fatalf("an unexplained disagreement came with the lead %q", slide.Lead)
+		}
+	}
+}

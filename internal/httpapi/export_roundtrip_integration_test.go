@@ -52,8 +52,8 @@ func TestMarkdownExportKeepsTheShapeTheImporterReadsIntegration(t *testing.T) {
 		titled, untitled, linked, spaceID, userID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Pool.Exec(ctx, `INSERT INTO note_edges(id,space_id,source_note_id,target_note_id,relation,created_by) VALUES($1,$2,$3,$4,'related',$5)`,
-		uuid.New(), spaceID, titled, linked, userID); err != nil {
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO note_edges(id,space_id,source_note_id,target_note_id,relation,created_by,reason) VALUES($1,$2,$3,$4,'related',$5,$6)`,
+		uuid.New(), spaceID, titled, linked, userID, exportedReason); err != nil {
 		t.Fatal(err)
 	}
 	branch, err := db.CreateBranch(ctx, userID, spaceID, "되돌리기 실험", nil)
@@ -150,4 +150,27 @@ func TestMarkdownExportKeepsTheShapeTheImporterReadsIntegration(t *testing.T) {
 	if !strings.Contains(body, "## 제목이 있는 생각") {
 		t.Errorf("a titled thought lost its title:\n%s", body)
 	}
+
+	// The why behind a connection is the half that disappears first from
+	// anybody's memory and the half a file is actually good at keeping. An
+	// export that kept the line and dropped the reason would keep the part that
+	// can be reconstructed and lose the part that cannot.
+	if !strings.Contains(body, "— "+exportedReason) {
+		connections := body[strings.Index(body, "## Connections"):]
+		t.Errorf("the export dropped why the connection was drawn:\n%s", connections)
+	}
+	// In the shape the importer reads: the reason follows the connection on its
+	// own line, after an em dash.
+	connectionLine := regexp.MustCompile("(?m)^-\\s+`[^`]+`\\s*--[a-z_-]+-->\\s*`[^`]+`(?:\\s*\\([a-z_-]+\\))?(?:\\s*—\\s*(.*))?$")
+	match := connectionLine.FindStringSubmatch(body)
+	if match == nil {
+		t.Fatalf("no connection line in the shape web/src/lib/markdown-import.ts parses:\n%s", body)
+	}
+	if strings.TrimSpace(match[1]) != exportedReason {
+		t.Errorf("the importer's pattern reads the reason as %q, want %q", match[1], exportedReason)
+	}
 }
+
+// exportedReason is deliberately a sentence with a space and Korean in it: a
+// reason written down is prose, not an identifier.
+const exportedReason = "같은 회고록을 두 번 읽고 이었다"
