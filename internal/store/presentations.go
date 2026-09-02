@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -72,6 +73,16 @@ type PresentationLink struct {
 	// held out of analysis.
 	TrimmedCount int        `json:"trimmedCount"`
 	CreatedBy    *uuid.UUID `json:"createdBy,omitempty"`
+	// Request is what the person asked for when they made this deck — the
+	// selection, the length cap, the switches — as the compiler wrote it.
+	// Opaque here, like the Ptium id: the store keeps it so that retrying into
+	// a deck that failed can ask for the same talk again, and the compiler owns
+	// what the shape means.
+	//
+	// Read back only where a retry needs it. A list of a space's talks does not
+	// carry it, and neither does a response: it is the compiler's record of a
+	// past request, not a field of the deck somebody is looking at.
+	Request json.RawMessage `json:"-"`
 }
 
 // SlideSource is one thought that reached one slide.
@@ -83,27 +94,36 @@ type SlideSource struct {
 	NoteID        uuid.UUID `json:"noteId"`
 }
 
-// CreatePresentationLink records that a space produced a deck.
+// CreatePresentationLink records that a space produced a deck, and what was
+// asked for to produce it.
 //
 // Written before the deck is compiled, so a compile that fails leaves a link
-// saying so rather than leaving a deck in Ptium that umm has no record of.
-func (s *Store) CreatePresentationLink(ctx context.Context, userID, spaceID uuid.UUID, ptiumID, title string) (PresentationLink, error) {
+// saying so rather than leaving a deck in Ptium that umm has no record of. The
+// request is written here for the same reason: by the time somebody retries,
+// the one that failed is gone, and a retry that has to guess at it makes a
+// different talk.
+func (s *Store) CreatePresentationLink(ctx context.Context, userID, spaceID uuid.UUID, ptiumID, title string, request json.RawMessage) (PresentationLink, error) {
 	ptiumID = strings.TrimSpace(ptiumID)
 	if ptiumID == "" {
 		return PresentationLink{}, errors.New("ptium presentation id required")
 	}
+	if len(request) == 0 {
+		// A caller with nothing to record leaves the same mark as every row
+		// written before umm kept this: asked for nothing in particular.
+		request = json.RawMessage("{}")
+	}
 	var link PresentationLink
 	err := s.Pool.QueryRow(ctx, `
-		INSERT INTO presentation_links(space_id,ptium_presentation_id,title,created_by)
-		SELECT $1,$3,$4,$2
+		INSERT INTO presentation_links(space_id,ptium_presentation_id,title,created_by,request)
+		SELECT $1,$3,$4,$2,$5
 		WHERE EXISTS(
 			SELECT 1 FROM spaces sp
 			LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
 			WHERE sp.id=$1 AND (sp.owner_id=$2 OR m.permission IN ('edit','manage')))
-		RETURNING id,space_id,ptium_presentation_id,title,status,error,failure_kind,thought_count,excluded_count,trimmed_count,created_by`,
-		spaceID, userID, ptiumID, strings.TrimSpace(title)).
+		RETURNING id,space_id,ptium_presentation_id,title,status,error,failure_kind,thought_count,excluded_count,trimmed_count,created_by,request`,
+		spaceID, userID, ptiumID, strings.TrimSpace(title), request).
 		Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status, &link.Error, &link.FailureKind,
-			&link.ThoughtCount, &link.ExcludedCount, &link.TrimmedCount, &link.CreatedBy)
+			&link.ThoughtCount, &link.ExcludedCount, &link.TrimmedCount, &link.CreatedBy, &link.Request)
 	if err != nil {
 		return PresentationLink{}, err
 	}
@@ -381,18 +401,22 @@ func (s *Store) StaleCounts(ctx context.Context, userID, spaceID uuid.UUID) (map
 // Only a failed one: a deck that compiled is not something to re-apply source
 // to behind its owner's back, and a pending one is a compile still running.
 // Permission is the same as writing, because this leads to changing a deck.
+//
+// The request comes with it. This is the one read that needs it: retrying is
+// asking for the same talk again, and without it a retry asks for a different
+// one.
 func (s *Store) FailedPresentationLink(ctx context.Context, userID, linkID uuid.UUID) (PresentationLink, error) {
 	var link PresentationLink
 	err := s.Pool.QueryRow(ctx, `
 		SELECT l.id,l.space_id,l.ptium_presentation_id,l.title,l.status,l.error,l.failure_kind,
-		       l.thought_count,l.excluded_count,l.trimmed_count,l.created_by
+		       l.thought_count,l.excluded_count,l.trimmed_count,l.created_by,l.request
 		FROM presentation_links l
 		JOIN spaces sp ON sp.id=l.space_id
 		LEFT JOIN space_members m ON m.space_id=sp.id AND m.user_id=$2
 		WHERE l.id=$1 AND l.status=$3
 		  AND (sp.owner_id=$2 OR m.permission IN ('edit','manage'))`, linkID, userID, PresentationFailed).
 		Scan(&link.ID, &link.SpaceID, &link.PtiumID, &link.Title, &link.Status, &link.Error, &link.FailureKind,
-			&link.ThoughtCount, &link.ExcludedCount, &link.TrimmedCount, &link.CreatedBy)
+			&link.ThoughtCount, &link.ExcludedCount, &link.TrimmedCount, &link.CreatedBy, &link.Request)
 	if err != nil {
 		return PresentationLink{}, err
 	}
