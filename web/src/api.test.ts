@@ -16,6 +16,12 @@ const jsonResponse = (status: number, body: unknown) =>
 const throwStorageDenied = () => {
   throw new DOMException('storage denied', 'SecurityError');
 };
+// Resolves with the outcome of the next flush, whoever started it. A scheduled
+// retry is nobody's promise to await, and it reports itself here.
+const nextOfflineSync = () =>
+  new Promise<{ synced: number; remaining: number }>((resolve) => {
+    window.addEventListener('umm:offline-sync', (event) => resolve((event as CustomEvent).detail), { once: true });
+  });
 
 describe('problemMessage', () => {
   beforeEach(() => setLocale('en'));
@@ -41,9 +47,12 @@ describe('problemMessage', () => {
 describe('offline queue', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     localStorage.clear();
     await setOfflineQueueOwner('user-1');
   });
+
+  afterEach(() => vi.useRealTimers());
 
   it('queues a mutation when the network is unreachable', async () => {
     vi.stubGlobal(
@@ -302,6 +311,88 @@ describe('offline queue', () => {
     window.removeEventListener('umm:offline-conflict', listener);
     expect(result.remaining).toBe(1);
     expect(conflicts).toHaveLength(0);
+  });
+
+  // Nothing else brings the flush back: the reservation clears in another tab
+  // or another request, which raises no browser event, so without a timer the
+  // change waits under a banner for a connection the reader already has.
+  it('comes back on its own after an in-progress reservation', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('network down'))),
+    );
+    await api('/notes/n1', { method: 'PUT', body: '{"content":"x"}', queueIfOffline: true, silent: true }).catch(
+      () => undefined,
+    );
+    const replay = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(409, { type: 'https://umm.local/problems/idempotency-in-progress' }))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', replay);
+    vi.useFakeTimers();
+
+    expect(await flushOfflineQueue()).toEqual({ synced: 0, remaining: 1 });
+    const retried = nextOfflineSync();
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(await retried).toEqual({ synced: 1, remaining: 0 });
+    expect(replay).toHaveBeenCalledTimes(2);
+    expect(offlineQueueCount()).toBe(0);
+  });
+
+  // A request that throws while the browser still reports a connection is a
+  // server or a network that faltered without the browser noticing, so no
+  // `online` event will ever arrive to restart the flush.
+  it('comes back on its own after a request failed with the connection intact', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('network down'))),
+    );
+    await api('/notes/n1', { method: 'PUT', body: '{"content":"x"}', queueIfOffline: true, silent: true }).catch(
+      () => undefined,
+    );
+    const replay = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('connection reset'))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true }));
+    vi.stubGlobal('fetch', replay);
+    vi.useFakeTimers();
+
+    expect(await flushOfflineQueue()).toEqual({ synced: 0, remaining: 1 });
+    const retried = nextOfflineSync();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(await retried).toEqual({ synced: 1, remaining: 0 });
+    expect(offlineQueueCount()).toBe(0);
+  });
+
+  // Replaying a conflicted change answers 409 for as long as it is queued, and
+  // every repeat reopens the merge dialog over whatever the person had typed.
+  it('holds a change whose conflict the reader is already deciding', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('network down'))),
+    );
+    await api('/notes/n1', { method: 'PUT', body: '{"content":"mine"}', queueIfOffline: true, silent: true }).catch(
+      () => undefined,
+    );
+    const conflicts: Event[] = [];
+    const listener = (event: Event) => conflicts.push(event);
+    window.addEventListener('umm:offline-conflict', listener);
+    const replay = vi.fn(() => Promise.resolve(jsonResponse(409, { detail: 'conflict' })));
+    vi.stubGlobal('fetch', replay);
+
+    expect((await flushOfflineQueue()).remaining).toBe(1);
+    expect((await flushOfflineQueue()).remaining).toBe(1);
+    window.removeEventListener('umm:offline-conflict', listener);
+
+    expect(replay).toHaveBeenCalledTimes(1);
+    expect(conflicts).toHaveLength(1);
+
+    // Deciding, either way, discards the mutation and releases the hold.
+    const mutationID = (conflicts[0] as CustomEvent).detail.item.id;
+    await discardOfflineMutation(mutationID);
+    expect(offlineQueueCount()).toBe(0);
   });
 
   it('attaches an idempotency key so a retry cannot duplicate the change', async () => {
