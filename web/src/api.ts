@@ -525,7 +525,8 @@ export interface FlushResult {
 let inFlightFlush: Promise<FlushResult> | undefined;
 
 /**
- * Mutations whose version conflict has already been put in front of the reader.
+ * Mutations whose version conflict has already been put in front of the reader,
+ * each held with the event that describes it.
  *
  * A conflict is a decision, not a delay. The queued change carries the version
  * it was written against, so replaying it answers 409 for as long as it exists
@@ -533,8 +534,31 @@ let inFlightFlush: Promise<FlushResult> | undefined;
  * throws away whatever the person had typed into it. So a change that raised a
  * conflict is held, counted and left alone until they choose; resolving it,
  * whichever way, discards the mutation and takes it out of here.
+ *
+ * Keeping the event, not just the id, is what keeps that decision reachable.
+ * `umm:offline-conflict` is raised once, and the only screen that answers it is
+ * the canvas — which may be closed, or showing another space, at that moment.
+ * Nobody hears it, nothing raises it again, and the change sits in the queue
+ * for good: skipped by every flush, and reported by the banner as waiting for a
+ * connection the reader already has. `replayOfflineConflicts` asks again.
  */
-const raisedConflicts = new Set<string>();
+const raisedConflicts = new Map<string, { item: OfflineMutation; payload: Record<string, any> }>();
+
+/** How many queued changes are held on a decision rather than on a connection. */
+export const offlineConflictCount = () => raisedConflicts.size;
+
+/**
+ * Raise every held conflict again, for a screen that can show it now.
+ *
+ * Safe to call whenever such a screen appears: it sends no request, so a change
+ * already answered 409 is not asked about again on the server, and a listener
+ * that is deciding one conflict ignores the rest.
+ */
+export function replayOfflineConflicts(): number {
+  for (const detail of raisedConflicts.values())
+    window.dispatchEvent(new CustomEvent('umm:offline-conflict', { detail }));
+  return raisedConflicts.size;
+}
 
 export function flushOfflineQueue(): Promise<FlushResult> {
   inFlightFlush ??= runFlush().finally(() => {
@@ -579,7 +603,7 @@ async function runFlush(): Promise<FlushResult> {
           retryAfterSeconds = Math.max(retryAfterSeconds, inProgressRetrySeconds);
           continue;
         }
-        raisedConflicts.add(item.id);
+        raisedConflicts.set(item.id, { item, payload });
         window.dispatchEvent(new CustomEvent('umm:offline-conflict', { detail: { item, payload } }));
         continue;
       }
@@ -637,7 +661,7 @@ async function runFlush(): Promise<FlushResult> {
   // A change that left the queue — resolved, discarded, or coalesced away — has
   // no conflict left to hold.
   const reconciledIDs = new Set(reconciled.map((item) => item.id));
-  for (const id of raisedConflicts) if (!reconciledIDs.has(id)) raisedConflicts.delete(id);
+  for (const id of raisedConflicts.keys()) if (!reconciledIDs.has(id)) raisedConflicts.delete(id);
   if (persistence.saved && navigator.onLine && reconciled.length > 0) {
     if (retryAfterSeconds > 0) scheduleOfflineRetry(retryAfterSeconds);
     else if (addedDuringFlush) scheduleOfflineRetry(1);
