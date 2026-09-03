@@ -361,10 +361,17 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 			// which means dividing a long talk into parts costs content slides
 			// — that is what asking for a length means.
 			if fit(&story, req.MaxSlides) > 0 {
-				// And then the deck is divided into however many parts are
-				// still in it. "AI가 3개 부로 나눴습니다" over a deck holding two
-				// headings is the same deck saying two different things.
+				// And then the deck says what is still in it. "AI가 3개 부로
+				// 나눴습니다" over a deck holding two headings, or "묶음 제목
+				// 15개를 AI가 지었습니다" over twelve, is the same deck saying
+				// two different things — and these two counts are the whole of
+				// what tells a person how much of the shape is the model's, so
+				// the numbers they cannot check themselves are the ones that
+				// have to be right. Recounted from the slides rather than
+				// adjusted by the cut, because the cut does not know which of
+				// the slides it dropped a model had touched.
 				story.Sections = story.parts()
+				story.NamedHeadings = story.named()
 			}
 		}
 	}
@@ -456,6 +463,18 @@ func (s Storyline) parts() int {
 	count := 0
 	for _, slide := range s.Slides {
 		if slide.Sectioned {
+			count++
+		}
+	}
+	return count
+}
+
+// named is how many headings in the deck as it stands were proposed by a model
+// rather than derived from the person's own words.
+func (s Storyline) named() int {
+	count := 0
+	for _, slide := range s.Slides {
+		if slide.Named {
 			count++
 		}
 	}
