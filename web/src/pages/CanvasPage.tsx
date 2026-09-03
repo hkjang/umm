@@ -75,6 +75,7 @@ import {
   api,
   discardOfflineMutation,
   json,
+  replayOfflineConflicts,
   type EdgeStyle,
   type NoteComment,
   type Preferences,
@@ -320,6 +321,9 @@ function CanvasInner() {
   const [commentBusy, setCommentBusy] = useState(false);
   const [conflict, setConflict] = useState<{ local: ThoughtNote; latest: ThoughtNote; offlineMutationId?: string }>();
   const [mergeDraft, setMergeDraft] = useState('');
+  // Read by the conflict listener below, which is registered once per space and
+  // would otherwise see whatever `conflict` was when it was registered.
+  const decidingRef = useRef(false);
   const [importOpen, setImportOpen] = useState(false);
   const [presentationOpen, setPresentationOpen] = useState(false);
   // Captured when the modal opens rather than read from it, so the deck matches
@@ -713,6 +717,11 @@ function CanvasInner() {
       const detail = (event as CustomEvent).detail;
       const latest = detail?.payload?.latest as ThoughtNote | undefined;
       if (!latest || latest.spaceId !== activeSpace) return;
+      // One decision at a time. A second conflict — or the same one asked
+      // again — would replace the comparison on screen and the text being
+      // typed into it; it stays held in the queue and is asked again after
+      // this one is answered.
+      if (decidingRef.current) return;
       let queued: Partial<ThoughtNote> = {};
       try {
         queued = JSON.parse(detail?.item?.body || '{}');
@@ -733,6 +742,27 @@ function CanvasInner() {
       window.removeEventListener('umm:offline-conflict', offlineConflict);
     };
   }, [activeSpace, loadCanvas]);
+
+  /*
+   * Ask again about a conflict nobody was there to hear.
+   *
+   * `umm:offline-conflict` is raised once, and this is the only screen that
+   * answers it — while a flush runs from the banner, on any page, for any
+   * space. Raised with the canvas closed or another space open, the decision
+   * reached no one, and the change would sit in the queue for good: skipped by
+   * every flush, and reported as waiting for a connection that is already
+   * there. Opening a space is the moment its held conflicts can be shown.
+   *
+   * Keyed on the space alone, so dismissing the dialog leaves it dismissed. The
+   * banner's own button is how a reader comes back to it.
+   */
+  useEffect(() => {
+    if (activeSpace) replayOfflineConflicts();
+  }, [activeSpace]);
+
+  useEffect(() => {
+    decidingRef.current = !!conflict;
+  }, [conflict]);
 
   const searchTerms = useMemo(() => normalizeSearch(query).split(/\s+/).filter(Boolean), [query]);
   const searchMatches = useMemo(

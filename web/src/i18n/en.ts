@@ -42,6 +42,8 @@ export const en: Dictionary = {
   '오프라인 변경 동기화 중': 'Syncing offline changes',
   '{count}개 변경이 연결을 기다리는 중': '{count} changes waiting for a connection',
   '오프라인 · {count}개 변경을 안전하게 보관 중': 'Offline · {count} changes held safely',
+  '{count}개 변경이 겹침 해결을 기다리는 중': '{count} changes waiting on your merge decision',
+  '겹침 확인': 'Review',
   '지금 동기화': 'Sync now',
   '오프라인 보관함이 100개로 가득 찼습니다. 연결 후 동기화를 완료하고 다시 시도해 주세요.':
     'The offline queue is full at 100 items. Reconnect, finish syncing, and try again.',

@@ -4,8 +4,10 @@ import {
   APIError,
   discardOfflineMutation,
   flushOfflineQueue,
+  offlineConflictCount,
   offlineQueueCount,
   problemMessage,
+  replayOfflineConflicts,
   setOfflineQueueOwner,
 } from './api';
 import { setLocale } from './i18n/translate';
@@ -389,10 +391,48 @@ describe('offline queue', () => {
     expect(replay).toHaveBeenCalledTimes(1);
     expect(conflicts).toHaveLength(1);
 
+    // Held on a decision, not on a connection, and counted as such.
+    expect(offlineConflictCount()).toBe(1);
+
     // Deciding, either way, discards the mutation and releases the hold.
     const mutationID = (conflicts[0] as CustomEvent).detail.item.id;
     await discardOfflineMutation(mutationID);
     expect(offlineQueueCount()).toBe(0);
+    expect(offlineConflictCount()).toBe(0);
+  });
+
+  // The conflict is raised once, and the screen that answers it may be closed
+  // or showing another space at that moment. Nothing else asks again, so the
+  // held change would never be decided — and never leave the queue.
+  it('asks again about a conflict nobody was listening for', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('network down'))),
+    );
+    await api('/notes/n1', { method: 'PUT', body: '{"content":"mine"}', queueIfOffline: true, silent: true }).catch(
+      () => undefined,
+    );
+    const replay = vi.fn(() => Promise.resolve(jsonResponse(409, { detail: 'conflict', latest: { id: 'n1' } })));
+    vi.stubGlobal('fetch', replay);
+    await flushOfflineQueue();
+
+    // The screen arrives after the conflict was raised.
+    const conflicts: Event[] = [];
+    const listener = (event: Event) => conflicts.push(event);
+    window.addEventListener('umm:offline-conflict', listener);
+    expect(replayOfflineConflicts()).toBe(1);
+    window.removeEventListener('umm:offline-conflict', listener);
+
+    expect(conflicts).toHaveLength(1);
+    const detail = (conflicts[0] as CustomEvent).detail;
+    expect(detail.item.path).toBe('/notes/n1');
+    expect(detail.payload.latest).toEqual({ id: 'n1' });
+    // Asking again is a question for the reader, not another request: the
+    // server has already answered this one, and would answer it the same way.
+    expect(replay).toHaveBeenCalledTimes(1);
+
+    await discardOfflineMutation(detail.item.id);
+    expect(replayOfflineConflicts()).toBe(0);
   });
 
   it('attaches an idempotency key so a retry cannot duplicate the change', async () => {
