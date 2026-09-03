@@ -45,6 +45,13 @@ export const en: Dictionary = {
   '{count}개 변경이 겹침 해결을 기다리는 중': '{count} changes waiting on your merge decision',
   '겹침 확인': 'Review',
   '지금 동기화': 'Sync now',
+  '{count}개 변경이 다시 로그인하기를 기다리는 중': '{count} changes waiting for you to sign in again',
+  '{count}개 변경을 지금 계정으로 보낼 수 없음': '{count} changes this account cannot send',
+  '다시 로그인': 'Sign in again',
+  '로그인이 만료되어 오프라인 변경을 보내지 못했습니다. 다시 로그인하면 이어서 보냅니다.':
+    'Your session expired, so the offline changes could not be sent. Sign in again and they will go out.',
+  '서버가 이 계정의 오프라인 변경을 받지 않았습니다.': 'The server would not take this account’s offline changes.',
+  '오프라인 변경을 보내지 못했습니다': 'Could not send the offline changes',
   '오프라인 보관함이 100개로 가득 찼습니다. 연결 후 동기화를 완료하고 다시 시도해 주세요.':
     'The offline queue is full at 100 items. Reconnect, finish syncing, and try again.',
   '오프라인 보관함 가득 참': 'Offline queue full',
