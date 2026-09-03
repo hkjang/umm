@@ -6,10 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/store"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -526,4 +528,59 @@ func (s *Server) spaceSuggestions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"suggestions": suggestions})
+}
+
+// myAIUsage answers, for one person, what their own thoughts were sent out for.
+//
+// A session rather than an API key: this is the record of what happened to
+// somebody's writing, and a key issued to a script has no business reading it.
+// It is mounted under the account group, which enforces that.
+//
+// Two things travel with the list so it cannot be misread. The retention window,
+// because a list that stops ninety days back otherwise reads as ninety quiet
+// days. And whether note bodies currently leave this machine for indexing,
+// because a list of chat-model calls looks like the whole story otherwise —
+// embeddings go in batches that can span several people's notes in a shared
+// space, so naming one person for one batch would be a guess where the policy
+// is a fact.
+func (s *Server) myAIUsage(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+
+	days := 30
+	if raw := strings.TrimSpace(r.URL.Query().Get("days")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 1 && n <= 365 {
+			days = n
+		}
+	}
+	since := time.Now().AddDate(0, 0, -days)
+
+	usage, err := s.Store.PersonalAIUsage(r.Context(), p.User.ID, since)
+	if err != nil {
+		slog.Warn("personal ai usage failed", "user_id", p.User.ID, "error", err)
+		writeError(w, 500, "AI 사용 내역을 불러오지 못했습니다.")
+		return
+	}
+
+	var gateway struct {
+		LogRetentionDays int `json:"log_retention_days"`
+	}
+	_ = s.Store.GetSetting(r.Context(), "ai_gateway", &gateway)
+	if gateway.LogRetentionDays < 1 {
+		gateway.LogRetentionDays = 90
+	}
+	usage.RetentionDays = gateway.LogRetentionDays
+
+	// Read from the same resolver the runtime uses rather than from the setting,
+	// so the answer is what actually happens rather than what is configured.
+	provider := s.Store.EmbeddingProvider(r.Context())
+	writeJSON(w, 200, map[string]any{
+		"usage": usage,
+		"since": since,
+		"days":  days,
+		// Whether the words in a note leave this machine to be indexed. False
+		// is the default and means the offline algorithm: nothing is sent.
+		"embeddingsLeaveThisMachine": provider.Model() != "",
+		"embeddingModel":             provider.Model(),
+		"purposes":                   store.Purposes(),
+	})
 }

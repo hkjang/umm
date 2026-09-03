@@ -527,6 +527,30 @@ export const en: Dictionary = {
   '키 · 권한': 'Keys & permissions',
   '검토 프로세스': 'Approval process',
   '감사 로그': 'Audit log',
+  '내 AI 사용 내역': 'My AI usage',
+  '내 생각이 언제, 무엇을 위해 AI 모델로 갔는지입니다.': 'When your thoughts went to an AI model, and what for.',
+  '{count}일': '{count} days',
+  '무엇을 위해': 'What for',
+  모델: 'Model',
+  결과: 'Result',
+  성공: 'Succeeded',
+  '기록되지 않음': 'Not recorded',
+  'Dream 발전': 'Developing a Dream',
+  '기억에 질문': 'Asking your memory',
+  '덱 묶음 제목': 'Deck group headings',
+  '덱 부 나누기': 'Deck part headings',
+  '불러오는 중입니다…': 'Loading…',
+  '기록은 {retention}일 뒤 삭제됩니다.': 'These records are deleted after {retention} days.',
+  '이 기간에 호출이 {total}번 있었고, 그중 최근 {shown}번만 표시했습니다.':
+    'There were {total} calls in this period; the {shown} most recent are shown.',
+  '최근 {days}일 동안 기록된 호출이 없습니다. 기록은 {retention}일 뒤 삭제되므로, 그보다 오래된 일은 여기에 남지 않습니다.':
+    'No calls are recorded for the last {days} days. Records are deleted after {retention} days, so anything older is not here.',
+  '메모 본문은 임베딩을 위해 이 서버 밖으로 나가지 않습니다. 검색과 연결은 로컬에서 계산합니다.':
+    'Note bodies are not sent off this server to be indexed. Search and connections are computed locally.',
+  '이 설치는 검색·연결을 위해 메모 본문을 임베딩 게이트웨이({model})로 보냅니다. 그 호출은 여러 사람의 메모가 한 번에 묶여 나가므로 아래 목록에는 없습니다.':
+    "This installation sends note bodies to an embedding gateway ({model}) for search and connections. Those calls go out in batches spanning several people's notes, so they are not in the list below.",
+  'AI 제외로 표시한 메모와 공간은 아래 호출에도 들어가지 않습니다.':
+    'Notes and spaces marked as excluded from AI are left out of the calls below too.',
   왜: 'Why',
   '왜 이었는지 한 줄': 'One line on why',
   '왜 이었는지 적기': 'Say why',

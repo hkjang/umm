@@ -35,6 +35,7 @@ import {
 } from '@tabler/icons-react';
 import { api, json, type EdgeStyle, type Preferences } from '../api';
 import { useAuth } from '../auth-context';
+import AIUsageCard from '../components/AIUsageCard';
 import SessionsCard from '../components/SessionsCard';
 import { useTranslation } from '../i18n';
 import { showError } from '../ui-notifications';
@@ -645,6 +646,7 @@ export default function PersonalSettingsPage() {
             {t('HMAC-SHA256 서명을 검증하세요.')}
           </Alert>
         </Card>
+        <AIUsageCard />
         <SessionsCard />
       </Stack>
       <Modal opened={opened} onClose={() => setOpened(false)} title={t('새 개인 키')} centered size="lg">

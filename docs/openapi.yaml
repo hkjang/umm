@@ -561,6 +561,81 @@ paths:
         required: true
         content: { application/json: { schema: { type: object, required: [name, scopes], properties: { name: { type: string }, scopes: { type: array, items: { type: string } }, expiresDays: { type: integer, minimum: 1, maximum: 3650 } } } } }
       responses: { '201': { description: Key metadata and one-time secret } }
+  /ai-usage:
+    get:
+      operationId: get_my_ai_usage
+      tags: [Personal, AI]
+      summary: What your own thoughts were sent to an AI model for
+      x-session-only: true
+      description: |
+        umm lets someone hold a note back from analysis, hold a whole space
+        back, and keep note bodies off an embedding gateway. That is a promise,
+        and this is where a person checks it for themselves. It is scoped to the
+        caller's own calls in the query, never filtered afterwards.
+
+        A session only: this is the record of what happened to somebody's
+        writing, and a key issued to a script has no business reading it.
+
+        Two things travel with the list so it cannot be misread.
+        `usage.retentionDays` is how long umm keeps these at all — without it a
+        list that stops ninety days back reads as ninety quiet days.
+        `embeddingsLeaveThisMachine` reports whether note bodies currently go to
+        an embedding gateway, because a list of chat-model calls otherwise looks
+        like the whole story: embeddings are sent in batches that can span
+        several people's notes in a shared space, so naming one person for one
+        batch would be a guess where the policy is a fact.
+
+        An entry with an empty `purpose` was recorded before v0.67.0. That means
+        "not recorded", not "unknown purpose".
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 365, default: 30 }
+          description: How far back to look. Out-of-range or unparsable values fall back to 30 rather than failing, because this is a screen someone is reading.
+      responses:
+        '200':
+          description: The caller's own AI calls, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  usage:
+                    type: object
+                    properties:
+                      entries:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            at: { type: string, format: date-time }
+                            purpose:
+                              type: string
+                              enum: ['', dream, assist, ask, agent, develop, deck-headings, deck-sections]
+                            model: { type: string }
+                            status:
+                              type: string
+                              enum: [success, failed]
+                              description: A failed call still sent the prompt, so it is listed.
+                            inputTokens: { type: integer }
+                            outputTokens: { type: integer }
+                      counts:
+                        type: object
+                        additionalProperties: { type: integer }
+                        description: Calls of each purpose in the window, over all of them rather than only the ones listed.
+                      total: { type: integer }
+                      truncated: { type: boolean, description: The window held more calls than entries lists. }
+                      retentionDays: { type: integer }
+                  since: { type: string, format: date-time }
+                  days: { type: integer }
+                  embeddingsLeaveThisMachine:
+                    type: boolean
+                    description: Whether the words in a note currently go to an embedding gateway. False means the offline algorithm and nothing sent.
+                  embeddingModel: { type: string, description: Empty when nothing is sent. }
+                  purposes:
+                    type: array
+                    items: { type: string }
+                    description: The vocabulary, in the order a person reads it.
   /sessions:
     get:
       operationId: get_sessions

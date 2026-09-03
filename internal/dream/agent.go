@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/hkjang/umm/internal/store"
 )
 
 // An assistant that can look around someone's memory before answering.
@@ -151,7 +153,7 @@ func (s *Service) RunAgent(ctx context.Context, userID uuid.UUID, task string) (
 
 	for step := 0; step < maxAgentSteps; step++ {
 		message, usage, callErr := s.callAgentTurn(ctx, client, endpoint, key, userID, cfg, messages, timeout, true)
-		s.recordAICall(ctx, userID, uuid.Nil, cfg.Model, usage.prompt, usage.completion, usage.latency, callErr, gateway, task)
+		s.recordAICall(ctx, userID, uuid.Nil, store.PurposeAgent, cfg.Model, usage.prompt, usage.completion, usage.latency, callErr, gateway, task)
 		if callErr != nil {
 			return AgentResult{}, callErr
 		}
@@ -178,7 +180,7 @@ func (s *Service) RunAgent(ctx context.Context, userID uuid.UUID, task string) (
 	final, usage, callErr := s.callAgentTurn(ctx, client, endpoint, key, userID, cfg,
 		append(messages, map[string]any{"role": "user", "content": "더 조회하지 말고 지금까지 확인한 것만으로 답하세요."}),
 		timeout, false)
-	s.recordAICall(ctx, userID, uuid.Nil, cfg.Model, usage.prompt, usage.completion, usage.latency, callErr, gateway, task)
+	s.recordAICall(ctx, userID, uuid.Nil, store.PurposeAgent, cfg.Model, usage.prompt, usage.completion, usage.latency, callErr, gateway, task)
 	if callErr != nil {
 		return AgentResult{}, callErr
 	}
