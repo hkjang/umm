@@ -538,6 +538,10 @@ export const en: Dictionary = {
   '{when}의 공간입니다': 'The space as it was on {when}',
   '그 뒤 지워진 연결 {count}개는 되살릴 수 없어 빠져 있습니다.':
     '{count} connections were deleted since and cannot be restored, so they are missing here.',
+  '그 뒤 지워진 생각에 붙어 있던 그림 {count}장은 되살릴 수 없어 빠져 있습니다.':
+    '{count} pictures hung on thoughts that were deleted since and cannot be restored, so they are missing here.',
+  '그 뒤 지워진 연결 {edges}개와 그림 {pictures}장은 되살릴 수 없어 빠져 있습니다.':
+    '{edges} connections and {pictures} pictures were deleted since and cannot be restored, so they are missing here.',
   '바꿀 수는 없고 보기만 합니다.': 'You can look, but not change anything.',
   '지나간 시점을 보고 있어 바꿀 수 없습니다. 지금으로 돌아오면 다시 씁니다.':
     'You are looking at a moment that has passed, so nothing can be changed. Come back to now to write again.',

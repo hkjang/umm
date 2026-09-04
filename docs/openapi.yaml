@@ -573,6 +573,13 @@ paths:
         showing a canvas that quietly omits it. Connections that still exist
         appear from when they were drawn, and only when both ends were already
         on the canvas.
+
+        Pictures are dated the same way: `attachments` holds the ones that were
+        on those thoughts at that instant, so a canvas showing June does not
+        show a screenshot pasted in August. A picture whose thought has been
+        deleted since cannot be fetched — the bytes are served against a thought
+        that is not deleted — so it is counted in `removedAttachments` rather
+        than handed over as a broken image.
       parameters:
         - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
         - name: at
@@ -597,6 +604,13 @@ paths:
                   removedEdges:
                     type: integer
                     description: Connections deleted between that instant and now. They existed then and cannot be drawn.
+                  attachments:
+                    type: array
+                    description: The pictures that were on those thoughts at that instant. Pictures added since are absent, the same as thoughts written since.
+                    items: { $ref: '#/components/schemas/Attachment' }
+                  removedAttachments:
+                    type: integer
+                    description: Pictures that were on the canvas then and cannot be drawn now, because the thought they hung on has been deleted since. A picture deleted outright leaves no row and is not counted here.
                   earliest:
                     type: string
                     format: date-time
