@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -11,12 +13,58 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/realtime"
+	"github.com/hkjang/umm/internal/store"
 )
 
 // spaceEvents streams the collaboration log. The reader is woken by the
 // realtime hub's PostgreSQL LISTEN connection, so an idle space costs no
 // queries at all. The ticker is only a safety net: it runs slowly while the
 // listener is healthy and takes over at the old poll rate if it is not.
+// spaceRewind answers what a space looked like at an instant.
+//
+// The material has been accumulating since revisions were introduced — every
+// note update snapshots the state it replaces, positions included — and nothing
+// had ever read it this way. NoteHistory answers for one note; this answers the
+// question people actually ask, which is what the whole canvas looked like.
+//
+// Connections removed since cannot be drawn: a deletion event has only ever
+// carried the edge's id, and the row is gone. The count travels with the
+// answer so the screen can say so rather than showing a canvas that quietly
+// omits them.
+func (s *Server) spaceRewind(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	spaceID, ok := parseID(w, r, "spaceID")
+	if !ok {
+		return
+	}
+	at := time.Now()
+	if raw := strings.TrimSpace(r.URL.Query().Get("at")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			// Refused rather than quietly answered for now: someone who asked
+			// about June and was shown today would not know they had been.
+			writeError(w, 400, "시점을 RFC3339 형식으로 지정해 주세요.")
+			return
+		}
+		at = parsed
+	}
+
+	p := principal(r)
+	snapshot, err := s.Store.SpaceAt(r.Context(), p.User.ID, spaceID, at)
+	if err != nil {
+		if errors.Is(err, store.ErrSpaceNotVisible) {
+			writeError(w, 404, "공간을 찾을 수 없습니다.")
+			return
+		}
+		slog.Warn("space rewind failed", "space_id", spaceID, "user_id", p.User.ID, "error", err)
+		writeError(w, 500, "그때의 공간을 불러오지 못했습니다.")
+		return
+	}
+	writeJSON(w, 200, snapshot)
+}
+
 func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:read") {
 		return

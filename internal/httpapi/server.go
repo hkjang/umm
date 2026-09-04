@@ -101,6 +101,7 @@ func (s *Server) router() chi.Router {
 			protected.Delete("/spaces/{spaceID}", s.deleteSpace)
 			protected.Get("/spaces/{spaceID}/notes", s.listNotes)
 			protected.Get("/spaces/{spaceID}/events", s.spaceEvents)
+			protected.Get("/spaces/{spaceID}/rewind", s.spaceRewind)
 			protected.Get("/spaces/{spaceID}/members", s.listSpaceMembers)
 			protected.Post("/spaces/{spaceID}/members", s.shareSpace)
 			protected.Delete("/spaces/{spaceID}/members/{memberID}", s.removeSpaceMember)

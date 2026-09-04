@@ -535,6 +535,18 @@ export const en: Dictionary = {
   '검토 프로세스': 'Approval process',
   '감사 로그': 'Audit log',
   차례: 'outline',
+  '{when}의 공간입니다': 'The space as it was on {when}',
+  '그 뒤 지워진 연결 {count}개는 되살릴 수 없어 빠져 있습니다.':
+    '{count} connections were deleted since and cannot be restored, so they are missing here.',
+  '바꿀 수는 없고 보기만 합니다.': 'You can look, but not change anything.',
+  '지나간 시점을 보고 있어 바꿀 수 없습니다. 지금으로 돌아오면 다시 씁니다.':
+    'You are looking at a moment that has passed, so nothing can be changed. Come back to now to write again.',
+  되감기: 'Rewind',
+  지금으로: 'Back to now',
+  '하루 전': 'A day ago',
+  '일주일 전': 'A week ago',
+  '한 달 전': 'A month ago',
+  '석 달 전': 'Three months ago',
   '문서 차례': 'Document outline',
   '문서 차례 (Markdown)': 'Document outline (Markdown)',
   '문서 차례를 만들지 못했습니다.': 'Could not build the document outline.',

@@ -40,6 +40,7 @@ import {
   IconMarkdown,
   IconMessageCircle,
   IconMoonStars,
+  IconHistory,
   IconListDetails,
   IconPhoto,
   IconPlus,
@@ -172,6 +173,20 @@ interface RelatedThought {
   score: number;
   reason: string;
 }
+/** The canvas showing an instant that has passed. */
+interface Rewind {
+  /** RFC3339, the moment being looked at. */
+  at: string;
+  /**
+   * Connections deleted between that moment and now. They were on the canvas
+   * then and cannot be drawn: a deletion records that an edge went, never what
+   * it joined. Shown rather than quietly missing.
+   */
+  removedEdges: number;
+  /** The first moment this space has anything to show. */
+  earliest: string;
+}
+
 interface Backlink {
   edge: ThoughtEdge;
   note: ThoughtNote;
@@ -222,10 +237,29 @@ function CanvasInner() {
    * writable, so a space whose permission has not arrived behaves as it always
    * did rather than locking someone out of their own canvas.
    */
+  /**
+   * The moment being looked at, when the canvas is showing the past.
+   *
+   * Undefined means now, which is the ordinary state. Anything else means the
+   * notes and connections on screen were reconstructed from what was recorded,
+   * and nothing on this canvas may be changed.
+   */
+  const [rewind, setRewind] = useState<Rewind>();
+  // Read inside the event stream's handler, which is registered once per space
+  // and would otherwise close over the value rewind had when it was registered.
+  const rewindRef = useRef<Rewind | undefined>(undefined);
+  useEffect(() => {
+    rewindRef.current = rewind;
+  }, [rewind]);
   const readOnly = useMemo(() => {
     const space = spaces.find((s) => s.id === activeSpace);
-    return space?.permission === 'view';
-  }, [spaces, activeSpace]);
+    // Rewinding belongs in the same test as the permission, not beside it.
+    // Every place that asks "may this person change things" — dragging,
+    // deleting, the note menu, the connection panel, the keyboard shortcuts —
+    // reads this one value, and a second flag threaded past them would be one
+    // path away from letting somebody edit a canvas that no longer exists.
+    return space?.permission === 'view' || rewind !== undefined;
+  }, [spaces, activeSpace, rewind]);
   /**
    * Whether this person may act on other people's comments here.
    *
@@ -408,6 +442,46 @@ function CanvasInner() {
     },
     [activeSpace],
   );
+  /**
+   * Show the space as it was, or return to now.
+   *
+   * The snapshot replaces what is on the canvas rather than sitting beside it,
+   * so what a person sees is one canvas at one moment. Returning to now
+   * reloads, rather than restoring a copy, because the space may have moved on
+   * while they were looking backwards.
+   */
+  const rewindTo = useCallback(
+    async (at: string | undefined) => {
+      if (!activeSpace) return;
+      if (!at) {
+        setRewind(undefined);
+        await loadCanvas();
+        return;
+      }
+      setLoading(true);
+      try {
+        const snapshot = await api<{
+          at: string;
+          notes: ThoughtNote[];
+          edges: ThoughtEdge[];
+          removedEdges: number;
+          earliest: string;
+        }>(`/spaces/${activeSpace}/rewind?at=${encodeURIComponent(at)}`);
+        syncNotes(snapshot.notes, true);
+        setRawEdges(snapshot.edges);
+        setRelated(undefined);
+        setBacklinks([]);
+        setRewind({ at: snapshot.at, removedEdges: snapshot.removedEdges, earliest: snapshot.earliest });
+      } catch {
+        // Already reported by the API layer. Staying where they were beats
+        // showing a canvas that is neither then nor now.
+      } finally {
+        setLoading(false);
+      }
+    },
+    [activeSpace, loadCanvas, syncNotes],
+  );
+
   const loadBranches = useCallback(async () => {
     if (!activeSpace) return;
     try {
@@ -439,6 +513,10 @@ function CanvasInner() {
     if (!activeSpace) return;
     const stream = new EventSource(`/api/v1/spaces/${activeSpace}/events`);
     stream.addEventListener('space-change', (event) => {
+      // Somebody else's change must not redraw a canvas that is showing the
+      // past. The person looking backwards would watch it silently become
+      // today without being told.
+      if (rewindRef.current) return;
       try {
         const data = JSON.parse((event as MessageEvent).data);
         if (data.actorId !== user?.id) void loadCanvas(true);
@@ -2050,6 +2128,43 @@ function CanvasInner() {
               </Tooltip>
             )}
             <div className="canvas-tool-divider" aria-hidden="true" />
+            {/* Looking backwards is reading, so it is offered whatever the
+                permission — and it makes the canvas read-only while it lasts,
+                whatever the permission was. */}
+            <Menu position="bottom" withinPortal width={200}>
+              <Menu.Target>
+                <Tooltip label={t('되감기')}>
+                  <ActionIcon
+                    className="canvas-action"
+                    variant={rewind ? 'filled' : 'subtle'}
+                    color="dark"
+                    aria-label={t('되감기')}
+                    aria-pressed={!!rewind}
+                  >
+                    <IconHistory size={19} />
+                  </ActionIcon>
+                </Tooltip>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {rewind && <Menu.Item onClick={() => void rewindTo(undefined)}>{t('지금으로')}</Menu.Item>}
+                {(
+                  [
+                    { label: t('하루 전'), ago: 1 },
+                    { label: t('일주일 전'), ago: 7 },
+                    { label: t('한 달 전'), ago: 30 },
+                    { label: t('석 달 전'), ago: 90 },
+                  ] as const
+                ).map((point) => (
+                  <Menu.Item
+                    key={point.ago}
+                    onClick={() => void rewindTo(new Date(Date.now() - point.ago * 86400000).toISOString())}
+                  >
+                    {point.label}
+                  </Menu.Item>
+                ))}
+              </Menu.Dropdown>
+            </Menu>
+            <div className="canvas-tool-divider" aria-hidden="true" />
             <Menu position="bottom" withinPortal width={230}>
               <Menu.Target>
                 <Tooltip label={t('한 갈래만 보기')}>
@@ -2392,7 +2507,13 @@ function CanvasInner() {
       {readOnly && (
         <Paper className="quick-capture" radius="xl" px="lg" py="xs">
           <Text size="sm" c="dimmed">
-            {t('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')}
+            {/* Why it is read-only, not just that it is. Rewinding makes this
+                true for anybody, including the owner of the space, and telling
+                them their own space is shared read-only would be a sentence
+                about something that did not happen. */}
+            {rewind
+              ? t('지나간 시점을 보고 있어 바꿀 수 없습니다. 지금으로 돌아오면 다시 씁니다.')
+              : t('읽기 전용으로 공유된 공간입니다. 댓글은 남길 수 있습니다.')}
           </Text>
         </Paper>
       )}
@@ -2451,6 +2572,28 @@ function CanvasInner() {
             </Group>
           </Paper>
         </div>
+      )}
+      {rewind && (
+        <Paper className="lens-banner glass" radius="xl" p="xs" px="md">
+          <Group gap="xs" wrap="nowrap">
+            <IconHistory size={16} />
+            <Text size="sm" fw={600}>
+              {t('{when}의 공간입니다', { when: new Date(rewind.at).toLocaleString() })}
+            </Text>
+            <Text size="xs" c="dimmed">
+              {/* Not "this is everything that was here". A connection removed
+                  since cannot be drawn — the log records that one went, never
+                  what it joined — so the number is said rather than left as a
+                  gap the reader would take for absence. */}
+              {rewind.removedEdges > 0
+                ? t('그 뒤 지워진 연결 {count}개는 되살릴 수 없어 빠져 있습니다.', { count: rewind.removedEdges })
+                : t('바꿀 수는 없고 보기만 합니다.')}
+            </Text>
+            <Button size="compact-xs" variant="subtle" onClick={() => void rewindTo(undefined)}>
+              {t('지금으로')}
+            </Button>
+          </Group>
+        </Paper>
       )}
       {lens && (
         <Paper className="lens-banner glass" radius="xl" p="xs" px="md">
