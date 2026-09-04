@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/presentation"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
 )
@@ -48,6 +49,58 @@ func (s *Server) authorizeExport(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "space.export.authorize", "space", spaceID.String(), map[string]any{"format": format})
 	writeJSON(w, 200, map[string]bool{"allowed": true})
+}
+
+// exportOutline writes the space as a document rather than as a backup.
+//
+// exportMarkdown answers "give me everything back later" and carries ids,
+// coordinates and connections so a space can be restored from it. This answers
+// a different question — "I want to start writing this up" — and so carries
+// none of that: it is the person's sentences in the order the graph puts them,
+// and nothing a reader would have to skip past.
+//
+// It compiles through the same path a deck preview does, so what comes out is
+// what the preview showed. Ptium is not involved and does not need to be
+// configured.
+func (s *Server) exportOutline(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "notes:read") {
+		return
+	}
+	spaceID, ok := parseID(w, r, "spaceID")
+	if !ok {
+		return
+	}
+	p := principal(r)
+	if !s.Store.CanViewSpace(r.Context(), p.User.ID, spaceID) {
+		writeError(w, 404, "공간을 찾을 수 없습니다.")
+		return
+	}
+	// The same gate as any other export: this is the space's words leaving it.
+	if !s.exportAllowed(r, spaceID, p.User.ID) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "팀장 승인이 필요합니다.", "code": "approval_required"})
+		return
+	}
+
+	outline, err := s.presentations(r).Outline(r.Context(), p.User.ID, presentation.Request{
+		SpaceID:            spaceID,
+		Title:              r.URL.Query().Get("title"),
+		IncludeExcluded:    r.URL.Query().Get("includeExcluded") == "true",
+		OneSlidePerThought: r.URL.Query().Get("oneSlidePerThought") == "true",
+	})
+	if err != nil {
+		if errors.Is(err, presentation.ErrNothingToPresent) {
+			writeError(w, 400, "문서로 만들 생각이 없습니다.")
+			return
+		}
+		writePresentationError(w, r, err, "문서 차례를 만들지 못했습니다.")
+		return
+	}
+
+	s.Store.Audit(r.Context(), &p.User.ID, "space.export", "space", spaceID.String(), map[string]any{"format": "outline"})
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="umm-outline.md"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(outline))
 }
 
 func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
