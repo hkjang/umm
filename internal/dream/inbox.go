@@ -775,7 +775,7 @@ func (s *Service) regenerateAttempt(ctx context.Context, userID, dreamID uuid.UU
 	}
 	raw, inTokens, outTokens, model, latency, callErr := s.callGatewayWithGuidance(ctx, uuid.Nil, cfg, gateway, lease.sources, "free", currentAvoid)
 	record := func() {
-		s.recordAICall(ctx, userID, uuid.Nil, model, inTokens, outTokens, latency, callErr, gateway, sourcePrompt(lease.sources))
+		s.recordAICall(ctx, userID, uuid.Nil, store.PurposeDream, model, inTokens, outTokens, latency, callErr, gateway, sourcePrompt(lease.sources))
 	}
 	if callErr != nil {
 		lease.rollback()
@@ -900,18 +900,18 @@ func (s *Service) Develop(ctx context.Context, userID, dreamID uuid.UUID, mode s
 	text, inTokens, outTokens, latency, callErr := s.callTextForUser(ctx, uuid.Nil, gateway, cfg.Model, .4, NormalizeTokenLimit(cfg.TokenLimit), system, input.String())
 	if callErr != nil {
 		lease.rollback()
-		s.recordAICall(ctx, userID, uuid.Nil, cfg.Model, inTokens, outTokens, latency, callErr, gateway, input.String())
+		s.recordAICall(ctx, userID, uuid.Nil, store.PurposeDevelop, cfg.Model, inTokens, outTokens, latency, callErr, gateway, input.String())
 		return AssistResult{}, callErr
 	}
 	commitErr := lease.commit(ctx)
-	s.recordAICall(ctx, userID, uuid.Nil, cfg.Model, inTokens, outTokens, latency, nil, gateway, input.String())
+	s.recordAICall(ctx, userID, uuid.Nil, store.PurposeDevelop, cfg.Model, inTokens, outTokens, latency, nil, gateway, input.String())
 	if commitErr != nil {
 		return AssistResult{}, commitErr
 	}
 	return AssistResult{Mode: mode, Content: text, Model: cfg.Model, InputTokens: inTokens, OutputTokens: outTokens}, nil
 }
 
-func (s *Service) recordAICall(ctx context.Context, userID, jobID uuid.UUID, model string, inputTokens, outputTokens int, latency time.Duration, callErr error, gateway GatewayConfig, prompt string) {
+func (s *Service) recordAICall(ctx context.Context, userID, jobID uuid.UUID, purpose store.Purpose, model string, inputTokens, outputTokens int, latency time.Duration, callErr error, gateway GatewayConfig, prompt string) {
 	if errors.Is(callErr, ErrAIDailyLimit) || errors.Is(callErr, ErrAIQuotaUnavailable) {
 		return
 	}
@@ -926,8 +926,8 @@ func (s *Service) recordAICall(ctx context.Context, userID, jobID uuid.UUID, mod
 	}
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	_, err := s.Store.Pool.Exec(recordCtx, `INSERT INTO ai_calls(user_id,dream_job_id,model,status,input_tokens,output_tokens,cost_micros,latency_ms,error,prompt_ciphertext) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		userID, nullableJob, model, status, inputTokens, outputTokens, cost, latency.Milliseconds(), truncate(errText, 500), s.encryptPromptLog(gateway, prompt))
+	_, err := s.Store.Pool.Exec(recordCtx, `INSERT INTO ai_calls(user_id,dream_job_id,model,status,input_tokens,output_tokens,cost_micros,latency_ms,error,prompt_ciphertext,purpose) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		userID, nullableJob, model, status, inputTokens, outputTokens, cost, latency.Milliseconds(), truncate(errText, 500), s.encryptPromptLog(gateway, prompt), string(purpose))
 	if err != nil {
 		slog.Warn("AI call log write failed", "error", err, "user_id", userID, "job_id", nullableJob)
 	}

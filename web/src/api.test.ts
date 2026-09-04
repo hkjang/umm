@@ -4,6 +4,7 @@ import {
   APIError,
   discardOfflineMutation,
   flushOfflineQueue,
+  offlineBlockReason,
   offlineConflictCount,
   offlineQueueCount,
   problemMessage,
@@ -433,6 +434,63 @@ describe('offline queue', () => {
 
     await discardOfflineMutation(detail.item.id);
     expect(replayOfflineConflicts()).toBe(0);
+  });
+
+  /*
+   * A session that expires while the tab is open halts the queue for good: the
+   * flush stops at the 401, no timer brings it back, and pressing sync only
+   * collects the same 401. Reported as waiting for a connection the reader
+   * already has, that leaves their writing stranded behind a sentence naming
+   * the one thing that is not wrong with it.
+   */
+  it('says a halted queue is waiting on a sign-in rather than on a connection', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('network down'))),
+    );
+    await api('/a', { method: 'POST', body: '{}', queueIfOffline: true, silent: true }).catch(() => undefined);
+    await api('/b', { method: 'POST', body: '{}', queueIfOffline: true, silent: true }).catch(() => undefined);
+
+    const notices: string[] = [];
+    const listener = (event: Event) => notices.push((event as CustomEvent).detail.message);
+    window.addEventListener('umm:notice', listener);
+    const replay = vi.fn(() => Promise.resolve(jsonResponse(401, { detail: 'session expired' })));
+    vi.stubGlobal('fetch', replay);
+    const result = await flushOfflineQueue();
+    window.removeEventListener('umm:notice', listener);
+
+    expect(result).toEqual({ synced: 0, remaining: 2 });
+    // The second change is not attempted: it carries the same cookie.
+    expect(replay).toHaveBeenCalledTimes(1);
+    expect(offlineBlockReason()).toBe('signed-out');
+    expect(notices.join(' ')).toContain('다시 로그인');
+
+    // Signed in again, the same queue goes out and nothing is left saying it
+    // could not.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(201, {}))),
+    );
+    expect(await flushOfflineQueue()).toEqual({ synced: 2, remaining: 0 });
+    expect(offlineBlockReason()).toBeUndefined();
+  });
+
+  // A 403 halts the queue too, but signing in again is not what would move it,
+  // so it is not what the reader is told.
+  it('tells a refusal apart from an expired session', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.reject(new TypeError('network down'))),
+    );
+    await api('/a', { method: 'POST', body: '{}', queueIfOffline: true, silent: true }).catch(() => undefined);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(jsonResponse(403, { detail: '요청 출처를 확인할 수 없습니다.' }))),
+    );
+    const result = await flushOfflineQueue();
+
+    expect(result.remaining).toBe(1);
+    expect(offlineBlockReason()).toBe('refused');
   });
 
   it('attaches an idempotency key so a retry cannot duplicate the change', async () => {

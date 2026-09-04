@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/hkjang/umm/internal/store"
 )
 
 /*
@@ -204,7 +206,10 @@ func decodeLabels(text string) []string {
 
 // Completer is the one thing this needs from whatever talks to the chat model.
 type Completer interface {
-	Complete(ctx context.Context, userID uuid.UUID, system, user string, maxTokens int) (string, error)
+	// Purpose says what the call is for, so the person whose thoughts are in
+	// the prompt can see it in their own AI usage rather than a bare model
+	// name. It is passed rather than inferred: a shared door cannot know.
+	Complete(ctx context.Context, userID uuid.UUID, purpose store.Purpose, system, user string, maxTokens int) (string, error)
 }
 
 // GatewayNamer names groups through umm's chat model.
@@ -239,7 +244,7 @@ func (g GatewayNamer) NameGroups(ctx context.Context, groups []NameRequest, lang
 		}
 		input.WriteString("\n")
 	}
-	text, err := g.AI.Complete(ctx, g.UserID, namingSystem, input.String(), 800)
+	text, err := g.AI.Complete(ctx, g.UserID, store.PurposeDeckHeadings, namingSystem, input.String(), 800)
 	if err != nil {
 		return nil, err
 	}

@@ -548,6 +548,28 @@ const raisedConflicts = new Map<string, { item: OfflineMutation; payload: Record
 export const offlineConflictCount = () => raisedConflicts.size;
 
 /**
+ * Why the last flush stopped with work still queued, when the reason is neither
+ * the network nor a merge decision.
+ *
+ * A 401 or a 403 halts the whole queue, and rightly so: every later change
+ * carries the same cookie to the same server and would collect the same answer.
+ * Staying quiet about it was the problem. The banner had one sentence for a
+ * queue with anything left in it — waiting for a connection — beside a sync
+ * button that, for a session which had expired while the tab stayed open, could
+ * only meet the same 401 again. So the person was told to wait for something
+ * that had already arrived, and never told the one thing that would move their
+ * writing: sign in again.
+ *
+ * `signed-out` is a session that ended; `refused` is a server that will not take
+ * this change from this account, whatever the reason it gave. Each flush sets
+ * this afresh, so it describes the queue as it stands rather than something that
+ * was once true.
+ */
+export type OfflineBlock = 'signed-out' | 'refused';
+let offlineBlock: OfflineBlock | undefined;
+export const offlineBlockReason = (): OfflineBlock | undefined => offlineBlock;
+
+/**
  * Raise every held conflict again, for a screen that can show it now.
  *
  * Safe to call whenever such a screen appears: it sends no request, so a change
@@ -568,6 +590,7 @@ export function flushOfflineQueue(): Promise<FlushResult> {
 }
 
 async function runFlush(): Promise<FlushResult> {
+  offlineBlock = undefined;
   const storageKey = queueStorageKey();
   const snapshot = await withOfflineQueueLock(storageKey, () => readOfflineQueue(storageKey));
   if (!snapshot.available) return { synced: 0, remaining: 0 };
@@ -617,6 +640,19 @@ async function runFlush(): Promise<FlushResult> {
         continue;
       }
       if (response.status === 401 || response.status === 403) {
+        // Stopping here is right — the rest of the queue would meet the same
+        // answer — but the queue is then held on something no amount of waiting
+        // or syncing resolves, so it says which of the two it is. The reason a
+        // 403 gave is the server's own; a 401 has none worth repeating, and the
+        // sentence that helps names what to do instead.
+        offlineBlock = response.status === 401 ? 'signed-out' : 'refused';
+        showError(
+          offlineBlock === 'signed-out'
+            ? translate('로그인이 만료되어 오프라인 변경을 보내지 못했습니다. 다시 로그인하면 이어서 보냅니다.')
+            : problemMessage(payload) || translate('서버가 이 계정의 오프라인 변경을 받지 않았습니다.'),
+          translate('오프라인 변경을 보내지 못했습니다'),
+          `offline:blocked:${response.status}`,
+        );
         remaining.push(item, ...queued.slice(index + 1));
         break;
       }

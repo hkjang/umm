@@ -120,7 +120,7 @@ func TestRecordAICallOutlivesRequestCancellationIntegration(t *testing.T) {
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 	service := &Service{Store: db}
-	service.recordAICall(canceled, userID, uuid.Nil, "quota-model", 1, 2, time.Millisecond, nil, GatewayConfig{}, "")
+	service.recordAICall(canceled, userID, uuid.Nil, store.PurposeAssist, "quota-model", 1, 2, time.Millisecond, nil, GatewayConfig{}, "")
 	var calls int
 	if err = db.Pool.QueryRow(ctx, `SELECT count(*) FROM ai_calls WHERE user_id=$1`, userID).Scan(&calls); err != nil {
 		t.Fatal(err)

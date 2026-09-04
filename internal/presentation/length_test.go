@@ -375,3 +375,64 @@ func TestTheReportedPartCountIsThePartsInTheDeck(t *testing.T) {
 		t.Fatalf("%d slides for a cap of 15", len(story.Slides))
 	}
 }
+
+// The screen also says "묶음 제목 15개를 AI가 지었습니다". The same second pass
+// that can cut a part heading out of the deck can cut a slide a model named,
+// and that count is the other half of what tells a person how much of the deck
+// is not theirs.
+func TestTheReportedHeadingCountIsTheNamedSlidesInTheDeck(t *testing.T) {
+	// Pairs: two notes close enough to be one huddle, and far enough from the
+	// next pair to be a huddle of their own. Sixteen pairs is sixteen grouped
+	// slides, which is more than a cap of fifteen and more than the length at
+	// which a talk is divided at all.
+	spaces := &fakeSpaces{name: "묶음 많은 공간"}
+	for i := 0; i < 16; i++ {
+		spaces.notes = append(spaces.notes,
+			note(byte(i*2+1), "묶음 메모", float64(i)*1000),
+			note(byte(i*2+2), "옆에 붙여 둔 메모", float64(i)*1000+300))
+	}
+	labels := make([]string, 16)
+	for i := range labels {
+		labels[i] = "AI가 지은 제목"
+	}
+	svc := serviceWith(spaces, &fakeLinks{}, &fakePtium{}, Config{})
+	svc.Namer = &fakeNamer{labels: labels}
+	svc.Sectioner = &fakeSectioner{sections: []Section{
+		{Start: 0, Title: "문제"}, {Start: 5, Title: "대안"}, {Start: 10, Title: "결정"},
+	}}
+
+	preview, err := svc.Preview(context.Background(), uuid.New(),
+		Request{SpaceID: id(9), NameGroups: true, SectionDeck: true, MaxSlides: 15})
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	story := preview.Storyline
+	if len(story.Slides) != 15 {
+		t.Fatalf("%d slides for a cap of 15: %v", len(story.Slides), titles(story))
+	}
+	named := 0
+	for _, slide := range story.Slides {
+		if slide.Named {
+			named++
+		}
+	}
+	if named == 0 {
+		t.Fatal("no named heading survived, so this proves nothing about the count")
+	}
+	if named == 16 {
+		t.Fatal("nothing a model named was cut, so this proves nothing about the count")
+	}
+	if story.NamedHeadings != named {
+		t.Fatalf("the deck says a model named %d headings and holds %d",
+			story.NamedHeadings, named)
+	}
+	// The part count is recounted in the same place, so it must survive the
+	// change that fixed the heading count.
+	open, empty := openHeadings(story)
+	if len(empty) > 0 {
+		t.Fatalf("part headings over nothing: %v", empty)
+	}
+	if story.Sections != len(open) {
+		t.Fatalf("the deck says it is in %d parts and holds %d", story.Sections, len(open))
+	}
+}

@@ -119,7 +119,7 @@ func (s *Service) Ask(ctx context.Context, userID uuid.UUID, question string) (A
 
 	text, inTokens, outTokens, latency, callErr := s.callTextForUser(
 		ctx, userID, gateway, cfg.Model, .2, NormalizeTokenLimit(cfg.TokenLimit), system, input.String())
-	s.recordAICall(ctx, userID, uuid.Nil, cfg.Model, inTokens, outTokens, latency, callErr, gateway, input.String())
+	s.recordAICall(ctx, userID, uuid.Nil, store.PurposeAsk, cfg.Model, inTokens, outTokens, latency, callErr, gateway, input.String())
 	if callErr != nil {
 		return AskResult{}, callErr
 	}

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/hkjang/umm/internal/store"
 )
 
 /*
@@ -175,7 +177,7 @@ func (g GatewaySectioner) ProposeSections(ctx context.Context, headings []string
 	for index, heading := range headings {
 		fmt.Fprintf(&input, "%d: %s\n", index, heading)
 	}
-	text, err := g.AI.Complete(ctx, g.UserID, sectioningSystem, input.String(), 800)
+	text, err := g.AI.Complete(ctx, g.UserID, store.PurposeDeckSections, sectioningSystem, input.String(), 800)
 	if err != nil {
 		return nil, err
 	}

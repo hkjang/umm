@@ -105,12 +105,17 @@ type Storyline struct {
 	// count on screen is the real one. Silently dropping a thought from someone's
 	// own space is the one thing this must not do.
 	Excluded []uuid.UUID
-	// Sections is how many part headings a model proposed. Reported for the
+	// Sections is how many part headings are in the deck. Reported for the
 	// same reason NamedHeadings is: the shape is the model's, not the person's.
 	Sections int
-	// NamedHeadings is how many headings a model proposed. Reported so the
-	// screen can say so: a deck whose headings quietly changed source is one
-	// nobody can check.
+	// NamedHeadings is how many headings in the deck came from a model.
+	// Reported so the screen can say so: a deck whose headings quietly changed
+	// source is one nobody can check.
+	//
+	// Both counts are of the deck as delivered, not of what a model was asked
+	// for or answered. A cap applied over the finished deck can drop a part
+	// heading or a named slide, and a count of what was proposed would then be
+	// describing slides the person is not looking at.
 	NamedHeadings int
 	// Trimmed names thoughts left out only because the talk was capped at a
 	// number of slides. Kept apart from Excluded because the reason is

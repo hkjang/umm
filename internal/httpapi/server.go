@@ -149,6 +149,7 @@ func (s *Server) router() chi.Router {
 				account.Use(s.requireSession)
 				account.Get("/preferences", s.getPreferences)
 				account.Put("/preferences", s.putPreferences)
+				account.Get("/ai-usage", s.myAIUsage)
 				account.Get("/sessions", s.listSessions)
 				account.Delete("/sessions/{sessionID}", s.revokeSession)
 				account.Post("/sessions/revoke-others", s.revokeOtherSessions)

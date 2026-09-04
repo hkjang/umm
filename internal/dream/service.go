@@ -326,7 +326,7 @@ func (s *Service) generate(ctx context.Context, cfg Config, jobID, userID uuid.U
 		generated, inputTokens, outputTokens, usedModel, latency, callErr := s.callGatewayWithGuidance(ctx, uuid.Nil, cfg, gateway, lease.sources, style, guidance)
 		if callErr != nil {
 			lease.rollback()
-			s.recordAICall(ctx, userID, jobID, usedModel, inputTokens, outputTokens, latency, callErr, gateway, sourcePrompt(lease.sources))
+			s.recordAICall(ctx, userID, jobID, store.PurposeDream, usedModel, inputTokens, outputTokens, latency, callErr, gateway, sourcePrompt(lease.sources))
 			return callErr
 		}
 		output = parseDreamOutput(generated, len(lease.sources))
@@ -344,7 +344,7 @@ func (s *Service) generate(ctx context.Context, cfg Config, jobID, userID uuid.U
 			break
 		}
 		lease.rollback()
-		s.recordAICall(ctx, userID, jobID, usedModel, inputTokens, outputTokens, latency, nil, gateway, sourcePrompt(lease.sources))
+		s.recordAICall(ctx, userID, jobID, store.PurposeDream, usedModel, inputTokens, outputTokens, latency, nil, gateway, sourcePrompt(lease.sources))
 		guidance = output.Content
 		if duplicate {
 			lastFailure = "candidate duplicated a recent Dream"
@@ -359,7 +359,7 @@ func (s *Service) generate(ctx context.Context, cfg Config, jobID, userID uuid.U
 		return fmt.Errorf("%w: %s after regeneration", ErrNoUsefulDream, lastFailure)
 	}
 	recordAccepted := func() {
-		s.recordAICall(ctx, userID, jobID, model, acceptedInputTokens, acceptedOutputTokens, acceptedLatency, nil, gateway, acceptedPrompt)
+		s.recordAICall(ctx, userID, jobID, store.PurposeDream, model, acceptedInputTokens, acceptedOutputTokens, acceptedLatency, nil, gateway, acceptedPrompt)
 	}
 	failAccepted := func(cause error) error {
 		acceptedLease.rollback()
@@ -966,11 +966,11 @@ func (s *Service) Assist(ctx context.Context, userID uuid.UUID, noteIDs []uuid.U
 	text, inTokens, outTokens, latency, callErr := s.callTextForUser(ctx, uuid.Nil, gateway, cfg.Model, .45, NormalizeTokenLimit(cfg.TokenLimit), system, input.String())
 	if callErr != nil {
 		lease.rollback()
-		s.recordAICall(ctx, userID, uuid.Nil, cfg.Model, inTokens, outTokens, latency, callErr, gateway, input.String())
+		s.recordAICall(ctx, userID, uuid.Nil, store.PurposeAssist, cfg.Model, inTokens, outTokens, latency, callErr, gateway, input.String())
 		return AssistResult{}, callErr
 	}
 	commitErr := lease.commit(ctx)
-	s.recordAICall(ctx, userID, uuid.Nil, cfg.Model, inTokens, outTokens, latency, nil, gateway, input.String())
+	s.recordAICall(ctx, userID, uuid.Nil, store.PurposeAssist, cfg.Model, inTokens, outTokens, latency, nil, gateway, input.String())
 	if commitErr != nil {
 		return AssistResult{}, commitErr
 	}
@@ -1251,7 +1251,11 @@ func (s *Service) Metrics(ctx context.Context) (map[string]any, error) {
 //
 // The caller is responsible for having established that the person may read
 // what they are sending: this takes text, not note ids, and cannot check.
-func (s *Service) Complete(ctx context.Context, userID uuid.UUID, system, user string, maxTokens int) (string, error) {
+//
+// The purpose comes from the caller because only the caller knows it. Labelling
+// it here would mean one label for every use of a shared door, which is right
+// exactly until the second caller arrives — and there already are two.
+func (s *Service) Complete(ctx context.Context, userID uuid.UUID, purpose store.Purpose, system, user string, maxTokens int) (string, error) {
 	var cfg Config
 	var gateway GatewayConfig
 	if s.Store.GetSetting(ctx, "dream", &cfg) != nil || s.Store.GetSetting(ctx, "ai_gateway", &gateway) != nil {
@@ -1275,7 +1279,7 @@ func (s *Service) Complete(ctx context.Context, userID uuid.UUID, system, user s
 	redacted := redact(truncate(user, 6000))
 	text, inTokens, outTokens, latency, callErr := s.callTextForUser(
 		ctx, uuid.Nil, gateway, cfg.Model, .2, NormalizeTokenLimit(maxTokens), system, redacted)
-	s.recordAICall(ctx, userID, uuid.Nil, cfg.Model, inTokens, outTokens, latency, callErr, gateway, redacted)
+	s.recordAICall(ctx, userID, uuid.Nil, purpose, cfg.Model, inTokens, outTokens, latency, callErr, gateway, redacted)
 	if callErr != nil {
 		s.cancelAIQuotaBeforeCall(reservationID)
 		return "", callErr
