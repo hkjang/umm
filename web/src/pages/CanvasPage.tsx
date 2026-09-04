@@ -40,6 +40,7 @@ import {
   IconMarkdown,
   IconMessageCircle,
   IconMoonStars,
+  IconListDetails,
   IconPhoto,
   IconPlus,
   IconFocus2,
@@ -1670,6 +1671,30 @@ function CanvasInner() {
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
     return true;
   };
+  /**
+   * The space as a document rather than as a backup.
+   *
+   * The Markdown export answers "give me everything back later" and carries
+   * ids, coordinates and connections so a space can be restored from it. This
+   * answers "I want to start writing this up", so it carries none of that —
+   * the sentences in the order the graph puts them, and nothing to skip past.
+   */
+  const downloadOutline = async () => {
+    if (!(await ensureExport('outline'))) return false;
+    const response = await fetch(`/api/v1/spaces/${activeSpace}/export/outline`, { credentials: 'same-origin' });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || payload.error || t('문서 차례를 만들지 못했습니다.'));
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `umm-${activeName}-${t('차례')}.md`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    return true;
+  };
   const canvasImage = async () => {
     const target = document.querySelector('.react-flow__viewport') as HTMLElement | null;
     const allNodes = flow.getNodes();
@@ -2121,6 +2146,13 @@ function CanvasInner() {
                   onClick={() => void runExport('markdown', 'Markdown', downloadMarkdown)}
                 >
                   Markdown
+                </Menu.Item>
+                <Menu.Item
+                  disabled={!!exportBusy}
+                  leftSection={<IconListDetails size={16} />}
+                  onClick={() => void runExport('outline', t('문서 차례'), downloadOutline)}
+                >
+                  {t('문서 차례 (Markdown)')}
                 </Menu.Item>
                 <Menu.Item
                   disabled={!!exportBusy}

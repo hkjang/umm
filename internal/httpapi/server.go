@@ -126,6 +126,7 @@ func (s *Server) router() chi.Router {
 			protected.Get("/notes/{noteID}/presentations", s.notePresentations)
 			protected.Get("/spaces/{spaceID}/export/authorize", s.authorizeExport)
 			protected.Get("/spaces/{spaceID}/export/markdown", s.exportMarkdown)
+			protected.Get("/spaces/{spaceID}/export/outline", s.exportOutline)
 			protected.Delete("/notes/{noteID}", s.deleteNote)
 			protected.Post("/capture", s.captureThought)
 			protected.Post("/notes/{noteID}/move", s.moveNote)

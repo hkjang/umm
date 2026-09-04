@@ -500,6 +500,48 @@ paths:
       parameters:
         - { in: query, name: format, schema: { type: string, enum: [markdown, image, pdf] } }
       responses: { '200': { description: Export allowed }, '409': { description: Approval required } }
+  /spaces/{spaceId}/export/outline:
+    get:
+      operationId: export_space_outline
+      tags: [Notes]
+      summary: The space as a document, in the order the graph puts it
+      description: |
+        A different question from the Markdown export. That one answers "give
+        me everything back later" and carries ids, coordinates and connections
+        so a space can be restored from it. This one answers "I want to start
+        writing this up", and carries none of that — the author's own sentences
+        as headings and prose, and nothing a reader would skip past.
+
+        The order is not umm's guess: a `follows` chain is somebody stating a
+        sequence outright, and failing that it is the arrangement they made on
+        the canvas. It compiles through the same path a deck preview does, so
+        what comes out is what the preview showed. No model is involved and
+        Ptium does not need to be configured.
+
+        Subject to the same approval gate as any other export, because this is
+        the space's words leaving it.
+      parameters:
+        - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: title, schema: { type: string }, description: Overrides the space's name as the document title. }
+        - { in: query, name: includeExcluded, schema: { type: boolean }, description: Include thoughts their author held back from analysis. Off unless asked. }
+        - { in: query, name: oneSlidePerThought, schema: { type: boolean }, description: Turn off grouping thoughts by where they sit, giving one section per thought. }
+      responses:
+        '200':
+          description: The document
+          content:
+            text/markdown:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: A team lead has to approve this export first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  code: { type: string, enum: [approval_required] }
   /spaces/{spaceId}/export/markdown:
     parameters:
       - { $ref: '#/components/parameters/SpaceID' }

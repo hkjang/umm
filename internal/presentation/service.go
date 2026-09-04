@@ -225,6 +225,20 @@ func (s *Service) Preview(ctx context.Context, userID uuid.UUID, req Request) (P
 	return Preview{Storyline: story, Source: source, Warnings: []string{}}, nil
 }
 
+// Outline compiles the space and writes it as a Markdown document.
+//
+// The same compile as a deck preview, so a person who has read the preview
+// knows exactly what they are getting: the order is theirs either way. Nothing
+// is written and nothing is sent anywhere — this never reaches Ptium, and does
+// not need it configured.
+func (s *Service) Outline(ctx context.Context, userID uuid.UUID, req Request) (string, error) {
+	story, _, err := s.compile(ctx, userID, req)
+	if err != nil {
+		return "", err
+	}
+	return WriteOutline(story), nil
+}
+
 // PreviewAgainst compiles the space and checks it against an existing deck,
 // changing neither.
 func (s *Service) PreviewAgainst(ctx context.Context, userID uuid.UUID, req Request, deckID string) (Preview, error) {
