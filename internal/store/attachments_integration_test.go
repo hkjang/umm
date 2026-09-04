@@ -147,6 +147,31 @@ func TestAttachmentTooLargeIsRefusedIntegration(t *testing.T) {
 	}
 }
 
+// A long name is cut, and the picture still arrives. The cut used to be a byte
+// slice, which in Korean ends inside a character, and PostgreSQL refuses text
+// that is not valid UTF-8 — so a photo that broke no rule came back as "그림을
+// 저장하지 못했습니다" because of what it was called.
+func TestAttachmentAcceptsALongNonASCIIFilenameIntegration(t *testing.T) {
+	db, userID, _, note := attachmentSpace(t)
+	name := "2026 " + strings.Repeat("화이트보드", 9) + ".png"
+	saved, err := db.AttachToNote(context.Background(), userID, note.ID, name, realPNG(t))
+	if err != nil {
+		t.Fatalf("a picture was refused over its label: %v", err)
+	}
+	if saved.Filename == "" || !strings.HasPrefix(name, saved.Filename) {
+		t.Fatalf("stored label %q is not the start of %q", saved.Filename, name)
+	}
+}
+
+// Nothing is not a picture, and saying "too large" about it sends someone to
+// look for a limit they are nowhere near.
+func TestAttachmentEmptyUploadIsNotAnImageIntegration(t *testing.T) {
+	db, userID, _, note := attachmentSpace(t)
+	if _, err := db.AttachToNote(context.Background(), userID, note.ID, "빈.png", nil); !errors.Is(err, ErrAttachmentNotAnImage) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestAttachmentPerThoughtLimitIntegration(t *testing.T) {
 	db, userID, _, note := attachmentSpace(t)
 	ctx := context.Background()

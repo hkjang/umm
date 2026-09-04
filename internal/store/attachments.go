@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/textutil"
 )
 
 /*
@@ -82,9 +83,11 @@ func supportedImage(data []byte) (string, bool) {
 // Edit permission, the same as writing the thought: a picture is part of what
 // the thought says.
 func (s *Store) AttachToNote(ctx context.Context, userID, noteID uuid.UUID, filename string, data []byte) (Attachment, error) {
-	if len(data) == 0 || len(data) > MaxAttachmentBytes {
+	if len(data) > MaxAttachmentBytes {
 		return Attachment{}, ErrAttachmentTooLarge
 	}
+	// An empty upload is not a picture that is too large; it falls to the
+	// sniffing below, which names nothing and says so.
 	contentType, ok := supportedImage(data)
 	if !ok {
 		return Attachment{}, ErrAttachmentNotAnImage
@@ -138,6 +141,12 @@ func (s *Store) AttachToNote(ctx context.Context, userID, noteID uuid.UUID, file
 // safeFilename keeps a name only as a label. Directory separators and control
 // characters are removed because this string reaches a Content-Disposition
 // header and, if anybody ever writes it to disk, a path.
+//
+// The length is cut between characters, not at a byte. A name long enough to
+// need cutting is usually a sentence, and in Korean a sentence is three bytes
+// per character, so a plain byte slice ends mid-character — and PostgreSQL
+// refuses text that is not valid UTF-8. That refusal loses the picture, which
+// was never the problem, over the label, which is decoration.
 func safeFilename(name string) string {
 	cleaned := strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' || r == '"' {
@@ -145,10 +154,7 @@ func safeFilename(name string) string {
 		}
 		return r
 	}, strings.TrimSpace(name))
-	if len(cleaned) > 120 {
-		cleaned = cleaned[:120]
-	}
-	return cleaned
+	return textutil.LimitUTF8Bytes(cleaned, 120)
 }
 
 // NoteAttachments lists the pictures on the thoughts of a space, for anyone who
