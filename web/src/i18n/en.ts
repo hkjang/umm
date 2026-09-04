@@ -541,6 +541,9 @@ export const en: Dictionary = {
   '바꿀 수는 없고 보기만 합니다.': 'You can look, but not change anything.',
   '지나간 시점을 보고 있어 바꿀 수 없습니다. 지금으로 돌아오면 다시 씁니다.':
     'You are looking at a moment that has passed, so nothing can be changed. Come back to now to write again.',
+  '그림 붙이기': 'Attach a picture',
+  '그림 떼기': 'Remove picture',
+  '붙인 그림': 'Attached picture',
   되감기: 'Rewind',
   지금으로: 'Back to now',
   '하루 전': 'A day ago',

@@ -7,6 +7,7 @@ import {
   IconGitBranch,
   IconHeading,
   IconHelp,
+  IconPhoto,
   IconHistory,
   IconLink,
   IconMessageCircle,
@@ -14,7 +15,7 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 import { Handle, NodeResizer, Position, type NodeProps, type Node } from '@xyflow/react';
-import type { ThoughtNote } from '../api';
+import type { Attachment, ThoughtNote } from '../api';
 import { useTranslation } from '../i18n';
 import { noteLinks } from '../note-links';
 
@@ -34,6 +35,11 @@ export type PostItData = {
   onDelete: (id: string) => void;
   onRestore: (id: string) => void;
   onComments: (note: ThoughtNote) => void;
+  /** The pictures on this thought, newest last. */
+  attachments?: Attachment[];
+  /** Opens a file picker and puts what is chosen on this thought. */
+  onAttach?: (id: string) => void;
+  onRemoveAttachment?: (attachmentId: string) => void;
   /**
    * Whether this space can be written to at all.
    *
@@ -240,6 +246,31 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
           </Tooltip>
         )}
       </div>
+      {/* The pictures, on the card rather than behind a click. A photo of the
+          whiteboard is the thing being talked about; hiding it under a menu
+          would make it an attachment to a note instead of part of one.
+          nodrag so that dragging a picture does not drag the whole thought. */}
+      {(data.attachments?.length ?? 0) > 0 && (
+        <div className="note-pictures nodrag">
+          {data.attachments?.map((attachment) => (
+            <div key={attachment.id} className="note-picture">
+              <a href={`/api/v1/attachments/${attachment.id}`} target="_blank" rel="noreferrer">
+                <img src={`/api/v1/attachments/${attachment.id}`} alt={attachment.filename || t('붙인 그림')} />
+              </a>
+              {!data.readOnly && data.onRemoveAttachment && (
+                <button
+                  type="button"
+                  className="note-picture-remove"
+                  aria-label={t('그림 떼기')}
+                  onClick={() => data.onRemoveAttachment?.(attachment.id)}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {(note.title !== '' || namingTitle) && (
         <input
           ref={titleRef}
@@ -376,6 +407,14 @@ function PostItNode({ data, selected }: NodeProps<PostItNodeType>) {
                 }}
               >
                 {t(note.title !== '' ? '제목 지우기' : '제목 붙이기')}
+              </Menu.Item>
+            )}
+            {/* A picture is part of what a thought says. Offered only where the
+                thought itself can be changed, because the server refuses it
+                otherwise and a button that exists to fail is worse than none. */}
+            {!data.readOnly && data.onAttach && (
+              <Menu.Item leftSection={<IconPhoto size={15} />} onClick={() => data.onAttach?.(note.id)}>
+                {t('그림 붙이기')}
               </Menu.Item>
             )}
             {/* Marking, not inferring. umm never decides a note is a question —

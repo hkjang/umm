@@ -104,6 +104,23 @@ export interface ThoughtEdge {
   reason?: string;
 }
 
+/**
+ * A picture on a thought.
+ *
+ * `contentType` was read off the bytes when they were stored, never taken from
+ * the upload — a file that says it is a PNG and is not is the whole reason the
+ * server does not believe it. `filename` is a label and nothing else.
+ */
+export interface Attachment {
+  id: string;
+  noteId: string;
+  contentType: 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp';
+  byteSize: number;
+  filename?: string;
+  uploadedBy?: string;
+  createdAt: string;
+}
+
 /** Why a suggestion run produced what it did — including when it produced nothing. */
 export type SuggestionOutcome =
   | 'suggested'
@@ -428,7 +445,11 @@ export async function api<T>(path: string, options: APIOptions = {}): Promise<T>
   const { silent = false, queueIfOffline = false, retry, ...requestOptions } = options;
   const method = (requestOptions.method || 'GET').toUpperCase();
   const headers = new Headers(requestOptions.headers);
-  if (requestOptions.body) headers.set('Content-Type', 'application/json');
+  // FormData sets its own content type, including the boundary the server
+  // needs to find the parts. Declaring JSON over it produces a request the
+  // server cannot parse and an error about nothing the person did.
+  if (requestOptions.body && !(requestOptions.body instanceof FormData))
+    headers.set('Content-Type', 'application/json');
   if (queueIfOffline && mutationMethods.has(method) && !headers.has('Idempotency-Key'))
     headers.set('Idempotency-Key', `web:${requestID()}`);
   const normalizedOptions = { ...requestOptions, method, headers };
