@@ -107,7 +107,19 @@ func (s *Store) AppendSpaceEvent(ctx context.Context, tx pgx.Tx, actorID, spaceI
 	if resourceID == uuid.Nil {
 		resource = nil
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO space_events(space_id,actor_id,event_type,resource_id,payload) VALUES($1,$2,$3,$4,$5)`, spaceID, actorID, eventType, resource, raw); err != nil {
+	// The collaboration log gets the fact of the change, not the writing in it.
+	//
+	// The three readers of `raw` want different things. A webhook subscriber
+	// asked for the note and gets it, and those deliveries are cleaned up. An
+	// idempotent replay has to return the same HTTP response, and those records
+	// expire in a day. space_events is read by exactly one consumer — the open
+	// canvas, which looks at actorId and refetches — and it is the only one of
+	// the three that is never cleaned up.
+	//
+	// So it was keeping a copy of every version of everybody's writing for
+	// good, including notes their author had since deleted, in a table no
+	// retention policy covered. Storing nothing costs that reader nothing.
+	if _, err = tx.Exec(ctx, `INSERT INTO space_events(space_id,actor_id,event_type,resource_id,payload) VALUES($1,$2,$3,$4,'{}'::jsonb)`, spaceID, actorID, eventType, resource); err != nil {
 		return err
 	}
 	event := webhookOutboxEvent{
