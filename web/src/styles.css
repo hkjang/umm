@@ -1367,3 +1367,37 @@ textarea,
   /* Enough to show which line has the cursor without turning it into a box. */
   box-shadow: 0 1px 0 0 rgba(60, 54, 40, 0.28);
 }
+
+/* Pictures on a thought.
+   Laid out as a row that wraps, capped in height so a tall photo cannot push
+   the words off the card — the sentence is still the thought, the picture is
+   what it is about. */
+.note-pictures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 2px;
+}
+.note-picture {
+  position: relative;
+  line-height: 0;
+}
+.note-picture img {
+  max-height: 72px;
+  max-width: 100%;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.note-picture-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  border: 0;
+  border-radius: 999px;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  cursor: pointer;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+}

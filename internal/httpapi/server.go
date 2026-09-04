@@ -64,7 +64,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) router() chi.Router {
 	s.limiterOnce.Do(func() { s.limiter = newRateLimiter() })
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID, s.trustedProxyHeaders, middleware.Recoverer, middleware.RequestSize(1<<20), s.securityHeaders, s.compressResponses, s.accessLog, s.Auth.Middleware)
+	r.Use(middleware.RequestID, s.trustedProxyHeaders, middleware.Recoverer, requestSizeLimit, s.securityHeaders, s.compressResponses, s.accessLog, s.Auth.Middleware)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"status": "ok", "version": s.Version})
 	})
@@ -102,6 +102,10 @@ func (s *Server) router() chi.Router {
 			protected.Get("/spaces/{spaceID}/notes", s.listNotes)
 			protected.Get("/spaces/{spaceID}/events", s.spaceEvents)
 			protected.Get("/spaces/{spaceID}/rewind", s.spaceRewind)
+			protected.Post("/notes/{noteID}/attachments", s.uploadAttachment)
+			protected.Get("/spaces/{spaceID}/attachments", s.listSpaceAttachments)
+			protected.Get("/attachments/{attachmentID}", s.serveAttachment)
+			protected.Delete("/attachments/{attachmentID}", s.deleteAttachment)
 			protected.Get("/spaces/{spaceID}/members", s.listSpaceMembers)
 			protected.Post("/spaces/{spaceID}/members", s.shareSpace)
 			protected.Delete("/spaces/{spaceID}/members/{memberID}", s.removeSpaceMember)
@@ -252,6 +256,27 @@ func contentSecurityPolicy(nonce string) string {
 		"base-uri 'self'",
 		"form-action 'self'",
 	}, "; ")
+}
+
+// requestSizeLimit caps request bodies.
+//
+// One megabyte is right for everything umm accepts as JSON, and wrong for the
+// one route that takes a picture. The cap has to be decided here rather than in
+// the handler: this middleware replaces the body with a limited reader, and
+// wrapping an already-limited reader in a looser limit does not raise it — the
+// upload would fail at a megabyte with an error about nothing the person did.
+func requestSizeLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := int64(1 << 20)
+		if strings.HasSuffix(r.URL.Path, "/attachments") && r.Method == http.MethodPost {
+			// The picture, plus room for the multipart envelope around it. The
+			// real limit on the picture itself is enforced against the decoded
+			// bytes, and again by a CHECK constraint.
+			limit = store.MaxAttachmentBytes + (64 << 10)
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {

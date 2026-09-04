@@ -78,6 +78,7 @@ import {
   discardOfflineMutation,
   json,
   replayOfflineConflicts,
+  type Attachment,
   type EdgeStyle,
   type NoteComment,
   type Preferences,
@@ -244,6 +245,10 @@ function CanvasInner() {
    * notes and connections on screen were reconstructed from what was recorded,
    * and nothing on this canvas may be changed.
    */
+  /** The pictures on this space's thoughts, keyed by thought. */
+  const [attachments, setAttachments] = useState<Record<string, Attachment[]>>({});
+  const pictureInput = useRef<HTMLInputElement>(null);
+  const attachingTo = useRef<string>('');
   const [rewind, setRewind] = useState<Rewind>();
   // Read inside the event stream's handler, which is registered once per space
   // and would otherwise close over the value rewind had when it was registered.
@@ -482,6 +487,65 @@ function CanvasInner() {
     [activeSpace, loadCanvas, syncNotes],
   );
 
+  const loadAttachments = useCallback(async () => {
+    if (!activeSpace) return;
+    try {
+      const body = await api<{ attachments: Attachment[] }>(`/spaces/${activeSpace}/attachments`, { silent: true });
+      const grouped: Record<string, Attachment[]> = {};
+      for (const attachment of body.attachments ?? []) {
+        (grouped[attachment.noteId] ??= []).push(attachment);
+      }
+      setAttachments(grouped);
+    } catch {
+      // A canvas whose pictures could not be listed still shows its thoughts.
+      setAttachments({});
+    }
+  }, [activeSpace]);
+
+  /**
+   * Put a picture on a thought.
+   *
+   * The file picker is a single hidden input reused for every thought rather
+   * than one per card: a canvas with two thousand notes would otherwise carry
+   * two thousand of them.
+   */
+  const attachPicture = useCallback((noteID: string) => {
+    attachingTo.current = noteID;
+    if (pictureInput.current) {
+      pictureInput.current.value = '';
+      pictureInput.current.click();
+    }
+  }, []);
+
+  const uploadPicture = useCallback(
+    async (file: File) => {
+      const noteID = attachingTo.current;
+      if (!noteID) return;
+      const form = new FormData();
+      form.append('file', file);
+      try {
+        await api<Attachment>(`/notes/${noteID}/attachments`, { method: 'POST', body: form });
+        await loadAttachments();
+      } catch {
+        // The API layer has already said which rule was met and what the limit
+        // is, which is the part a person can act on.
+      }
+    },
+    [loadAttachments],
+  );
+
+  const removePicture = useCallback(
+    async (attachmentID: string) => {
+      try {
+        await api(`/attachments/${attachmentID}`, { method: 'DELETE' });
+        await loadAttachments();
+      } catch {
+        // Reported already.
+      }
+    },
+    [loadAttachments],
+  );
+
   const loadBranches = useCallback(async () => {
     if (!activeSpace) return;
     try {
@@ -502,13 +566,14 @@ function CanvasInner() {
     if (!activeSpace) return;
     void loadCanvas().catch(() => undefined);
     void loadBranches();
+    void loadAttachments();
     api<{ dreams: DreamHistory[] }>('/dreams', { silent: true })
       .then(({ dreams }) => {
         const fresh = dreams.find((d) => d.spaceId === activeSpace && d.status === 'created');
         if (fresh && !readSessionStorage(`dream:${fresh.dreamId}`).value) setMorningDream(fresh);
       })
       .catch(() => undefined);
-  }, [activeSpace, loadCanvas, loadBranches]);
+  }, [activeSpace, loadCanvas, loadBranches, loadAttachments]);
   useEffect(() => {
     if (!activeSpace) return;
     const stream = new EventSource(`/api/v1/spaces/${activeSpace}/events`);
@@ -964,6 +1029,9 @@ function CanvasInner() {
           onDelete: remove,
           onRestore: restore,
           onComments: openComments,
+          attachments: attachments[note.id],
+          onAttach: attachPicture,
+          onRemoveAttachment: removePicture,
           readOnly,
         },
       }));
@@ -1037,6 +1105,11 @@ function CanvasInner() {
     // editable, and never rebuilt when it landed: the canvas said "read-only"
     // in the notice and offered a working editor underneath it.
     readOnly,
+    // Same shape: pictures arrive in their own request, and a card built before
+    // they land would never show them.
+    attachments,
+    attachPicture,
+    removePicture,
   ]);
   useEffect(() => {
     /*
@@ -2573,6 +2646,18 @@ function CanvasInner() {
           </Paper>
         </div>
       )}
+      {/* One picker for the whole canvas: a card each would put thousands of
+          file inputs in the document on a large space. */}
+      <input
+        ref={pictureInput}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        hidden
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          if (file) void uploadPicture(file);
+        }}
+      />
       {rewind && (
         <Paper className="lens-banner glass" radius="xl" p="xs" px="md">
           <Group gap="xs" wrap="nowrap">

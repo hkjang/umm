@@ -455,6 +455,102 @@ paths:
       x-required-scope: notes:read
       responses:
         '200': { description: Presentation links, content: { application/json: { schema: { type: object, properties: { presentations: { type: array, items: { $ref: '#/components/schemas/PresentationLink' } } } } } } }
+  /notes/{noteId}/attachments:
+    post:
+      operationId: attach_picture
+      tags: [Notes]
+      summary: Put a picture on a thought
+      description: |
+        The part of a decision that is not a sentence — a whiteboard photo, a
+        screenshot of the thing being argued about — kept with the thought
+        rather than outside the space that holds everything else about it.
+
+        Nothing the upload says about itself is believed. The type is decided by
+        reading the leading bytes, and only PNG, JPEG, GIF and WebP are kept at
+        all. SVG is excluded deliberately: it is XML, it can carry script, and
+        these bytes are served from the application's own origin. A filename is
+        kept only as a label and never decides a type.
+
+        Sent as `multipart/form-data` with the picture in a `file` part. At most
+        5MB per picture and 8 per thought; both are refused rather than
+        truncated, with the limit in the answer.
+
+        Needs edit permission on the space, like writing the thought.
+      parameters:
+        - { name: noteId, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '201':
+          description: The stored picture, without its bytes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '415': { $ref: '#/components/responses/Error' }
+  /spaces/{spaceId}/attachments:
+    get:
+      operationId: list_space_attachments
+      tags: [Notes]
+      summary: The pictures on a space's thoughts
+      description: Without bytes. A canvas draws them by fetching each one, which is also where the access check happens.
+      parameters:
+        - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The pictures
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  attachments:
+                    type: array
+                    items: { $ref: '#/components/schemas/Attachment' }
+  /attachments/{attachmentId}:
+    get:
+      operationId: read_attachment
+      tags: [Notes]
+      summary: The picture itself
+      description: |
+        Served with the type that was read off the bytes when they were stored,
+        `X-Content-Type-Options: nosniff`, and a Content-Security-Policy of its
+        own that permits nothing — so a body a browser could be talked into
+        treating as a document could still do nothing. Cached immutably because
+        a row is never rewritten: a changed picture is a new row with a new id.
+
+        A picture nobody may read and a picture that does not exist answer the
+        same way, because telling those apart tells a stranger what exists.
+      parameters:
+        - { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The bytes
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: delete_attachment
+      tags: [Notes]
+      summary: Remove a picture
+      description: Needs edit permission, like putting one on. Deleting the thought removes its pictures too.
+      parameters:
+        - { name: attachmentId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Removed }
+        '404': { $ref: '#/components/responses/Error' }
   /spaces/{spaceId}/rewind:
     get:
       operationId: rewind_space
@@ -2355,6 +2451,20 @@ components:
               description: |
                 Present only when origin is auto. A person drawing a line is not
                 expressing a probability, so it is absent for every other origin.
+    Attachment:
+      type: object
+      required: [id, noteId, contentType, byteSize, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        noteId: { type: string, format: uuid }
+        contentType:
+          type: string
+          enum: [image/png, image/jpeg, image/gif, image/webp]
+          description: Read off the bytes when they were stored, never taken from the upload.
+        byteSize: { type: integer }
+        filename: { type: string, description: What the person called it, kept only to label a download. Never used to decide a type. }
+        uploadedBy: { type: string, format: uuid }
+        createdAt: { type: string, format: date-time }
     Backlink:
       type: object
       required: [edge, note, direction]
