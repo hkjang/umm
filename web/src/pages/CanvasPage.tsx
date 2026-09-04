@@ -184,6 +184,12 @@ interface Rewind {
    * it joined. Shown rather than quietly missing.
    */
   removedEdges: number;
+  /**
+   * Pictures that were on the canvas then and cannot be drawn, because the
+   * thought they hung on has been deleted since. That thought comes back, so
+   * without saying this it comes back looking as though it never had one.
+   */
+  removedAttachments: number;
   /** The first moment this space has anything to show. */
   earliest: string;
 }
@@ -218,6 +224,20 @@ const noteWritePayload = (note: ThoughtNote): NoteWritePayload => ({
   rotation: note.rotation,
   version: note.version,
 });
+
+/**
+ * Pictures keyed by the thought they hang on.
+ *
+ * Shared by the two lists that can arrive — today's, and a rewound canvas's —
+ * so a snapshot's pictures reach the notes through the same shape today's do.
+ */
+const groupByNote = (attachments: Attachment[]): Record<string, Attachment[]> => {
+  const grouped: Record<string, Attachment[]> = {};
+  for (const attachment of attachments) {
+    (grouped[attachment.noteId] ??= []).push(attachment);
+  }
+  return grouped;
+};
 
 function CanvasInner() {
   const { t, formatDate } = useTranslation();
@@ -447,6 +467,17 @@ function CanvasInner() {
     },
     [activeSpace],
   );
+  const loadAttachments = useCallback(async () => {
+    if (!activeSpace) return;
+    try {
+      const body = await api<{ attachments: Attachment[] }>(`/spaces/${activeSpace}/attachments`, { silent: true });
+      setAttachments(groupByNote(body.attachments ?? []));
+    } catch {
+      // A canvas whose pictures could not be listed still shows its thoughts.
+      setAttachments({});
+    }
+  }, [activeSpace]);
+
   /**
    * Show the space as it was, or return to now.
    *
@@ -461,6 +492,10 @@ function CanvasInner() {
       if (!at) {
         setRewind(undefined);
         await loadCanvas();
+        // The pictures came from the snapshot while it was showing, so today's
+        // have to be fetched again — otherwise returning to now leaves the
+        // canvas holding June's.
+        await loadAttachments();
         return;
       }
       setLoading(true);
@@ -470,13 +505,24 @@ function CanvasInner() {
           notes: ThoughtNote[];
           edges: ThoughtEdge[];
           removedEdges: number;
+          attachments: Attachment[];
+          removedAttachments: number;
           earliest: string;
         }>(`/spaces/${activeSpace}/rewind?at=${encodeURIComponent(at)}`);
         syncNotes(snapshot.notes, true);
         setRawEdges(snapshot.edges);
+        // The snapshot's pictures, not the canvas's. A photograph pasted this
+        // morning on a thought as it stood in June would be the one thing on
+        // that canvas nobody could date by reading it.
+        setAttachments(groupByNote(snapshot.attachments ?? []));
         setRelated(undefined);
         setBacklinks([]);
-        setRewind({ at: snapshot.at, removedEdges: snapshot.removedEdges, earliest: snapshot.earliest });
+        setRewind({
+          at: snapshot.at,
+          removedEdges: snapshot.removedEdges,
+          removedAttachments: snapshot.removedAttachments ?? 0,
+          earliest: snapshot.earliest,
+        });
       } catch {
         // Already reported by the API layer. Staying where they were beats
         // showing a canvas that is neither then nor now.
@@ -484,23 +530,8 @@ function CanvasInner() {
         setLoading(false);
       }
     },
-    [activeSpace, loadCanvas, syncNotes],
+    [activeSpace, loadAttachments, loadCanvas, syncNotes],
   );
-
-  const loadAttachments = useCallback(async () => {
-    if (!activeSpace) return;
-    try {
-      const body = await api<{ attachments: Attachment[] }>(`/spaces/${activeSpace}/attachments`, { silent: true });
-      const grouped: Record<string, Attachment[]> = {};
-      for (const attachment of body.attachments ?? []) {
-        (grouped[attachment.noteId] ??= []).push(attachment);
-      }
-      setAttachments(grouped);
-    } catch {
-      // A canvas whose pictures could not be listed still shows its thoughts.
-      setAttachments({});
-    }
-  }, [activeSpace]);
 
   /**
    * Put a picture on a thought.
@@ -2669,10 +2700,21 @@ function CanvasInner() {
               {/* Not "this is everything that was here". A connection removed
                   since cannot be drawn — the log records that one went, never
                   what it joined — so the number is said rather than left as a
-                  gap the reader would take for absence. */}
-              {rewind.removedEdges > 0
-                ? t('그 뒤 지워진 연결 {count}개는 되살릴 수 없어 빠져 있습니다.', { count: rewind.removedEdges })
-                : t('바꿀 수는 없고 보기만 합니다.')}
+                  gap the reader would take for absence. A picture whose thought
+                  was deleted since is the same kind of gap: the thought comes
+                  back, and it comes back looking as though it never had one. */}
+              {rewind.removedEdges > 0 && rewind.removedAttachments > 0
+                ? t('그 뒤 지워진 연결 {edges}개와 그림 {pictures}장은 되살릴 수 없어 빠져 있습니다.', {
+                    edges: rewind.removedEdges,
+                    pictures: rewind.removedAttachments,
+                  })
+                : rewind.removedEdges > 0
+                  ? t('그 뒤 지워진 연결 {count}개는 되살릴 수 없어 빠져 있습니다.', { count: rewind.removedEdges })
+                  : rewind.removedAttachments > 0
+                    ? t('그 뒤 지워진 생각에 붙어 있던 그림 {count}장은 되살릴 수 없어 빠져 있습니다.', {
+                        count: rewind.removedAttachments,
+                      })
+                    : t('바꿀 수는 없고 보기만 합니다.')}
             </Text>
             <Button size="compact-xs" variant="subtle" onClick={() => void rewindTo(undefined)}>
               {t('지금으로')}

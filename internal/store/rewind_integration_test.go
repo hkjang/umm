@@ -287,3 +287,88 @@ func TestSpaceAtPicksTheVersionThatWasLiveThenIntegration(t *testing.T) {
 		}
 	}
 }
+
+// A picture is dated like everything else. A canvas showing two days ago must
+// not show the photograph pasted this morning — it is the one part of a thought
+// whose age nobody can tell by reading it, so if the snapshot does not date it
+// nothing else will.
+func TestSpaceAtLeavesOutAPictureAddedSinceIntegration(t *testing.T) {
+	db, userID, spaceID := rewindSpace(t)
+	ctx := context.Background()
+
+	note, err := db.CreateNote(ctx, userID, Note{SpaceID: spaceID, AuthorID: userID, Content: "그림이 붙는 생각"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backdate(t, db, "notes", "created_at", note.ID, 72*time.Hour)
+
+	then, err := db.AttachToNote(ctx, userID, note.ID, "그때 붙인 화이트보드.png", realPNG(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	backdate(t, db, "note_attachments", "created_at", then.ID, 48*time.Hour)
+	later, err := db.AttachToNote(ctx, userID, note.ID, "오늘 붙인 캡처.png", realPNG(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	past, err := db.SpaceAt(ctx, userID, spaceID, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(past.Attachments) != 1 || past.Attachments[0].ID != then.ID {
+		t.Fatalf("the past canvas is holding a picture from the future: %+v", past.Attachments)
+	}
+	if past.RemovedAttachments != 0 {
+		t.Errorf("RemovedAttachments=%d; nothing was removed", past.RemovedAttachments)
+	}
+
+	// Both are on today's canvas, so the line above is the dating rather than
+	// the second picture never having been stored.
+	now, err := db.SpaceAt(ctx, userID, spaceID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(now.Attachments) != 2 {
+		t.Fatalf("today's canvas holds %d pictures, want both: %+v", len(now.Attachments), now.Attachments)
+	}
+	if now.Attachments[1].ID != later.ID || now.Attachments[1].ContentType != "image/png" {
+		t.Errorf("the second picture came back as %+v", now.Attachments[1])
+	}
+}
+
+// A thought deleted since comes back, and it had a picture. The bytes are
+// served against a thought that is not deleted, so the picture cannot be drawn
+// — saying how many is the honest half, the same as for a removed connection.
+func TestSpaceAtCountsThePicturesItCannotDrawIntegration(t *testing.T) {
+	db, userID, spaceID := rewindSpace(t)
+	ctx := context.Background()
+
+	note, err := db.CreateNote(ctx, userID, Note{SpaceID: spaceID, AuthorID: userID, Content: "나중에 지운 생각"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backdate(t, db, "notes", "created_at", note.ID, 72*time.Hour)
+	picture, err := db.AttachToNote(ctx, userID, note.ID, "지운 생각의 사진.png", realPNG(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	backdate(t, db, "note_attachments", "created_at", picture.ID, 48*time.Hour)
+	if _, err := db.Pool.Exec(ctx, `UPDATE notes SET deleted_at=now() WHERE id=$1`, note.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	past, err := db.SpaceAt(ctx, userID, spaceID, time.Now().Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(past.Notes) != 1 {
+		t.Fatalf("the deleted thought did not come back: %+v", past.Notes)
+	}
+	if len(past.Attachments) != 0 {
+		t.Errorf("a picture nobody can fetch was handed to the canvas: %+v", past.Attachments)
+	}
+	if past.RemovedAttachments != 1 {
+		t.Fatalf("RemovedAttachments=%d; the thought comes back looking as though it never had a picture", past.RemovedAttachments)
+	}
+}
