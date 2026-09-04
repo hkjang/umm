@@ -455,6 +455,58 @@ paths:
       x-required-scope: notes:read
       responses:
         '200': { description: Presentation links, content: { application/json: { schema: { type: object, properties: { presentations: { type: array, items: { $ref: '#/components/schemas/PresentationLink' } } } } } } }
+  /spaces/{spaceId}/rewind:
+    get:
+      operationId: rewind_space
+      tags: [Notes]
+      summary: What the space looked like at an instant
+      description: |
+        Every note update snapshots the state it replaces — the words, and where
+        the note sat — so this reads material that has been accumulating since
+        revisions were introduced. A revision holds the state *before* the
+        change that created it, so a note's state at an instant is the earliest
+        revision recorded after that instant, and if nothing was recorded after
+        it the note has not changed since.
+
+        Thoughts written later are absent. Thoughts deleted since come back,
+        because they were on the canvas then.
+
+        Connections removed since cannot be drawn: a deletion event has only
+        ever carried the edge's id, and the row itself is gone. `removedEdges`
+        counts them so the answer can say a connection is missing rather than
+        showing a canvas that quietly omits it. Connections that still exist
+        appear from when they were drawn, and only when both ends were already
+        on the canvas.
+      parameters:
+        - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+        - name: at
+          in: query
+          schema: { type: string, format: date-time }
+          description: RFC3339. Defaults to now. An unparsable value is refused rather than answered for now, because someone who asked about June and was shown today would not know they had been.
+      responses:
+        '200':
+          description: The space at that instant
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  at: { type: string, format: date-time }
+                  notes:
+                    type: array
+                    items: { $ref: '#/components/schemas/Note' }
+                  edges:
+                    type: array
+                    items: { $ref: '#/components/schemas/Edge' }
+                  removedEdges:
+                    type: integer
+                    description: Connections deleted between that instant and now. They existed then and cannot be drawn.
+                  earliest:
+                    type: string
+                    format: date-time
+                    description: The first moment this space has anything to show, so a control cannot offer a date before it existed.
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
   /spaces/{spaceId}/events:
     parameters:
       - { $ref: '#/components/parameters/SpaceID' }
