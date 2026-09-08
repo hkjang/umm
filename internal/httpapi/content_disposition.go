@@ -33,12 +33,31 @@ const maxDispositionStemBytes = 120
 // attachment label, and for the same reason — a name that only labels on one
 // screen becomes a path the moment somebody writes it to disk.
 func attachmentDisposition(stem, extension string) string {
+	return disposition("attachment", stem, extension, "umm-space")
+}
+
+// inlineDisposition names a file that is meant to be shown where it is.
+//
+// A picture on the canvas is drawn by an <img>, so the disposition has to stay
+// `inline` — turning it into an attachment would replace the canvas with a
+// download. But `inline` alone leaves the name to the address, and a picture's
+// address is a uuid: the moment somebody saves one out of the page they get a
+// file called `9c2e1f4a-…` with no way to tell which whiteboard it was. The
+// name is a parameter of the header, not the disposition, so it can be given
+// without changing how the body is shown.
+func inlineDisposition(stem, extension string) string {
+	return disposition("inline", stem, extension, "umm-picture")
+}
+
+// disposition builds the header. fallback names the file for a client that
+// cannot read filename* and has nothing left to spell of the person's own name.
+func disposition(kind, stem, extension, fallback string) string {
 	stem = textutil.LimitUTF8Bytes(dispositionSafe(stem), maxDispositionStemBytes)
 	if stem == "" {
 		stem = "umm"
 	}
 	name := stem + extension
-	return fmt.Sprintf(`attachment; filename="%s"; filename*=UTF-8''%s`, asciiFallback(name), rfc5987Escape(name))
+	return fmt.Sprintf(`%s; filename="%s"; filename*=UTF-8''%s`, kind, asciiFallback(name, fallback), rfc5987Escape(name))
 }
 
 // dispositionSafe drops what must never reach a file name, whichever of the
@@ -58,10 +77,10 @@ func dispositionSafe(name string) string {
 // that run, because a name half in Korean would otherwise come out as dashes
 // with the gaps between the words still in them.
 //
-// A name with nothing left to spell falls back to a fixed one. This is the
+// A name with nothing left to spell falls back to the caller's. This is the
 // worse of the two names on purpose; the client that reads filename* gets what
 // the space is actually called.
-func asciiFallback(name string) string {
+func asciiFallback(name, fallback string) string {
 	var out strings.Builder
 	previousDash := false
 	for _, r := range name {
@@ -77,7 +96,7 @@ func asciiFallback(name string) string {
 	}
 	trimmed := strings.Trim(out.String(), "-")
 	if trimmed == "" || trimmed == extensionOf(name) {
-		return "umm-space" + extensionOf(name)
+		return fallback + extensionOf(name)
 	}
 	return trimmed
 }

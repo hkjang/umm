@@ -85,6 +85,28 @@ func TestAttachmentDisposition(t *testing.T) {
 	}
 }
 
+// A picture is drawn where it is, and still has to have a name: its address is
+// a uuid, so without one a saved copy is called after the row it came from.
+func TestInlineDispositionNamesAPictureWithoutDownloadingIt(t *testing.T) {
+	header := inlineDisposition("화이트보드", ".png")
+	mediatype, params, err := mime.ParseMediaType(header)
+	if err != nil {
+		t.Fatalf("the header is not readable: %v (%q)", err, header)
+	}
+	// The canvas draws this with an <img>; making it an attachment would put a
+	// download in place of the picture.
+	if mediatype != "inline" {
+		t.Errorf("mediatype = %q, want inline (%q)", mediatype, header)
+	}
+	if params["filename"] != "화이트보드.png" {
+		t.Errorf("filename = %q, want the label the picture arrived with (%q)", params["filename"], header)
+	}
+	// A client that cannot read filename* is told it is a picture, not a space.
+	if !strings.Contains(header, `filename="umm-picture.png"`) {
+		t.Errorf("the ascii fallback does not say this is a picture: %q", header)
+	}
+}
+
 // The name is spelled out twice, so an unbounded one is a header nobody reads.
 func TestAttachmentDispositionBoundsTheName(t *testing.T) {
 	header := attachmentDisposition(strings.Repeat("한", 200), ".md")

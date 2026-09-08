@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -128,6 +129,49 @@ func TestAttachmentIsServedAsAnImageAndNothingElseIntegration(t *testing.T) {
 	}
 	if disposition := got.Header().Get("Content-Disposition"); !strings.HasPrefix(disposition, "inline") {
 		t.Errorf("Content-Disposition=%q", disposition)
+	}
+}
+
+// A picture is fetched from an address that is a uuid, so the name it was given
+// has to travel in the header or a saved copy is called after the row.
+func TestAttachmentKeepsItsNameWhenSavedIntegration(t *testing.T) {
+	_, handler, cookie, noteID, _ := attachmentHarness(t)
+
+	// The label claims a format the bytes are not. umm decided PNG by reading
+	// them, so the words are kept and the true ending is added.
+	contentType, body := uploadForm(t, "회의 화이트보드.svg", pngBytes(t))
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/notes/"+noteID.String()+"/attachments", body)
+	request.Header.Set("Content-Type", contentType)
+	request.AddCookie(cookie)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("upload: %d %s", response.Code, response.Body.String())
+	}
+	var saved store.Attachment
+	if err := json.Unmarshal(response.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+
+	fetch := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+saved.ID.String(), nil)
+	fetch.AddCookie(cookie)
+	got := httptest.NewRecorder()
+	handler.ServeHTTP(got, fetch)
+	if got.Code != http.StatusOK {
+		t.Fatalf("fetch: %d %s", got.Code, got.Body.String())
+	}
+
+	disposition := got.Header().Get("Content-Disposition")
+	mediatype, params, err := mime.ParseMediaType(disposition)
+	if err != nil {
+		t.Fatalf("the picture's name is not a readable header: %v (%q)", err, disposition)
+	}
+	// The canvas draws this with an <img>. Naming it must not download it.
+	if mediatype != "inline" {
+		t.Errorf("mediatype = %q, want inline (%q)", mediatype, disposition)
+	}
+	if params["filename"] != "회의 화이트보드.svg.png" {
+		t.Errorf("filename = %q, want the label with the format umm read (%q)", params["filename"], disposition)
 	}
 }
 
