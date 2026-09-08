@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
@@ -120,13 +121,51 @@ func (s *Server) serveAttachment(w http.ResponseWriter, r *http.Request) {
 	// A policy of its own, permitting nothing. The page policy allows scripts
 	// with a nonce; this body must never be treated as a page at all.
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-	w.Header().Set("Content-Disposition", "inline")
+	// Still inline — the canvas draws this with an <img> — but carrying the
+	// label the picture arrived with, because the address it is fetched from is
+	// a uuid and would otherwise be the only name a saved copy ever gets.
+	w.Header().Set("Content-Disposition", inlineDisposition(pictureName(attachment)))
 	// Rows are never rewritten — a changed picture is a new row with a new id —
 	// so this is safe to keep, and private because it is somebody's space.
 	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// pictureEndings is what each format umm keeps is called on disk, and the
+// endings a label is already allowed to carry for it.
+var pictureEndings = map[string][]string{
+	"image/png":  {".png"},
+	"image/jpeg": {".jpg", ".jpeg"},
+	"image/gif":  {".gif"},
+	"image/webp": {".webp"},
+}
+
+// pictureName splits a stored picture into the name a download should carry.
+//
+// The label is a person's words and is kept: it is the only readable thing
+// about a file whose address is a uuid. The ending is not the label's to
+// decide. umm named the format by reading the bytes, exactly as it refuses to
+// believe the upload anywhere else here, so a label claiming a different one —
+// `diagram.svg` over PNG bytes — keeps its words and gains the true ending
+// rather than being trusted or being cut off.
+//
+// A label that already ends the right way keeps that ending as it wrote it, so
+// `사진.JPEG` does not come back as `사진.JPEG.jpg`.
+func pictureName(attachment store.Attachment) (stem, extension string) {
+	endings := pictureEndings[attachment.ContentType]
+	label := strings.TrimSpace(attachment.Filename)
+	if len(endings) == 0 {
+		return label, ""
+	}
+	lowered := strings.ToLower(label)
+	for _, ending := range endings {
+		if strings.HasSuffix(lowered, ending) {
+			return label[:len(label)-len(ending)], label[len(label)-len(ending):]
+		}
+	}
+	return label, endings[0]
 }
 
 // listSpaceAttachments returns what is on a space's thoughts, without bytes.
