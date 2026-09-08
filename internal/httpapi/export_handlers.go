@@ -209,14 +209,8 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 		}
 		out.WriteString("\n")
 	}
-	filename := strings.Map(func(r rune) rune {
-		if r == '/' || r == '\\' || r == '\n' || r == '\r' {
-			return '-'
-		}
-		return r
-	}, spaceName)
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="umm-%s.md"`, filename))
+	w.Header().Set("Content-Disposition", attachmentDisposition("umm-"+spaceName, ".md"))
 	s.Store.Audit(r.Context(), &p.User.ID, "space.export", "space", spaceID.String(), map[string]any{"format": "markdown"})
 	_, _ = w.Write([]byte(out.String()))
 }
