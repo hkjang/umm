@@ -103,6 +103,34 @@ func (s *Server) exportOutline(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(outline))
 }
 
+// newlines are what a name written onto a structural line must not carry.
+var newlines = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ")
+
+// oneLine puts somebody's words on a line the export gives a meaning to.
+//
+// A space's name becomes the banner heading, a thought's title becomes its
+// `## ` heading, a line of thinking becomes a list item — shapes that end where
+// the line does. Nothing stops a newline getting into any of them: a space name
+// is trimmed and counted in characters, a title is stored as it arrives, and
+// the web fields are single-line only by being <input>. An API or MCP client
+// writes what it likes.
+//
+// Spilled onto the next line those words are read back as something else. The
+// banner is the worst of it, because it is what announces the file as umm's
+// own, and the rule is that the section's whole body is the banner and nothing
+// else. The rest of a two-line space name joins that body, the announcement is
+// not recognised, and the restore falls back to reading the file as anybody's
+// Markdown — every id, canvas position, colour, line of thinking and connection
+// dropped, from a newline in a name. A backup you cannot restore is not a
+// backup.
+//
+// The words are kept and the break becomes a space, the way an edge's reason
+// has always been written. The file format does not change, so exports already
+// on somebody's disk read exactly as before.
+func oneLine(text string) string {
+	return strings.TrimSpace(newlines.Replace(text))
+}
+
 func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, "notes:read") {
 		return
@@ -165,15 +193,15 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var out strings.Builder
-	fmt.Fprintf(&out, "# %s\n\nExported from umm at %s.\n\n", spaceName, time.Now().Format(time.RFC3339))
+	fmt.Fprintf(&out, "# %s\n\nExported from umm at %s.\n\n", oneLine(spaceName), time.Now().Format(time.RFC3339))
 	for _, n := range notes {
-		title := strings.TrimSpace(n.Title)
+		title := oneLine(n.Title)
 		if title == "" {
 			title = "Thought"
 		}
 		fmt.Fprintf(&out, "## %s\n\n%s\n\n- id: `%s`\n- type: `%s`\n- source: `%s`\n- color: `%s`\n- canvas: `%.0f, %.0f`\n", title, n.Content, n.ID, n.Kind, n.Source, n.Color, n.X, n.Y)
 		if branch, ok := byID[assignments[n.ID]]; ok {
-			fmt.Fprintf(&out, "- line: `%s` (%s)\n", branch.Name, branch.Status)
+			fmt.Fprintf(&out, "- line: `%s` (%s)\n", oneLine(branch.Name), branch.Status)
 		}
 		out.WriteString("\n")
 	}
@@ -192,8 +220,8 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 			// dropped the reason would keep the half that can be reconstructed
 			// and lose the half that cannot.
 			reason := ""
-			if e.Reason != "" {
-				reason = " — " + strings.ReplaceAll(e.Reason, "\n", " ")
+			if why := oneLine(e.Reason); why != "" {
+				reason = " — " + why
 			}
 			fmt.Fprintf(&out, "- `%s` --%s--> `%s`%s%s\n", e.SourceID, e.Relation, e.TargetID, origin, reason)
 		}
@@ -201,9 +229,9 @@ func (s *Server) exportMarkdown(w http.ResponseWriter, r *http.Request) {
 	if len(branches) > 0 {
 		out.WriteString("## Lines of thinking\n\n")
 		for _, branch := range branches {
-			fmt.Fprintf(&out, "- **%s** — %s", branch.Name, branch.Status)
-			if strings.TrimSpace(branch.Resolution) != "" {
-				fmt.Fprintf(&out, ": %s", branch.Resolution)
+			fmt.Fprintf(&out, "- **%s** — %s", oneLine(branch.Name), branch.Status)
+			if resolution := oneLine(branch.Resolution); resolution != "" {
+				fmt.Fprintf(&out, ": %s", resolution)
 			}
 			out.WriteString("\n")
 		}
