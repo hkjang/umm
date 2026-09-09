@@ -208,6 +208,98 @@ describe("reading umm's own export", () => {
     ]);
   });
 
+  // Someone else's Markdown is safe because none of these rules apply to it.
+  // Inside umm's own file they all do, and "Connections" is as ordinary a thing
+  // to call a thought there as anywhere else — so the heading alone cannot say
+  // whether a section is that person's thought or the list the exporter writes
+  // at the end. Read as the list, the thought is dropped and its `- id:` never
+  // registers, so the connections drawn to it name nothing and go too.
+  it('restores a thought titled like one of the export sections', () => {
+    const collides = [
+      '# 돌아오는 공간',
+      '',
+      'Exported from umm at 2026-09-10T01:01:26+09:00.',
+      '',
+      '## Connections',
+      '',
+      '팀이 어떻게 이어져 있는지 그려 본 것',
+      '',
+      '- id: `0f1e5f1c-6b9b-4a2f-9d0e-2a7c5b3e8d11`',
+      '- type: `thought`',
+      '- source: `user`',
+      '- canvas: `40, 80`',
+      '',
+      '## Lines of thinking',
+      '',
+      '내가 따라가 보려던 방향들',
+      '',
+      '- id: `7c2d1a90-3f44-4b6e-8a01-5d9e0c4b2f33`',
+      '- type: `thought`',
+      '- source: `user`',
+      '- canvas: `40, 280`',
+      '',
+      '## Connections',
+      '',
+      '- `0f1e5f1c-6b9b-4a2f-9d0e-2a7c5b3e8d11` --related--> `7c2d1a90-3f44-4b6e-8a01-5d9e0c4b2f33` — 같은 회의에서 나왔다',
+      '',
+      '## Lines of thinking',
+      '',
+      '- **되돌리기 실험** — adopted: 되돌아왔습니다',
+    ].join('\n');
+    const document = readMarkdownDocument(collides);
+    expect(document.isExport).toBe(true);
+    // Both thoughts come back, with the titles their author gave them and the
+    // ids the connection below names.
+    expect(document.thoughts).toEqual([
+      {
+        title: 'Connections',
+        content: '팀이 어떻게 이어져 있는지 그려 본 것',
+        sourceId: '0f1e5f1c-6b9b-4a2f-9d0e-2a7c5b3e8d11',
+        x: 40,
+        y: 80,
+        kind: 'thought',
+      },
+      {
+        title: 'Lines of thinking',
+        content: '내가 따라가 보려던 방향들',
+        sourceId: '7c2d1a90-3f44-4b6e-8a01-5d9e0c4b2f33',
+        x: 40,
+        y: 280,
+        kind: 'thought',
+      },
+    ]);
+    // And the export's own sections are still read as the export's own.
+    expect(document.connections).toEqual([
+      {
+        from: '0f1e5f1c-6b9b-4a2f-9d0e-2a7c5b3e8d11',
+        to: '7c2d1a90-3f44-4b6e-8a01-5d9e0c4b2f33',
+        relation: 'related',
+        reason: '같은 회의에서 나왔다',
+      },
+    ]);
+    expect(document.lines).toEqual([{ name: '되돌리기 실험', status: 'adopted', resolution: '되돌아왔습니다' }]);
+  });
+
+  // The tail is what tells them apart, so a thought that carries only some of
+  // the metadata — an older export, or one written back as a retry draft — is
+  // still a thought.
+  it('restores a section-titled thought that carries only its id', () => {
+    const sparse = [
+      '# 돌아오는 공간',
+      '',
+      'Exported from umm at 2026-09-10T01:01:26+09:00.',
+      '',
+      '## Connections',
+      '',
+      '이건 내 생각입니다',
+      '',
+      '- id: `0f1e5f1c-6b9b-4a2f-9d0e-2a7c5b3e8d11`',
+    ].join('\n');
+    expect(splitMarkdownThoughts(sparse)).toEqual([
+      { title: 'Connections', content: '이건 내 생각입니다', sourceId: '0f1e5f1c-6b9b-4a2f-9d0e-2a7c5b3e8d11' },
+    ]);
+  });
+
   // The banner is only the banner where the exporter puts it, directly under
   // the space name. Further down it is something someone wrote about umm.
   it('does not mistake a document that mentions the phrase for an export', () => {

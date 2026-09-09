@@ -141,6 +141,37 @@ function withoutExportMetadata(content: string): string {
   return lines.slice(0, end).join('\n').trim();
 }
 
+/**
+ * Whether this section is the export describing the space, rather than a
+ * thought somebody happened to give the same name.
+ *
+ * "Connections" is an ordinary title for a thought — so is "Lines of thinking"
+ * — and inside umm's own file the heading alone cannot tell the two apart. Read
+ * by the heading alone, that thought is taken for the list at the end of the
+ * file: its body yields no connections, and the section is dropped. The thought
+ * is gone from the restore, and because its `- id:` never registered, every
+ * connection drawn to it names an id no thought answers to and goes with it.
+ * The one heading a person is likeliest to reuse is the one that costs them the
+ * most.
+ *
+ * The exporter already writes the difference down. Every thought section ends
+ * in the metadata list — id, type, source, colour, canvas — and neither of the
+ * two closing sections ever does; their last line is a connection or a line of
+ * thinking. So the tail says which this is, the same tail the metadata itself
+ * is read from, and no change to the format is needed: files already saved read
+ * correctly too.
+ */
+function describesTheSpace(title: string, content: string): boolean {
+  if (!exportSections.has(title)) return false;
+  const lines = content.split('\n');
+  for (let at = lines.length - 1; at >= 0; at -= 1) {
+    const line = lines[at].trim();
+    if (line === '') continue;
+    return !exportMetadata.test(line);
+  }
+  return true;
+}
+
 const thematicBreak = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 
 /**
@@ -216,7 +247,7 @@ export function readMarkdownDocument(source: string): ImportedDocument {
     if (ummExport) {
       // The connections and the lines of thinking describe the space rather
       // than being thoughts someone had in it.
-      if (title === 'Connections') {
+      if (title === 'Connections' && describesTheSpace(title, content)) {
         // Kept rather than dropped: the thoughts come back without them, and
         // on this canvas what a thought is joined to is half of what it means.
         for (const line of content.split('\n')) {
@@ -228,14 +259,14 @@ export function readMarkdownDocument(source: string): ImportedDocument {
         }
         continue;
       }
-      if (title === 'Lines of thinking') {
+      if (title === 'Lines of thinking' && describesTheSpace(title, content)) {
         for (const entry of content.split('\n')) {
           const found = exportedLine.exec(entry.trim());
           if (found) linesOfThinking.push({ name: found[1], status: found[2], resolution: (found[3] ?? '').trim() });
         }
         continue;
       }
-      if (exportSections.has(title)) continue;
+      if (describesTheSpace(title, content)) continue;
       const id = exportedID.exec(content)?.[1];
       const canvas = exportedCanvas.exec(content);
       const line = exportedLineLabel.exec(content)?.[1];
