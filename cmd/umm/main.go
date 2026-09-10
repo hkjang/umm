@@ -78,6 +78,10 @@ func main() {
 	events := realtime.New(db.Pool)
 	go events.Run(ctx)
 	db.StartJanitor(ctx)
+	// Indexing runs here rather than on whoever opens a space next. Started
+	// even on an installation nobody has opened yet, so an import is searchable
+	// without somebody having to go and look at it first.
+	db.StartEmbeddingSweep(ctx)
 	webDir := "web/dist"
 	if _, err := os.Stat("/app/web/index.html"); err == nil {
 		webDir = "/app/web"

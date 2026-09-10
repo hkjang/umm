@@ -415,14 +415,46 @@ function CanvasInner() {
       .then(({ spaces }) => {
         setSpaces(spaces);
         setSpaceDrafts(Object.fromEntries(spaces.map((space) => [space.id, space.name])));
-        const desired = params.spaceId && spaces.some((s) => s.id === params.spaceId) ? params.spaceId : spaces[0]?.id;
-        if (desired) {
-          setActiveSpace(desired);
-          if (!params.spaceId) navigate(`/space/${desired}`, { replace: true });
+        const exists = (id: string | undefined) => !!id && spaces.some((space) => space.id === id);
+
+        /*
+         * Which space this is.
+         *
+         * The address wins when it names a space this person can open. Failing
+         * that, the one they were last in — the navigation offers /canvas,
+         * which names no space, so arriving that way used to drop whoever
+         * clicked it into whichever space sorted first by name. Somebody
+         * working in one space all morning clicked "My Space" and landed
+         * somewhere else.
+         *
+         * And the address is always rewritten to name the space, so the next
+         * reload lands in the same place rather than being decided again.
+         */
+        const remembered = readLocalStorage('umm:last-space').value ?? undefined;
+        const desired = exists(params.spaceId) ? params.spaceId : exists(remembered) ? remembered : spaces[0]?.id;
+        if (!desired) return;
+        setActiveSpace(desired);
+        if (params.spaceId !== desired) navigate(`/space/${desired}`, { replace: true });
+        // Said out loud rather than silently swapped: the address named a space
+        // and this is not it, which happens when a space was deleted or a share
+        // was withdrawn while the link was sitting in somebody's tab.
+        if (params.spaceId && !exists(params.spaceId)) {
+          showInfo(
+            t('그 공간을 열 수 없어 다른 공간을 열었습니다. 지워졌거나 공유가 회수되었을 수 있습니다.'),
+            t('공간을 찾지 못했습니다'),
+          );
         }
       })
       .catch(() => undefined);
+    // Runs once: this decides which space the page opened on, and re-running it
+    // would fight the switcher.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Remembered so that arriving without a space in the address — which is what
+  // the navigation link does — comes back to where the person was.
+  useEffect(() => {
+    if (activeSpace) writeLocalStorage('umm:last-space', activeSpace);
+  }, [activeSpace]);
   useEffect(() => {
     api<Preferences>('/preferences', { silent: true })
       .then((value) => {

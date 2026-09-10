@@ -49,7 +49,19 @@ type embeddingSettings struct {
 	// same host.
 	EmbeddingBaseURL string `json:"embedding_base_url"`
 	EmbeddingAPIKey  string `json:"embedding_api_key"`
+	// EmbeddingTimeoutSeconds is separate from the chat timeout because the two
+	// wait for different things. A chat model composing a Dream is given
+	// minutes; embedding a sentence is a millisecond of work behind a network
+	// hop, and a caller waiting on it is either searching or indexing. Sharing
+	// one number meant a timeout chosen to be generous to the chat model became
+	// the time a person waited to see their own notes.
+	EmbeddingTimeoutSeconds int `json:"embedding_timeout_seconds"`
 }
+
+// defaultEmbeddingTimeout is what an embedding call gets when nothing is
+// configured. Short on purpose: past this the answer is not worth the wait, and
+// the local algorithm is standing right there.
+const defaultEmbeddingTimeout = 10 * time.Second
 
 // embeddingEndpoint resolves where embeddings are sent and what to authenticate
 // with there.
@@ -123,9 +135,12 @@ func (s *Store) embeddingProviderFromSettings(settings embeddingSettings) intell
 		}
 		key = plain
 	}
-	timeout := time.Duration(settings.TimeoutSeconds) * time.Second
-	if settings.TimeoutSeconds <= 0 {
-		timeout = 45 * time.Second
+	// The embedding timeout, not the chat one. Falling back to the chat timeout
+	// would reintroduce exactly the coupling this separates: an installation
+	// that gave its chat model ninety seconds would give a search the same.
+	timeout := time.Duration(settings.EmbeddingTimeoutSeconds) * time.Second
+	if settings.EmbeddingTimeoutSeconds <= 0 {
+		timeout = defaultEmbeddingTimeout
 	}
 	return intelligence.Provider{Remote: &intelligence.RemoteConfig{
 		BaseURL: baseURL, APIKey: key,

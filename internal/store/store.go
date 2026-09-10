@@ -38,6 +38,10 @@ type Store struct {
 	leaseConfig       *pgx.ConnConfig
 	aiLeaseSlots      chan struct{}
 	webhookLeaseSlots chan struct{}
+	// embeddingNudges carries space ids the sweep should look at first, so
+	// opening a space still gets its thoughts indexed promptly without the
+	// person who opened it waiting for the work.
+	embeddingNudges chan uuid.UUID
 }
 
 const (
@@ -726,10 +730,21 @@ func (s *Store) listNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 	for i := range notes {
 		noteIDs[i] = notes[i].ID
 	}
-	// Embeddings are written whether or not the counts are wanted: a thought
-	// with no vector is invisible to search and to Dream until something makes
-	// one, and this is where that happens.
-	s.ensureEmbeddings(ctx, notes)
+	// Reading a space does not index it.
+	//
+	// This used to call ensureEmbeddings, and it was the only thing in umm that
+	// ever created a vector — writing a note did not, and there was no
+	// background work. So opening a space paid for indexing every note that had
+	// changed since anyone last looked, and with an embedding gateway
+	// configured that meant the read waited on somebody else's server. When
+	// that server was slow, opening your own thoughts was slow. When it failed,
+	// the same read then rewrote every note in the space locally before
+	// answering.
+	//
+	// A read that writes is the wrong shape whatever the timeout. Indexing now
+	// runs in the background; opening a space only nudges it to start with this
+	// one, and never waits.
+	s.NudgeEmbeddings(spaceID)
 	if withCounts {
 		// How many other thoughts each one resembles, against a cutoff derived
 		// from this thought's own score distribution rather than fixed — so the
@@ -836,7 +851,11 @@ func (s *Store) CreateNote(ctx context.Context, userID uuid.UUID, n Note) (Note,
 	if err = tx.Commit(ctx); err != nil {
 		return Note{}, err
 	}
-	_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
+	// Indexed by the sweep, not here. This was a gateway round trip inside
+	// writing a note: with a slow embedding server, typing a thought waited on
+	// it. The nudge asks the sweep to take this space next, so the vector still
+	// arrives in about the time it takes to look up.
+	s.NudgeEmbeddings(n.SpaceID)
 	return n, nil
 }
 
@@ -871,7 +890,9 @@ func (s *Store) updateNote(ctx context.Context, userID uuid.UUID, n Note, aiExcl
 	if err = tx.Commit(ctx); err != nil {
 		return Note{}, err
 	}
-	_ = s.UpsertEmbedding(ctx, n.ID, n.Content, n.Version)
+	// Same as creating one: the person who changed a thought does not wait for
+	// it to be indexed.
+	s.NudgeEmbeddings(n.SpaceID)
 	return n, nil
 }
 

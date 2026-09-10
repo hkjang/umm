@@ -79,6 +79,12 @@ func (s *Store) SuggestLinks(ctx context.Context, userID, spaceID uuid.UUID) (Su
 	if err != nil {
 		return SuggestionResult{}, err
 	}
+	// Indexing is a background job now, so a thought written moments ago may
+	// have no vector yet. Proposing connections while ignoring the newest
+	// thought would answer a question about the space as it was; this asks for
+	// that space to be caught up first. Bounded, and only on a run somebody
+	// deliberately started.
+	s.SweepEmbeddingsOnce(ctx, &spaceID)
 	if !writable {
 		return SuggestionResult{Outcome: OutcomeReadOnly, Edges: []Edge{}}, nil
 	}

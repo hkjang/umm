@@ -210,6 +210,13 @@ const maxDuplicatePairs = 10
 
 // MorningBrief gathers everything waiting since the given time.
 func (s *Store) MorningBrief(ctx context.Context, userID uuid.UUID, since time.Time) (MorningBrief, error) {
+	// The brief's job is to say what is worth looking at, which means comparing
+	// thoughts against each other. A thought waiting to be indexed scores
+	// against nothing and simply would not appear — not as skipped, which the
+	// brief reports honestly, but as absent. Indexing is a background job since
+	// v0.72.0, so this catches up first: one bounded pass, finding nothing once
+	// things have settled.
+	s.SweepEmbeddingsOnce(ctx, nil)
 	brief := MorningBrief{Since: since, Dreams: []BriefGroup{}, Duplicates: []DuplicatePair{},
 		Contradictions: []Contradiction{}, Questions: []OpenQuestion{}, Skipped: []BriefSkip{}}
 

@@ -2,10 +2,12 @@ import { useCallback } from 'react';
 import {
   AppShell,
   Avatar,
+  Center,
   Burger,
   Button,
   Divider,
   Group,
+  Loader,
   Menu,
   NavLink as MantineNavLink,
   ScrollArea,
@@ -27,6 +29,8 @@ import {
   IconSparkles,
   IconUser,
 } from '@tabler/icons-react';
+import { Suspense } from 'react';
+
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useUnsavedWork } from '../unsaved-work';
 import { useAuth } from '../auth-context';
@@ -36,6 +40,21 @@ import NotificationMenu from './NotificationMenu';
 import OfflineStatus from './OfflineStatus';
 import CaptureBox from './CaptureBox';
 import QuickNavigator from './QuickNavigator';
+
+/**
+ * What the content area shows while a page's code is on its way.
+ *
+ * Sized to the area rather than the window, because the frame around it stays
+ * where it is: this replaces the page, not the application.
+ */
+function PageLoader() {
+  const { t } = useTranslation();
+  return (
+    <Center h="100%" role="status" aria-label={t('화면 불러오는 중')}>
+      <Loader color="grape" />
+    </Center>
+  );
+}
 
 const links = [
   { to: '/today', label: msg('오늘의 리뷰'), icon: IconCalendarCheck },
@@ -229,7 +248,12 @@ export default function AppLayout() {
           the region grow to its content instead of bounding it, which is what
           left long pages unscrollable. .app-main owns the height. */}
       <AppShell.Main className="app-main">
-        <Outlet />
+        {/* The waiting happens here so the frame around it does not move. The
+            page's chunk is the only thing that is loading; the header and the
+            navigation are already on screen and already correct. */}
+        <Suspense fallback={<PageLoader />}>
+          <Outlet />
+        </Suspense>
       </AppShell.Main>
       <OfflineStatus />
       {!isAdmin && (

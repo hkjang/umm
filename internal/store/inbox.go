@@ -166,6 +166,12 @@ func (s *Store) SuggestSpaces(ctx context.Context, userID, noteID uuid.UUID, lim
 	if limit < 1 || limit > 10 {
 		limit = 3
 	}
+	// This ranks one thought against every space, so it needs all of them
+	// current — a space still waiting to be indexed would score low and look
+	// like a poor home rather than an unindexed one. Indexing is a background
+	// job since v0.72.0, so this catches up first: one bounded pass, which in
+	// the settled case is a query that finds nothing.
+	s.SweepEmbeddingsOnce(ctx, nil)
 	spaces, err := s.ListSpaces(ctx, userID)
 	if err != nil {
 		return nil, err
