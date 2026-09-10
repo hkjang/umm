@@ -253,15 +253,18 @@ const DOCS_TO_BUILD = [
     outPdf: path.join(DOCS_DIR, 'umm_features_guide.pdf'),
     title: 'umm 기능 및 화면 가이드 (Features & UI Guide)',
   },
+  // USER_GUIDE.md and ADMIN_GUIDE.md are rendered with the shared guide tool
+  // (aidev/tools/guide/md2pdf.mjs) so every project's guides look alike; they
+  // are included in the complete manual below but not built separately here.
   {
-    src: path.join(DOCS_DIR, 'user-guide.md'),
-    outPdf: path.join(DOCS_DIR, 'umm_user_guide.pdf'),
-    title: 'umm 사용자 실무 가이드 (User Guide)',
+    src: path.join(DOCS_DIR, 'USER_GUIDE.md'),
+    outPdf: null,
+    title: 'umm 사용자 가이드 (User Guide)',
   },
   {
-    src: path.join(DOCS_DIR, 'admin-guide.md'),
-    outPdf: path.join(DOCS_DIR, 'umm_admin_guide.pdf'),
-    title: 'umm 관리자 운영 가이드 (Admin Guide)',
+    src: path.join(DOCS_DIR, 'ADMIN_GUIDE.md'),
+    outPdf: null,
+    title: 'umm 관리자 가이드 (Admin Guide)',
   },
   {
     src: path.join(DOCS_DIR, 'api-guide.md'),
@@ -288,10 +291,10 @@ async function main() {
 
   for (const doc of DOCS_TO_BUILD) {
     if (!fs.existsSync(doc.src)) continue;
-    console.log(`Generating PDF for: ${path.basename(doc.src)} -> ${path.basename(doc.outPdf)}...`);
-
     const mdContent = fs.readFileSync(doc.src, 'utf-8');
     completeManualContent += `\n\n<div class="page-break"></div>\n\n` + mdContent;
+    if (!doc.outPdf) continue;
+    console.log(`Generating PDF for: ${path.basename(doc.src)} -> ${path.basename(doc.outPdf)}...`);
 
     let rawHtml = marked(mdContent);
     let resolvedHtml = resolveImages(rawHtml, path.dirname(doc.src));

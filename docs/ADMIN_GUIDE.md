@@ -1,34 +1,300 @@
-# umm 관리자 운영 가이드 (Admin Guide)
+# umm 관리자 가이드
 
-`umm`은 사내 폐쇄망 및 오프라인 엔터프라이즈 환경에서 외부 의존성 없이 안정적으로 동작하도록 설계되었습니다.
+기준 버전 **v0.71.6**. 화면을 쓰는 사람을 위한 안내는 [사용자 가이드](USER_GUIDE.md)에 있습니다. 이 문서의 화면은
+모두 v0.71.6 을 실제로 띄워 `1440x900` 에서 찍은 것이며, 데이터는 가짜입니다. 환경 변수 표는
+`internal/config/config.go` 에서, API 의 메서드와 경로는 `internal/httpapi/server.go` 의 라우트 등록에서 읽었습니다.
+
+## 1. 구성 요소
+
+| 구성 요소 | 무엇 | 주고받는 것 |
+| :--- | :--- | :--- |
+| `umm` 컨테이너 | Go 바이너리 하나에 React UI·한글 웹폰트·시간대·CA 인증서가 들어 있는 단일 이미지. non-root `umm` 사용자, `:8080` | 브라우저·API·MCP 클라이언트의 HTTP |
+| PostgreSQL 14 이상 | 유일한 저장소. 생각·연결·설정·감사 로그·오프라인 전달함이 모두 여기 | `POSTGRES_DSN`. 협업 이벤트는 `LISTEN/NOTIFY` |
+| TLS reverse proxy | 앞단에서 TLS 종료 | `UMM_TRUSTED_PROXY_CIDRS` 로 신뢰 대역을 지정할 때만 forwarding header 를 믿음 |
+| (선택) Keycloak | 사내 SSO | OIDC Discovery. 관리자 화면에서 설정 |
+| (선택) AI Gateway | OpenAI 호환 채팅·임베딩 서버(vLLM·Ollama·TGI 등) | Dream·AI 생각 도구·의미 검색. 없으면 내장 어휘 임베딩만 |
+| (선택) `embeddings` 컨테이너 | `compose.yaml` 의 `embeddings` 프로파일 — Ollama 로 `bge-m3` 를 옆에 띄움 | 임베딩만. 완전 오프라인 |
+| (선택) Ptium | 발표 자료를 만드는 별도 서비스 | 관리자 화면 **Ptium 발표 자료**에서 주소·API 키 |
+| (선택) OTLP 수집기 | 추적 | `OTEL_EXPORTER_OTLP_*` 가 있을 때만 |
+
+실행 중에는 패키지 저장소나 CDN 에 접근하지 않습니다. 폐쇄망 반입은 이미지 하나면 됩니다.
+
+## 2. 설치
+
+릴리즈 자산은 `umm-v0.71.6.tar.gz` 와 `SHA256SUMS` 입니다.
+
+### 2-1. 이미지 반입
+
+```bash
+sha256sum -c SHA256SUMS
+./scripts/load-offline.sh umm-v0.71.6.tar.gz      # = gzip -dc umm-v0.71.6.tar.gz | docker load
+docker image inspect umm:v0.71.6 --format '{{.Id}}'
+```
+
+### 2-2. compose 로 띄우기
+
+저장소의 `compose.yaml` 이 PostgreSQL 17 과 umm 을 함께 올립니다. **비밀값은 그 파일의 개발용 값을 그대로 쓰지 말고**
+아래처럼 바꿔 넣습니다. 암호화 키는 연결망 밖의 승인된 절차로 만들고(`openssl rand -base64 32`) shell history·compose
+파일·티켓·Git 에 남기지 마세요.
+
+```bash
+# 예시 값 — 모두 가짜입니다
+export POSTGRES_PASSWORD='change-me-db-password'
+export BOOTSTRAP_ADMIN_PASSWORD='change-me-admin-password'
+export ENCRYPTION_KEY="$(openssl rand -base64 32)"
+
+cat > compose.override.yaml <<'EOF'
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  umm:
+    image: umm:v0.71.6
+    environment:
+      POSTGRES_DSN: "postgres://umm:${POSTGRES_PASSWORD}@postgres:5432/umm?sslmode=disable&pool_max_conns=16"
+      BOOTSTRAP_ADMIN: admin
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+EOF
+
+docker compose up -d
+curl -s http://127.0.0.1:8080/readyz     # {"status":"ready"}
+```
+
+이미 PostgreSQL 이 있다면 umm 만 `docker run` 합니다. 필요한 환경 변수는 아래 표의 필수 네 개뿐입니다.
+
+```bash
+docker run -d --name umm --restart unless-stopped -p 8080:8080 \
+  -e POSTGRES_DSN='postgres://umm:change-me-db-password@postgres.internal:5432/umm?sslmode=require&pool_max_conns=16' \
+  -e BOOTSTRAP_ADMIN='admin' \
+  -e BOOTSTRAP_ADMIN_PASSWORD='change-me-admin-password' \
+  -e ENCRYPTION_KEY='<openssl rand -base64 32 의 출력>' \
+  umm:v0.71.6
+```
+
+PostgreSQL 사용자는 대상 데이터베이스에 schema·table·extension(`pgcrypto`, `citext`, `pg_trgm`)을 만들 권한이 있어야
+합니다. 마이그레이션은 기동 시 트랜잭션으로 자동 적용됩니다.
+
+| 항목 | 값 |
+| :--- | :--- |
+| 포트 | `8080/tcp` (컨테이너 안). `UMM_HTTP_ADDR` 로 바꿀 수 있음 |
+| 볼륨 | umm 컨테이너에는 없음(상태는 전부 PostgreSQL). compose 의 `umm-postgres`, 선택 `umm-embeddings` |
+| DB 연결 | 인스턴스당 request pool 기본 최대 16 + 외부 호출용 lease 최대 5 → 전역 예산은 replica 마다 `pool_max_conns + 5` |
+| 외부 접근 | 실행 중 네트워크 접근 없음. AI Gateway·Ptium·OTLP 는 설정했을 때만 |
+
+### 2-3. 최초 관리자 계정
+
+`BOOTSTRAP_ADMIN` / `BOOTSTRAP_ADMIN_PASSWORD` 로 첫 관리자가 만들어집니다. **이미 그 계정이 DB 에 있으면 재시작해도
+비밀번호를 덮어쓰지 않습니다.** 로그인 뒤 순서대로:
+
+1. 서비스 관리자 → **일반**: 서비스 이름, 공개 URL, `Asia/Seoul` 같은 IANA 시간대.
+2. **키 · 권한**: 허용 API/MCP 스코프, 기본 만료, 회전 중첩, 남용 방지 한도 확인.
+3. 필요할 때만 **Keycloak SSO** 를 저장하고 **연결 시험** 뒤 활성화.
+4. 필요할 때만 **AI Gateway** 를 저장하고 **임베딩 품질 측정**에서 🟢 확인.
+5. **Dream Layer** 는 Gateway 확인 뒤 기능과 자동 생성을 각각 켭니다.
+6. **검토 프로세스**에서 실제로 승인이 필요한 작업만 켭니다. 꺼져 있으면 승인 단계는 생기지 않습니다.
+
+![운영 현황 — 사용자·공간·생각 수, 실시간 협업 상태, 최근 웹훅 실패, AI 사용 통계](screenshots/admin-overview.png)
+
+![일반 — 서비스 이름, 공개 URL, 세션 시간, 시간대](screenshots/admin-general.png)
+
+## 3. 설정
+
+### 3-1. 환경 변수
+
+`internal/config/config.go` 와 `internal/observability/observability.go` 가 읽는 전부입니다. 나머지 정책은 모두 관리자
+화면에서 PostgreSQL 에 저장되며 재시작이 필요 없습니다.
+
+| 이름 | 기본값 | 필수 | 설명 |
+| :--- | :--- | :---: | :--- |
+| `POSTGRES_DSN` | — | **필수** | PostgreSQL 연결 문자열. `pool_max_conns` 를 여기 붙임 (예 `postgres://umm:change-me@db:5432/umm?sslmode=require&pool_max_conns=16`) |
+| `BOOTSTRAP_ADMIN` | — | **필수** | 최초 관리자 아이디 |
+| `BOOTSTRAP_ADMIN_PASSWORD` | — | **필수** | 최초 관리자 비밀번호. 계정이 이미 있으면 무시 |
+| `ENCRYPTION_KEY` | — | **필수** | 저장되는 비밀값(OIDC·AI·Ptium·웹훅 secret, AI 프롬프트 로그)의 AES-256-GCM 키. **정확히 32바이트** — 원문 32자, 64자 hex, 또는 base64 32바이트 |
+| `ENCRYPTION_KEY_PREVIOUS` | 비움 | 선택 | 쉼표로 구분한 이전 키. 회전 기간에만 |
+| `UMM_HTTP_ADDR` | `:8080` | 선택 | 바인드 주소 `host:port` (예 `127.0.0.1:18081`) |
+| `UMM_TRUSTED_PROXY_CIDRS` | 비움 | 선택 | 쉼표로 구분한 신뢰 proxy IP/CIDR. 비우면 `X-Forwarded-For`·`X-Real-IP`·`X-Forwarded-Proto` 를 모두 버림. `0.0.0.0/0`·`::/0` 금지 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | 비움 | 선택 | 있을 때만 OTLP HTTP trace exporter 활성화 |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | 비움 | 선택 | 위와 같음(traces 전용 주소) |
+
+필수 넷 중 하나라도 비면 기동하지 않고 로그에 `invalid startup configuration` 이 남습니다.
+
+브라우저 변경 요청의 `Origin` 은 공개 URL 또는 신뢰 proxy 로 확인한 현재 요청과 scheme·host·port 가 모두 같아야
+합니다. HTTPS 서비스에 `http://` Origin 은 거부됩니다. Proxy 는 외부에서 온 forwarding header 를 지우고 자신이 확인한
+값을 적도록 구성하세요.
+
+### 3-2. 관리자 화면의 설정
+
+왼쪽 메뉴 순서대로. 각 절의 자세한 값은 아래 **부록**에 있습니다.
+
+| 메뉴 | 정하는 것 | 부록 |
+| :--- | :--- | :--- |
+| 일반 | 서비스 이름, 공개 URL, 세션 시간, 시간대 | — |
+| Keycloak SSO | Issuer, Client, 관리자·팀장 그룹 매핑, 연결 시험 | 부록 2 |
+| Dream Layer | 자동 생성 시각·주기, 컨텍스트 범위, 최대 응답 토큰, 품질 기준선 | 부록 3 |
+| AI Gateway | 채팅·임베딩 주소와 키, timeout·재시도, 비용, 임베딩 품질 측정, 자동 찾기 | 부록 4 |
+| Ptium 발표 자료 | Ptium 주소·API 키·`timeout_seconds`, 연결 시험 | 부록 8-2 |
+| 유사도 기준 | 연관 생각·군집·연결 추천의 상대 기준, 저장 전 재보기 | 부록 4-2 |
+| AI 품질 평가 | Dream 회귀 케이스 | 부록 7 |
+| 키 · 권한 | 허용 스코프, 기본 만료, 회전 중첩, 남용 방지, 암호화 키 상태·회전 | 부록 4-1 · 8 |
+| 검토 프로세스 | 승인이 필요한 작업 | — |
+| 사용자 / 공간과 참여자 | 역할 변경·비활성화, 공간 소유권 이전 | 4. 계정과 권한 |
+| 웹훅 상태 | 실패 중인 웹훅, 멈추기 | 부록 9 |
+| 감사 로그 | 모든 관리 행위 | 5. 운영 |
+
+![Keycloak SSO — Issuer URL, Client ID·Secret, 관리자·팀장 그룹, 연결 시험](screenshots/admin-oidc.png)
+
+![Dream Layer — 자동 생성 시각과 주기, 분석 범위, 최대 응답 토큰](screenshots/admin-dream.png)
+
+![AI Gateway — 채팅 Base URL·API Key, 임베딩 주소·모델, 임베딩 품질 측정](screenshots/admin-ai-gateway.png)
+
+![Ptium 발표 자료 — Ptium 주소, API 키, 제한 시간, 연결 시험](screenshots/admin-ptium.png)
+
+![유사도 기준 — 연관·강한 연관·군집·연결 추천 기준과 지금 값으로 재보기](screenshots/admin-intelligence.png)
+
+![검토 프로세스 — 승인이 필요한 작업을 고른다](screenshots/admin-workflow.png)
+
+## 4. 계정과 권한
+
+역할은 셋입니다. 사용자는 bootstrap 관리자가 만들거나 Keycloak SSO 첫 로그인으로 생깁니다 — **사용자 생성 API 는
+없습니다.** 로컬 계정을 더 두려면 SSO 를 붙이거나 관리자가 DB 에서 만들어야 합니다.
+
+| 역할 | 할 수 있는 일 |
+| :--- | :--- |
+| `admin` (관리자) | 서비스 설정 전부, 사용자 역할 변경·비활성화, 모든 공간과 참여자 열람·소유권 이전, 감사 로그, Dream 수동 실행, `/api/v1/metrics` |
+| `team_lead` (팀장) | 일반 기능 + 검토 · 승인 화면에서 자기 팀의 요청 결재(자기 요청·다른 팀 요청은 불가) |
+| `user` (사용자) | 자기 공간과 공유받은 공간, 개인 설정, API·MCP 키 발급 |
+
+SSO 를 쓰면 **Keycloak SSO** 화면의 관리자 그룹·팀장 그룹으로 역할이 매핑됩니다.
+
+![사용자 — 역할 변경과 비활성화. 서비스 관리자·팀장·사용자 셋 중 하나](screenshots/admin-users.png)
+
+![공간과 참여자 — 모든 공간의 소유자와 참여자를 보고 소유권을 옮긴다](screenshots/admin-spaces.png)
+
+공간 안의 권한(보기·편집·관리)은 공간 소유자가 **이 공간 함께 쓰기**에서 줍니다. `보기`도 댓글은 쓸 수 있습니다.
+
+개인 API·MCP 키는 사용자가 스스로 만들되 **키 · 권한** 화면의 허용 스코프 안에서만 고를 수 있습니다. 현재 스코프:
+`notes:read` `notes:write` `spaces:read` `dreams:read` `approvals:write` `webhooks:write` `metrics:read` `ai:assist`.
+`ai:assist` 만이 외부 Gateway 호출과 AI 쿼터 소비를 허용합니다.
+
+![키 · 권한 — 허용 스코프, 기본 만료, 회전 중첩, 남용 방지 한도](screenshots/admin-security.png)
+
+## 5. 운영
+
+### 5-1. 상태 점검
+
+라우트 등록(`internal/httpapi/server.go`)에서 확인한 메서드입니다.
+
+| 메서드 | 경로 | 용도 | 인증 |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/healthz` | 프로세스 생존과 버전 `{"status":"ok","version":"0.71.6"}` | 없음 |
+| `GET` | `/readyz` | PostgreSQL ping. 실패하면 503 `database unavailable` | 없음 |
+| `GET` | `/api/v1/metrics` | Prometheus — route 별 요청 수·지연·in-flight·build 정보·`umm_realtime_listener_up` | 관리자 세션 또는 `metrics:read` 키 |
+| `GET` | `/api/v1/meta` | 버전·SSO 여부 등 공개 메타 | 없음 |
+| `POST` | `/mcp` | Model Context Protocol | API 키 |
+| `POST` | `/api/v1/admin/dreams/run` | Dream 을 지금 한 번 돌림 | 관리자 |
+
+운영 현황의 **실시간 협업** 카드가 "폴백 폴링"이면 `LISTEN` 이 끊겨 1초 폴링 중이라는 뜻입니다. 협업은 되지만 DB
+부하가 오르므로 `umm_realtime_listener_up` 에 알림을 걸어 두세요.
+
+### 5-2. 로그
+
+컨테이너 표준 출력에 JSON 한 줄씩(`slog`)입니다. `docker compose logs -f umm`. 요청 로그에는 `requestId` 가 있고 오류
+응답에도 같은 값이 실리므로 사용자가 보낸 화면의 `requestId` 로 그 요청을 찾습니다.
+
+### 5-3. 백업과 복구
+
+상태는 전부 PostgreSQL 에 있습니다. 백업은 두 가지입니다 — **DB 덤프**와 **`ENCRYPTION_KEY`**. 키 없이는 덤프 속
+OIDC·AI·Ptium·웹훅 secret 을 읽을 수 없습니다.
+
+```bash
+docker compose exec -T postgres pg_dump -U umm -Fc umm > umm-$(date +%F).dump
+```
+
+복구는 새 DB 에 `pg_restore` 한 뒤 같은 `ENCRYPTION_KEY` 로 umm 을 띄웁니다. `scripts/restore-smoke.sh` 가 이 순서를
+카나리 데이터로 확인하는 절차입니다. 사용자 단위 백업은 캔버스의 **내보내기 → Markdown** 이며(그림은 담기지 않음),
+같은 메뉴의 **마크다운 가져오기**로 돌아옵니다.
+
+### 5-4. 업그레이드와 되돌리기
+
+```bash
+# 1. 백업
+docker compose exec -T postgres pg_dump -U umm -Fc umm > before-upgrade.dump
+# 2. 새 이미지 반입
+gzip -dc umm-v0.71.6.tar.gz | docker load
+# 3. 같은 환경 변수로 교체
+docker compose up -d umm
+curl -s http://127.0.0.1:8080/healthz
+```
+
+마이그레이션은 forward 로만 자동 적용됩니다. 되돌릴 때는 **이전 이미지로 돌리기 전에** `migrations/down/` 의 해당
+스크립트를 새것부터 순서대로 직접 실행합니다 — 컬럼을 지우는 일이므로 자동으로는 절대 돌지 않습니다.
+
+```bash
+psql "$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/down/027_note_attachments.down.sql
+```
+
+`026` 의 down 은 `SELECT 1` 뿐입니다 — 협업 로그에서 지운 본문 사본은 되돌려도 돌아오지 않습니다. 복수
+인스턴스는 `scripts/multi-instance-smoke.sh`, 마이그레이션은 `make migrate-dry-run` 으로 미리 확인합니다.
+
+### 5-5. 감사 로그
+
+![감사 로그 — 시각·행위자·작업·대상. 설정 변경, 역할 변경, 키 발급, 승인, 웹훅 멈춤이 남는다](screenshots/admin-audit.png)
+
+`audit_logs` 테이블에 영구 보존됩니다. 관리자의 설정 저장, 역할 변경, 공간 소유권 이전, `webhook.pause` 등이 남고
+지우는 API 는 없습니다.
+
+### 5-6. 웹훅
+
+![웹훅 상태 — 설치된 모든 웹훅을 나쁜 것부터. 연속 실패, 마지막 오류, 소유자, 멈추기](screenshots/admin-webhooks.png)
+
+사용자가 개인 설정에서 만든 웹훅이 실패하고 있으면 여기서 보이고 **멈추기**로 `active` 만 내립니다. 자세한 것은 부록 9.
+
+## 6. 장애 대응
+
+| 증상 | 확인할 곳 | 조치 |
+| :--- | :--- | :--- |
+| 컨테이너가 바로 죽음, 로그 `invalid startup configuration` | 필수 환경 변수 넷. `ENCRYPTION_KEY must be exactly 32 bytes…` 면 키 길이 | 값을 고쳐 재시작 |
+| 로그 `database unavailable` | `POSTGRES_DSN`, DB 기동, `sslmode` | `/readyz` 가 503 이면 같은 원인 |
+| 로그 `migration failed` | DB 사용자의 extension 생성 권한(`pgcrypto`·`citext`·`pg_trgm`), 디스크 | 권한 부여 후 재시작. 스키마는 트랜잭션이라 반쯤 적용되지 않음 |
+| 로그 `bootstrap admin failed` | `BOOTSTRAP_ADMIN` 이 빈 값이거나 DB 쓰기 실패 | — |
+| 로그 `encryption initialization failed` | 키 회전 중 `ENCRYPTION_KEY_PREVIOUS` 형식 | 쉼표로 구분한 32바이트 키인지 |
+| 로그 `collaboration listener disconnected` / `…disabled because the pool cannot reserve two request connections` | `pool_max_conns` 가 1~2 이거나 DB 연결 한도 | 운영에서는 4 이상. 폴백 폴링 중이라 협업은 계속됨 |
+| 사용자에게 "짧은 시간에 너무 많은 요청이 들어왔습니다" | 키 · 권한 → 남용 방지 (분당 API 600, AI 분당 6·하루 80). 분당 API 는 인스턴스별이라 실효 상한은 `설정값 × 인스턴스 수` | 한도 조정. 저장 즉시 적용 |
+| 로그인 잠김 | 같은 주소 8회 실패 → 15분. 계정별은 그 3배 | 기다리거나 남용 방지 값 조정 |
+| Dream 이 안 옴, 로그 `dream generation failed` / `dream eligibility failed` | AI Gateway 주소·키·timeout, Dream Layer 의 자동 생성 스위치와 시각, 최소 메모 수 2·최근 14일 | AI Gateway → 연결 테스트. `POST /api/v1/admin/dreams/run` 으로 즉시 재현 |
+| 연관 생각·군집이 전부 비어 있음 | AI Gateway → 임베딩 품질 측정이 🟡/🔴 | 임베딩 모델 설정 또는 주소·모델명 확인. 내장 임베딩은 어휘만 잽니다 |
+| 로그 `AI prompt log encryption failed` / `AI call log write failed` | 키 · 권한 → 암호화 상태의 `unreadable` | `unreadable=0` 이 되도록 키 복구 후 **현재 키로 회전** |
+| 발표 만들기 실패 (`unreachable` · `unauthorized` · `no-api` · `remote-error`) | Ptium 발표 자료 → 연결 시험 | 부록 8-2 의 표 |
+| 발표 만들기 `timed-out` | `timeout_seconds` 기본 30 | 큰 공간이면 상향 |
+| 웹훅 연속 실패 | 웹훅 상태 화면의 마지막 오류 | 수신 쪽 확인. 10회 연속 실패면 자동 중지 |
+| 배포 뒤 옛 화면이 남음 | proxy/CDN 이 `/manifest.webmanifest`·`/umm-sw.js`·`/umm-icon.svg`·`/asset-manifest.json` 을 immutable 로 캐시 | 그 넷은 `no-cache` 로 재검증되게 |
+
+## 7. 보안
+
+- **바꿔야 하는 기본값** — `compose.yaml` 의 `local-development-only`·`change-this-before-production`·`0123456789abcdef…` 는
+  개발용입니다. 셋 다 바꾸고 나서 띄웁니다.
+- **밖에 열면 안 되는 것** — PostgreSQL(`5432`), `embeddings`(`11434`). umm 의 `8080` 도 TLS proxy 뒤에만 둡니다.
+  `/api/v1/metrics` 는 관리자 세션이나 `metrics:read` 키가 있어야 하지만 route 별 지연을 드러내므로 수집기에만 엽니다.
+- **Proxy** — `UMM_TRUSTED_PROXY_CIDRS` 를 proxy 의 실제 대역으로만. 비우면 forwarding header 를 전부 버리므로 잠금·요청
+  제한이 proxy 주소 하나에 걸립니다. `0.0.0.0/0` 은 클라이언트가 주소를 위조하게 합니다.
+- **인증 연동** — Keycloak OIDC(부록 2). Client 는 Confidential, redirect URI 는 `https://<umm>/api/v1/auth/oidc/callback`.
+  로컬 로그인은 남용 방지의 잠금 규칙을 따릅니다(부록 4-1).
+- **키** — `ENCRYPTION_KEY` 는 백업과 함께 별도 비밀 저장소에. 회전은 부록 8. API 키는 사용자가 만들되 스코프는
+  관리자가 허용한 범위 안이고, `notes:read` 만으로는 외부 AI 호출이 일어나지 않습니다.
+- **AI 로 나가는 것** — 생각 본문은 사용자가 `Dream 분석에서 제외`하거나 공간에서 `AI Dream 분석`을 끄면 어디로도
+  나가지 않습니다. 임베딩 API 키는 채팅 키와 따로이며 비우면 보내지 않습니다. 개인 설정의 **내 AI 사용 내역**이 사용자에게
+  같은 사실을 보여 줍니다.
+- **감사** — 관리 행위는 전부 감사 로그에 남고 지울 수 없습니다.
+- 자세한 위협 모델은 [SECURITY.md](SECURITY.md).
 
 ---
 
-## 1. 런타임 환경변수 4종
+# 부록 — 화면별 상세
 
-서비스 기동 시 필요한 환경변수는 정확히 다음 4개뿐이며, 그 외 모든 정책은 관리자 웹 콘솔에서 런타임으로 관리됩니다:
+아래는 각 관리자 화면의 값과 동작을 자세히 적은 것입니다. 번호는 위 표의 "부록 n" 과 같습니다.
 
-| 환경변수명 | 필수 여부 | 설명 | 예시 |
-| :--- | :---: | :--- | :--- |
-| `POSTGRES_DSN` | **필수** | PostgreSQL 데이터베이스 연결 문자열 | `postgres://umm:password@postgres:5432/umm?sslmode=disable` |
-| `BOOTSTRAP_ADMIN` | **필수** | 최초 생성할 시스템 관리자 로그인 아이디 | `admin` |
-| `BOOTSTRAP_ADMIN_PASSWORD` | **필수** | 부트스트랩 관리자의 초기 비밀번호 | `ComplexPassword123!` |
-| `ENCRYPTION_KEY` | **필수** | 비밀값 암호화를 위한 32바이트 AES 키 | `01234567890123456789012345678901` |
-
-> [!NOTE]
-> DB에 이미 bootstrap 관리자가 존재할 경우, 서버를 재시작해도 비밀번호가 임의로 덮어써지지 않습니다.
-
-선택 환경변수 `ENCRYPTION_KEY_PREVIOUS`는 master-key 회전 기간, `UMM_HTTP_ADDR`는 listen 주소 변경, `UMM_TRUSTED_PROXY_CIDRS`는 신뢰할 reverse proxy 주소 지정, 표준 `OTEL_EXPORTER_OTLP_*`는 trace 전송에만 사용합니다. 필수 입력은 네 개로 유지됩니다.
-
-TLS 종료 proxy 뒤에서 실행할 때만 직접 연결되는 proxy의 IP 또는 CIDR을 쉼표로 구분해 지정하세요(예: `10.42.0.0/16,fd00:42::/64`). 설정하지 않으면 `X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`를 모두 무시하며, `0.0.0.0/0` 또는 `::/0`처럼 인터넷 전체를 신뢰 대상으로 지정해서는 안 됩니다. Proxy는 외부에서 들어온 forwarding header를 제거하고 자신이 확인한 값을 기록하도록 구성하세요.
-
-브라우저 변경 요청의 `Origin`은 공개 URL 또는 신뢰 proxy로 확인한 현재 요청과 scheme·host·port가 모두 같아야 합니다. HTTPS 서비스와 같은 hostname이더라도 `http://` Origin은 거부됩니다. PostgreSQL request pool 자동 상한은 host CPU 수와 무관하게 인스턴스당 16이며 compose도 이를 명시합니다. `POSTGRES_DSN`의 `pool_max_conns`는 replica 수와 DB의 전역 연결 한도를 기준으로 조정하세요. 외부 호출 동안 권한을 고정하는 lease는 request pool을 점유하지 않는 별도 연결을 사용하며 AI 호출 최대 2개와 웹훅 전달 최대 3개로 각각 제한됩니다. 전역 연결 예산에는 replica마다 최악의 경우 `+5`를 더하고, 각 상한을 넘는 lease는 연결 없이 대기합니다. request pool 상한 1~2에서는 전용 LISTEN을 끄고 1초 안전 폴링으로 모든 연결을 request에 남기며, 상한 3부터 listener를 시작하면서 request용 두 자리를 보존합니다. 실행 중 listener 상태가 바뀌면 열린 SSE가 즉시 깨어나 단절 시 1초 폴링, 복구 시 30초 safety net으로 전환합니다. 알림 목록과 짧은 Dream transaction도 작은 pool에서 연결을 중첩 점유하지 않지만 운영에서는 동시 요청과 worker를 위해 `pool_max_conns` 4 이상을 권장합니다.
-
-로그인 세션 목록에 표시하는 User-Agent는 공백과 잘못된 UTF-8을 정리한 뒤 최대 300 byte의 완전한 rune 경계에서 저장합니다. 긴 한국어·다국어 브라우저 식별자가 중간 byte에서 잘려 올바른 자격 증명의 세션 생성이 실패하거나 주소별 로그인 실패 횟수로 잘못 누적되지 않습니다.
-
----
-
-## 2. Keycloak OIDC SSO 연동
+## 부록 2. Keycloak OIDC SSO 연동
 
 `umm`은 Keycloak OpenID Connect Discovery를 통해 복잡한 설정 없이 엔터프라이즈 SSO를 즉시 연동합니다.
 
@@ -48,7 +314,7 @@ TLS 종료 proxy 뒤에서 실행할 때만 직접 연결되는 proxy의 IP 또�
 
 ---
 
-## 3. Dream Layer & 야간 Scheduler 운영
+## 부록 3. Dream Layer & 야간 Scheduler 운영
 
 Dream Layer는 사용자가 밤사이 휴식하는 동안 캔버스에 쌓인 생각들의 의미적 연관성을 분석하고 새로운 아이디어를 제안하는 핵심 백그라운드 엔진입니다.
 
@@ -73,7 +339,7 @@ Dream Layer는 사용자가 밤사이 휴식하는 동안 캔버스에 쌓인 �
 
 ---
 
-## 4. 내부 AI Gateway 연동
+## 부록 4. 내부 AI Gateway 연동
 
 사내망 내부의 LLM Gateway (vLLM, Ollama, TGI, SGLang 등 OpenAI 호환 서버)를 연결합니다.
 
@@ -193,7 +459,7 @@ go test ./internal/store -run ClustersAndRelated -v
 
 > 모델을 바꾸면 차원과 fingerprint가 달라져 기존 생각이 열릴 때마다 점진적으로 다시 임베딩됩니다. 유사도 판정 기준은 v0.9.0부터 백엔드 분포에 맞춰 자동 조정되므로 임계값을 손볼 필요는 없습니다.
 
-## 4-2. 유사도 기준 (`/admin/intelligence`)
+## 부록 4-2. 유사도 기준 (`/admin/intelligence`)
 
 ### 저장하기 전에 재보기
 
@@ -255,7 +521,7 @@ go test ./internal/store -run ClustersAndRelated -v
 
 ---
 
-## 4-1. 남용 방지 (키 · 권한 → 남용 방지)
+## 부록 4-1. 남용 방지 (키 · 권한 → 남용 방지)
 
 로그인 실패와 요청 폭주로부터 서비스를 보호하는 값들입니다. 저장 즉시 적용되며 재시작이 필요 없습니다.
 
@@ -277,43 +543,15 @@ go test ./internal/store -run ClustersAndRelated -v
 
 ---
 
-## 5. RBAC 사용자 관리 및 불변 감사 로그
-
-### 👤 RBAC 3대 역할 체계
-- **`admin` (관리자)**: 모든 공간 조회/수정/삭제, 서비스 설정, 사용자 관리, 감사 로그 열람, Dream 수동 큐 생성
-- **`team_lead` (팀장)**: 일반 기능 및 공간 공유 / 외부 내보내기 승인 요청 심사 및 결재 권한
-- **`user` (일반 사용자)**: 개인 생각 캔버스 작성, 소유/공유 공간 협업, 개인 키 발급
-
-### 🛡️ 불변 감사 로그 (Immutable Audit Trail)
-- 관리자가 수행한 모든 설정 변경, 사용자 역할 수정, 키 발급, 승인 처리 내역이 `audit_logs` 테이블에 영구 보존됩니다.
-- 각 행위의 시각, 행위자, 작업 구분(Action), 대상 리소스(Resource ID)를 투명하게 추적할 수 있습니다.
-
----
-
-## 6. 헬스체크 및 성능 지표 모니터링
-
-| 경로 | 메서드 | 용도 | 설명 |
-| :--- | :--- | :--- | :--- |
-| `/healthz` | GET | Liveness Probe | 프로세스 생존 상태 및 버전 반환 |
-| `/readyz` | GET | Readiness Probe | PostgreSQL 연결 및 쿼리 가능 상태 확인 |
-
-운영 현황 화면의 **실시간 협업** 카드는 열려 있는 이벤트 구독 수와 PostgreSQL 수신 상태를 보여 줍니다. 상태가 "폴백 폴링"이면 `LISTEN` 연결이 끊겨 상태 전환 즉시 1초 폴링으로 동작하고 있다는 뜻입니다. 협업은 계속되지만 데이터베이스 부하가 올라가므로 `umm_realtime_listener_up` 지표에 알림을 걸어 두세요.
-| `/api/v1/metrics` | GET | Prometheus | route별 request count, latency histogram, in-flight, build 정보. 관리자 브라우저 세션 또는 `metrics:read` API 키 전용 |
-| `/mcp` | POST | Model Context Protocol | AI 에이전트 도구 연동 엔드포인트 |
-
-표준 OTLP endpoint 환경변수가 설정된 경우에만 OpenTelemetry HTTP trace exporter가 활성화됩니다. 관리자 운영 현황에는 댓글 수, 온보딩 완료율, 최근 웹훅 실패와 AI 평가 통계도 표시됩니다.
-
----
-
-## 7. Dream AI 평가 회귀
+## 부록 7. Dream AI 평가 회귀
 
 관리자 → AI 평가에서 최소 두 개의 입력 생각, 기대 단어와 금지 단어, Dream 유형을 저장합니다. 실행은 현재 AI Gateway와 prompt version을 그대로 사용하며 grounding, 기대/금지 단어, 구체성, 모델 응답 상태를 0~1 점수와 세부 항목으로 보존합니다. 모델·prompt·Gateway 설정을 바꾸기 전후에 같은 active case를 실행해 회귀를 확인하세요. Gateway 장애도 `error` run으로 남아 평가 이력이 사라지지 않습니다.
 
-## 8. Master-key 회전
+## 부록 8. Master-key 회전
 
 새 키를 `ENCRYPTION_KEY`, 현재 키를 `ENCRYPTION_KEY_PREVIOUS`에 배치한 뒤 재시작합니다. 보안 화면에서 fallback 1개 이상, unreadable 0을 확인하고 **현재 키로 회전**을 실행합니다. 이 작업은 OIDC/AI secret, 웹훅 secret, 암호화 AI prompt를 한 트랜잭션으로 다시 암호화하며 `enc:` wrapper 도입 전 raw v1 AI prompt도 현재 wrapper·v2 형식으로 정규화합니다. 회전 전에 열어 둔 OIDC·AI Gateway 화면에서 마스킹된 값을 동시에 저장해도 서버가 같은 설정 lock 뒤 최신 암호문을 병합합니다. pending 0을 확인하고 새 백업을 만든 후에만 이전 키 환경변수를 제거합니다.
 
-## 8-2. Ptium 발표 연동이 실패할 때
+## 부록 8-2. Ptium 발표 연동이 실패할 때
 
 사용자 화면에는 **무엇을 해야 하는지**가 적히고, 그중 절반은 "관리자에게 알려 주세요"입니다. 그 절반이 여기입니다.
 
@@ -418,7 +656,7 @@ v0.61.0부터는 실패 응답이 그 덱을 지목하고(`ptiumId`, `deckLeftBe
 
 ---
 
-## 9. 서명 웹훅 운영
+## 부록 9. 서명 웹훅 운영
 
 사용자는 개인 설정에서 허용된 `webhooks:write` scope로 subscription을 관리합니다. 대상은 공개 HTTPS 443만 허용합니다. 도메인 변경과 PostgreSQL delivery outbox는 원자적으로 커밋되고, 재시작 시 대기 또는 lease가 만료된 항목을 이어서 처리합니다. 전달 worker는 구독·소유 사용자·이벤트 공간·현재 membership과 정확한 delivery claim을 실제 HTTP 응답까지 잠급니다. 권한 회수·사용자 비활성화·구독 중지가 먼저 확정되면 payload를 보내지 않고, 전송이 먼저 시작되면 변경 transaction은 delivery terminal 상태와 payload 삭제가 확정될 때까지 기다립니다. 수신 시스템은 timestamp와 raw body의 HMAC-SHA256, 허용 시간 창을 검증하고 at-least-once 요청의 delivery UUID를 멱등 처리해야 합니다. 일시 실패는 세 번 재시도하고 연속 10회 실패 subscription은 자동 중지됩니다. 외부 오류는 잘못된 UTF-8을 제거하고 500 byte의 완전한 rune 경계 안에서 기록하므로 다국어 오류도 실패 횟수와 자동 중지를 막지 않습니다. terminal payload는 즉시 제거되고 metadata도 30일 후 정리되므로 운영 지표와 개인 설정의 마지막 오류를 함께 확인하세요.
 

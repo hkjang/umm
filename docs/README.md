@@ -2,7 +2,7 @@
 
 `umm`은 생각을 문서나 폴더로 정리하기 전에 공간에 먼저 붙이고, 연결하고, 밤사이 **Dream**으로 다시 발견하는 **Spatial Thought Memory** 플랫폼입니다.
 
-현재 문서 기준은 **v0.8.1**입니다. v0.8.0의 푸시 기반 실시간 협업(LISTEN/NOTIFY), 인덱스 검색, 선택적 게이트웨이 임베딩, 남용 방지, 응답별 CSP nonce, English·다크 모드·마크다운 가져오기에 더해, 멤버 제거와 콘텐츠 조회가 겹치는 순간에도 Canvas·이력·댓글·백링크·멤버 목록·내보내기의 접근권한을 원자적으로 다시 확인합니다.
+현재 문서 기준은 **v0.71.6**입니다. 사용자·관리자 가이드는 이 버전을 실제로 띄워 찍은 화면 캡처를 싣습니다. v0.8.0의 푸시 기반 실시간 협업(LISTEN/NOTIFY), 인덱스 검색, 선택적 게이트웨이 임베딩, 남용 방지, 응답별 CSP nonce, English·다크 모드·마크다운 가져오기에 더해, 멤버 제거와 콘텐츠 조회가 겹치는 순간에도 Canvas·이력·댓글·백링크·멤버 목록·내보내기의 접근권한을 원자적으로 다시 확인합니다.
 
 ---
 
@@ -18,7 +18,7 @@
 ### 1. 사용자 및 기능 가이드
 - 📄 **[기능 및 화면 가이드 (PDF)](umm_features_guide.pdf)** (`docs/umm_features_guide.pdf`) · [MD](features.md)
   - 20여 개 전체 메뉴별 실제 구동 화면 캡처 및 세부 CRU 기능 명세
-- 📄 **[사용자 실무 가이드 (PDF)](umm_user_guide.pdf)** (`docs/umm_user_guide.pdf`) · [MD](user-guide.md)
+- 📄 **[사용자 가이드 (PDF)](USER_GUIDE.pdf)** (`docs/USER_GUIDE.pdf`) · [MD](USER_GUIDE.md)
   - 무한 캔버스 조작, 포스트잇 단축키, 연관 생각, 인력(Gravity), 내보내기 가이드
 
 ### 2. 아키텍처 및 시스템 설계
@@ -28,7 +28,7 @@
   - AES-256-GCM 봉투 암호화 및 Scoped Key 권한 모델
 
 ### 3. 관리자 및 운영 가이드
-- 📄 **[관리자 운영 가이드 (PDF)](umm_admin_guide.pdf)** (`docs/umm_admin_guide.pdf`) · [MD](admin-guide.md)
+- 📄 **[관리자 가이드 (PDF)](ADMIN_GUIDE.pdf)** (`docs/ADMIN_GUIDE.pdf`) · [MD](ADMIN_GUIDE.md)
   - 4대 환경변수 부트스트랩, Keycloak OIDC SSO 연동, Dream 스케줄러 & 256K 토큰, AI Gateway, 불변 감사 로그
 - 📄 **[오프라인 배포 및 운영 가이드 (Markdown)](OPERATIONS.md)**
   - 단일 Docker 이미지 반입 및 패키지 릴리스 가이드

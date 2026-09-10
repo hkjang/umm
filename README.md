@@ -196,8 +196,8 @@ umm이 [Ptium](https://github.com/hkjang/ptium)으로 발표 자료를 만듭니
 | **📕 종합 기술 매뉴얼 완본** | 모든 아키텍처·기능·운영·API 통합 기술 완본 (A4 인쇄용) | [**docs/umm_complete_manual.pdf**](docs/umm_complete_manual.pdf) |
 | **🎬 3분 서비스 시연 영상** | 전 메뉴 기능 및 실무 동작 1080p 시연 영상 | [**docs/umm_overview.mp4**](docs/umm_overview.mp4) |
 | **📸 기능 및 화면 가이드** | 20여 개 전체 메뉴별 캡처 스크린샷과 CRU 동작 가이드 | [**PDF 바로보기**](docs/umm_features_guide.pdf) · [MD](docs/features.md) |
-| **👤 사용자 실무 가이드** | 무한 캔버스 조작, 포스트잇 단축키, 연관 생각, 내보내기 | [**PDF 바로보기**](docs/umm_user_guide.pdf) · [MD](docs/user-guide.md) |
-| **🛠️ 관리자 운영 가이드** | Keycloak OIDC SSO, 256K Dream Layer, AI Gateway, 감사 로그 | [**PDF 바로보기**](docs/umm_admin_guide.pdf) · [MD](docs/admin-guide.md) |
+| **👤 사용자 가이드** | 처음 5분, 화면별 사용법(실제 화면 캡처), 자주 하는 작업, 막혔을 때 | [**PDF 바로보기**](docs/USER_GUIDE.pdf) · [MD](docs/USER_GUIDE.md) |
+| **🛠️ 관리자 가이드** | 설치, 환경 변수 전수 표, 계정과 권한, 운영·장애 대응·보안 | [**PDF 바로보기**](docs/ADMIN_GUIDE.pdf) · [MD](docs/ADMIN_GUIDE.md) |
 | **🔌 API & MCP 가이드** | REST API 명세, SSE 실시간 스트림, AI MCP JSON-RPC | [**PDF 바로보기**](docs/umm_api_guide.pdf) · [MD](docs/api-guide.md) |
 | **🏗️ 실행 아키텍처** | 단일 이미지 오프라인 구조, PostgreSQL 이벤트 스트림 | [**PDF 바로보기**](docs/umm_architecture.pdf) · [MD](docs/ARCHITECTURE.md) |
 | **🌐 웹 쇼케이스** | 인터랙티브 깃허브 홍보 및 기능 둘러보기 웹페이지 | [**쇼케이스 열기**](docs/index.html) |
