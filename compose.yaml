@@ -49,7 +49,7 @@ services:
   # bge-m3, and confirm it took effect on Admin -> AI Gateway -> Embedding
   # quality. Candidates measured on the same data, including one that scores
   # higher on the labelled sets but fails umm's end-to-end clustering test, are
-  # compared in docs/admin-guide.md.
+  # compared in docs/ADMIN_GUIDE.md.
   embeddings:
     profiles: [embeddings]
     image: ollama/ollama:latest
