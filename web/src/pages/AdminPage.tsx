@@ -875,13 +875,26 @@ export default function AdminPage() {
               />
               <SimpleGrid cols={{ base: 1, sm: 2 }}>
                 <NumberInput
-                  label="Timeout"
+                  label={t('채팅 Timeout')}
                   description={t('긴 추론 모델은 충분한 시간을 지정하세요.')}
                   suffix={t(' 초')}
                   min={5}
                   max={1800}
                   value={settings.ai_gateway.timeout_seconds}
                   onChange={(v) => update('ai_gateway', 'timeout_seconds', v)}
+                />
+                {/* Its own number, because the two wait for different things.
+                    A chat model composing a Dream is given minutes; embedding a
+                    sentence is a millisecond of work behind a network hop, and
+                    whoever is waiting on it is searching. */}
+                <NumberInput
+                  label={t('임베딩 Timeout')}
+                  description={t('검색이 기다리는 시간입니다. 짧게 두세요 — 넘으면 로컬로 계산합니다.')}
+                  suffix={t(' 초')}
+                  min={1}
+                  max={120}
+                  value={settings.ai_gateway.embedding_timeout_seconds}
+                  onChange={(v) => update('ai_gateway', 'embedding_timeout_seconds', v)}
                 />
                 <NumberInput
                   label={t('재시도')}

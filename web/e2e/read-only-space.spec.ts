@@ -202,7 +202,11 @@ test.describe('read-only space', () => {
     // is true at any permission. Resolving the discussion is not: it needs edit
     // or better, and used to be offered anyway.
     await page.getByRole('button', { name: '댓글 메뉴' }).click();
-    const commentMenu = page.getByRole('menu');
+    // Named, because the note menu that was used to get here can still be on
+    // screen when this one opens: an unnamed role=menu matches both, and the
+    // test fails on whichever the suite's timing leaves standing rather than on
+    // anything about the comment menu.
+    const commentMenu = page.getByRole('menu', { name: '댓글 메뉴' });
     await expect(commentMenu).toBeVisible();
     await expect(commentMenu.getByRole('menuitem', { name: '삭제' })).toBeVisible();
     await expect(commentMenu.getByRole('menuitem', { name: '해결 표시' })).toHaveCount(0);

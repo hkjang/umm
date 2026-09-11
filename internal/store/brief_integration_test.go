@@ -107,9 +107,9 @@ func TestBriefFindsDuplicateThoughtsIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, _, err = db.ListNotes(ctx, userID, space.ID, ""); err != nil {
-		t.Fatal(err)
-	}
+	// Reading a space no longer indexes it. The brief catches up on its own, so
+	// this is here to make the precondition explicit rather than incidental.
+	db.SweepEmbeddingsOnce(ctx, &space.ID)
 
 	brief := briefFor(t, db, userID)
 	if len(brief.Skipped) != 0 {

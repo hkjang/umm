@@ -450,11 +450,12 @@ func semanticStubVector(text string) []float64 {
 func assertNotesEmbeddedByTheStub(t *testing.T, db *Store, ownerID, spaceID uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
-	notes, _, err := db.ListNotes(ctx, ownerID, spaceID, "")
-	if err != nil {
-		t.Fatalf("list notes: %v", err)
+	// Reading a space no longer indexes it — that is what v0.72.0 moved out of
+	// the read path — so the precondition is established by asking the sweep to
+	// do its work now rather than by listing the notes and hoping.
+	if done := db.SweepEmbeddingsOnce(ctx, &spaceID); done == 0 {
+		t.Fatal("the sweep found nothing to index, so this proves nothing about which backend embedded the notes")
 	}
-	db.loadEmbeddings(ctx, notes)
 	rows, err := db.Pool.Query(ctx,
 		`SELECT DISTINCT e.algorithm FROM note_embeddings e JOIN notes n ON n.id=e.note_id WHERE n.space_id=$1`, spaceID)
 	if err != nil {

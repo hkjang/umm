@@ -548,6 +548,13 @@ export const en: Dictionary = {
   '그림 붙이기': 'Attach a picture',
   '그림 떼기': 'Remove picture',
   '붙인 그림': 'Attached picture',
+  '그 공간을 열 수 없어 다른 공간을 열었습니다. 지워졌거나 공유가 회수되었을 수 있습니다.':
+    'That space could not be opened, so another one was. It may have been deleted, or the share withdrawn.',
+  '공간을 찾지 못했습니다': 'Space not found',
+  '채팅 Timeout': 'Chat timeout',
+  '임베딩 Timeout': 'Embedding timeout',
+  '검색이 기다리는 시간입니다. 짧게 두세요 — 넘으면 로컬로 계산합니다.':
+    'How long a search waits. Keep it short — past it, umm computes locally.',
   되감기: 'Rewind',
   지금으로: 'Back to now',
   '하루 전': 'A day ago',
