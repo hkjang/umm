@@ -1401,3 +1401,13 @@ textarea,
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
 }
+
+/* The canvas grid.
+   Only drawn while thoughts are being caught by it — see the Background in
+   CanvasPage. Light enough to aim at without becoming the thing you look at. */
+:root {
+  --canvas-grid: rgba(90, 70, 130, 0.28);
+}
+[data-mantine-color-scheme='dark'] {
+  --canvas-grid: rgba(200, 180, 240, 0.24);
+}

@@ -40,6 +40,7 @@ import {
   IconMarkdown,
   IconMessageCircle,
   IconMoonStars,
+  IconGrid3x3,
   IconHistory,
   IconListDetails,
   IconPhoto,
@@ -127,6 +128,10 @@ const clusterZoom = 0.45;
 // the one fitView produces, and the canvas would flicker through the notes on
 // its way to the summary.
 const canvasView = { padding: 0.3, minZoom: 0.15, maxZoom: 2.2 };
+// The spacing of the dots, and of the grid thoughts are caught by when catching
+// is turned on. One number so that what is drawn and what is snapped to cannot
+// drift apart: a grid you can see but do not land on is worse than none.
+const gridStep = 20;
 
 // Summarising exists to answer information overload, so it does not apply to a
 // canvas that has none. Opening a space with a dozen notes zooms out far enough
@@ -269,6 +274,35 @@ function CanvasInner() {
   const [attachments, setAttachments] = useState<Record<string, Attachment[]>>({});
   const pictureInput = useRef<HTMLInputElement>(null);
   const attachingTo = useRef<string>('');
+  /**
+   * Where this person was looking, per space.
+   *
+   * The canvas fitted every note into view on every open, so leaving a space
+   * and coming back put you at arm's length from the whole thing again — you
+   * lost your place inside the space the same way clicking the navigation lost
+   * the space itself. Kept per space and in the browser, because it is where
+   * you were looking rather than anything about the thoughts.
+   */
+  const rememberedView = (spaceID: string) => {
+    const raw = readLocalStorage(`umm:view:${spaceID}`).value;
+    if (!raw) return undefined;
+    try {
+      const parsed = JSON.parse(raw) as { x: number; y: number; zoom: number };
+      if ([parsed.x, parsed.y, parsed.zoom].some((n) => typeof n !== 'number' || !Number.isFinite(n))) return undefined;
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  };
+  /**
+   * Lining thoughts up, for whoever wants to.
+   *
+   * Off by default and remembered. umm's whole posture is to stick the thought
+   * down first and tidy afterwards, so a grid that always caught your notes
+   * would be arguing with the product. When it is on, the dots you are snapping
+   * to are the ones you can see.
+   */
+  const [snapToGrid, setSnapToGrid] = useState(() => readLocalStorage('umm:snap-grid').value === 'on');
   const [rewind, setRewind] = useState<Rewind>();
   // Read inside the event stream's handler, which is registered once per space
   // and would otherwise close over the value rewind had when it was registered.
@@ -276,6 +310,7 @@ function CanvasInner() {
   useEffect(() => {
     rewindRef.current = rewind;
   }, [rewind]);
+
   const readOnly = useMemo(() => {
     const space = spaces.find((s) => s.id === activeSpace);
     // Rewinding belongs in the same test as the permission, not beside it.
@@ -1018,6 +1053,39 @@ function CanvasInner() {
   // The one selected thought, when there is exactly one. A lens over connections
   // needs a place to start, and starting it from an arbitrary member of a
   // multiple selection would pick for the person without telling them.
+  /**
+   * Put this person back where they were looking.
+   *
+   * Once per space, and only after there is something to look at: React Flow
+   * fits the notes when they first arrive, and restoring before that would be
+   * overwritten by the fit a frame later. defaultViewport cannot do this either
+   * — it is read when the canvas mounts, which is before the space is known.
+   *
+   * Rewinding is excluded on purpose: the past is a different picture and is
+   * framed for itself rather than inheriting where today was left.
+   */
+  const restoredViewFor = useRef('');
+  useEffect(() => {
+    if (!activeSpace || rewind || nodes.length === 0) return;
+    if (restoredViewFor.current === activeSpace) return;
+    restoredViewFor.current = activeSpace;
+    const view = rememberedView(activeSpace);
+    // After a frame, so the notes have been measured: fitting before that
+    // fits nothing, and restoring before that is overwritten by the fit.
+    window.requestAnimationFrame(() => {
+      if (view) {
+        void flow.setViewport(view);
+        // The canvas is where this person put it, so the opening prediction
+        // has nothing left to predict.
+        setViewportKnown(true);
+        return;
+      }
+      // Nothing remembered — the first time anyone opens this space — so it
+      // opens on everything, which is what it always did.
+      void flow.fitView({ padding: canvasView.padding });
+    });
+  }, [activeSpace, nodes.length, rewind, flow]);
+
   const selectedNoteID = useMemo(() => {
     const chosen = nodes.filter((node) => node.selected && node.type === 'postit');
     return chosen.length === 1 ? chosen[0].id : '';
@@ -2077,6 +2145,11 @@ function CanvasInner() {
           </section>
         </ScrollArea>
       ) : (
+        /* No fitView prop: the opening view is decided in the effect that
+           restores where somebody was looking. React Flow fits once it has
+           measured the notes, which lands after that effect runs, so handing it
+           the job as well meant the fit quietly won and the restore never
+           showed. */
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -2093,20 +2166,34 @@ function CanvasInner() {
             // The canvas has now said where it actually is, so the prediction
             // stands down.
             setViewportKnown(true);
+            // Where this person is looking, kept so that coming back to this
+            // space comes back to this view. Written on every move rather than
+            // on unmount: a tab closed or a reload leaves no unmount to run.
+            if (activeSpace && !rewind) {
+              writeLocalStorage(`umm:view:${activeSpace}`, JSON.stringify(viewport));
+            }
             // Only the crossing matters, so state changes once per crossing
             // rather than on every wheel tick.
             const out = viewport.zoom < clusterZoom;
             setZoomedOut((current) => (current === out ? current : out));
           }}
-          fitView
-          fitViewOptions={{ padding: canvasView.padding }}
           minZoom={canvasView.minZoom}
           maxZoom={canvasView.maxZoom}
           deleteKeyCode={null}
           selectionOnDrag
           panOnScroll
+          snapToGrid={snapToGrid}
+          snapGrid={[gridStep, gridStep]}
         >
-          <Background variant={BackgroundVariant.Dots} color="transparent" />
+          {/* Visible only while thoughts are being caught by it: a grid you
+              cannot see is a grid you cannot aim at, and one you can see while
+              nothing snaps to it is decoration. */}
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={gridStep}
+            size={snapToGrid ? 1.4 : 1}
+            color={snapToGrid ? 'var(--canvas-grid)' : 'transparent'}
+          />
           <Controls position="bottom-left" showInteractive={false} />
           <MiniMap
             position="bottom-right"
@@ -2263,6 +2350,27 @@ function CanvasInner() {
                 </ActionIcon>
               </Tooltip>
             )}
+            <div className="canvas-tool-divider" aria-hidden="true" />
+            {/* Off by default. "정리는 나중에" is the posture of the whole
+                product, and a grid that always caught your notes would argue
+                with it — so this is something a person turns on when they have
+                reached the tidying part. */}
+            <Tooltip label={t(snapToGrid ? '격자에 맞추기 끄기' : '격자에 맞추기')}>
+              <ActionIcon
+                className="canvas-action"
+                variant={snapToGrid ? 'filled' : 'subtle'}
+                color="dark"
+                aria-label={t('격자에 맞추기')}
+                aria-pressed={snapToGrid}
+                onClick={() => {
+                  const next = !snapToGrid;
+                  setSnapToGrid(next);
+                  writeLocalStorage('umm:snap-grid', next ? 'on' : 'off');
+                }}
+              >
+                <IconGrid3x3 size={19} />
+              </ActionIcon>
+            </Tooltip>
             <div className="canvas-tool-divider" aria-hidden="true" />
             {/* Looking backwards is reading, so it is offered whatever the
                 permission — and it makes the canvas read-only while it lasts,
