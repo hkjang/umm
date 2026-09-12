@@ -760,11 +760,13 @@ func (s *Store) listNotes(ctx context.Context, userID, spaceID uuid.UUID, query 
 		// while the list had one or two waiting, which is the worst of it,
 		// because a count of zero hides the chip and nobody finds out.
 		//
-		// Every pair is compared, which was measured at 163ms of a 243ms
-		// request in a space of two thousand notes. The pair scores are
-		// computed once and read back by index for each row, so drawing a line
-		// per thought costs a few linear passes rather than another pass over
-		// the square: 48ms to 63ms at two thousand.
+		// Every pair is compared, which is the whole cost of this branch. The
+		// rows are scored one at a time and split across cores rather than
+		// assembled from a stored table of every pair — same numbers, and at
+		// eight thousand thoughts 968ms and 260MB became 211ms and 5.7MB.
+		// Still quadratic: the line each thought draws comes from its own full
+		// distribution, so there is no pair that can be skipped without
+		// changing the answer.
 		vectors := s.loadEmbeddings(ctx, notes)
 		ordered := make([][]float32, len(notes))
 		for i := range notes {

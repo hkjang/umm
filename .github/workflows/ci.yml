@@ -56,6 +56,12 @@ jobs:
       # runs, 0 in 3 when serialised. The database serialises the slow work
       # anyway, so this costs about 3% of wall time (116s -> 120s).
       - run: go test -p 1 ./...
+      # The per-note counts are computed by several goroutines at once and the
+      # suite above does not look for races. Nothing else would: two workers
+      # writing the same correct number into the same slot produces the right
+      # answer every time and a race only the detector can see.
+      - name: Race detector on the concurrent paths
+        run: go test -race -count=1 ./internal/intelligence
       - name: Go vulnerability scan
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       # Prints the measured behaviour of the active embedding algorithm and

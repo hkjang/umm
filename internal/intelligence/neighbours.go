@@ -1,5 +1,10 @@
 package intelligence
 
+import (
+	"runtime"
+	"sync"
+)
+
 // Comparing every thought in a space with every other one.
 //
 // This is the largest cost of opening a canvas, and several other things do it
@@ -95,8 +100,11 @@ func (p *Prepared) Score(i, j int) float64 {
 
 // pairScores is every pair once, in i<j order, computed on first use and kept.
 //
-// Kept because the two callers that need it both want it twice: once to derive
-// a cutoff from the distribution, and again to judge each pair against it.
+// Kept because Counts wants it twice: once to derive a cutoff from the
+// distribution, and again to judge each pair against it. It costs memory as the
+// square of the space — 260MB at eight thousand thoughts — which is why
+// PerNoteCounts, the one of these on the path of opening a canvas, no longer
+// asks for it. Cutoff still does, and clustering still pays that.
 func (p *Prepared) pairScores() []float64 {
 	if p.pairs != nil || len(p.dense) < 2 {
 		return p.pairs
@@ -165,38 +173,108 @@ func NeighbourCounts(vectors [][]float32, band Band, fallback float64) ([]int, f
 // then opens the second one, so the card has to use the second one too —
 // otherwise it offers a count nobody can reach.
 //
-// The pair scores are the same ones Counts uses, read back by index instead of
-// multiplied a second time: a symmetric pair is stored once, so row i is
-// assembled from the halves either side of the diagonal.
+// One row at a time, scored as it is read and never kept. This used to assemble
+// each row out of a stored table of every pair, which saved arithmetic and cost
+// memory that grows as the square: eight thousand thoughts is thirty-two
+// million pairs and 260MB, measured, for a slice of numbers thrown away at the
+// end of the request. A row is n floats. The rows are also independent of each
+// other, which the stored table was not, so they are split across cores.
+//
+// The numbers are unchanged, and that is not an accident of rounding. A pair is
+// scored here from the row's own thought — sparse[i] against dense[j] — where
+// before, half of every row was read back from the other side of the diagonal,
+// sparse[j] against dense[i]. Those two agree exactly: both walk the nonzero
+// dimensions in ascending order and the terms the other side does not share
+// contribute a true zero, which a float64 accumulator carries without drift.
+// Within a row the order of summation is the order it always was, and no total
+// is ever combined across goroutines, so nothing here depends on float addition
+// being associative — which it is not.
 func (p *Prepared) PerNoteCounts(band Band, fallback float64) []int {
 	if p == nil {
 		return nil
 	}
+	return p.perNoteCounts(perNoteWorkers(len(p.dense)), band, fallback)
+}
+
+// perNoteCounts is PerNoteCounts with the fan-out chosen by the caller, so a
+// test can ask for any number of workers and check that the answer does not
+// depend on it.
+func (p *Prepared) perNoteCounts(workers int, band Band, fallback float64) []int {
 	n := len(p.dense)
 	counts := make([]int, n)
 	if n < 2 {
 		return counts
 	}
-	scores := p.pairScores()
-	// Where pair (a,b) with a<b sits in the i<j ordering.
-	at := func(a, b int) int { return a*n - a*(a+1)/2 + (b - a - 1) }
-	row := make([]float64, 0, n-1)
-	for i := 0; i < n; i++ {
-		row = row[:0]
-		for j := 0; j < n; j++ {
-			switch {
-			case j < i:
-				row = append(row, scores[at(j, i)])
-			case j > i:
-				row = append(row, scores[at(i, j)])
+	if workers < 1 {
+		workers = 1
+	}
+	// Strided rather than blocked so that the stretch of the space holding the
+	// densest vectors does not become the one worker everyone waits for. Each
+	// goroutine writes its own indices of counts and shares nothing else.
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(first int) {
+			defer wg.Done()
+			row := make([]float64, 0, n-1)
+			for i := first; i < n; i += workers {
+				counts[i], row = p.countRow(i, row, band, fallback)
 			}
+		}(w)
+	}
+	wg.Wait()
+	return counts
+}
+
+// countRow scores one thought against every other, draws the line from those
+// scores alone, and counts what clears it. The buffer comes back so the next
+// row reuses it.
+func (p *Prepared) countRow(i int, buf []float64, band Band, fallback float64) (int, []float64) {
+	row := buf[:0]
+	from := p.sparse[i]
+	for j := range p.dense {
+		if j == i {
+			continue
 		}
-		cutoff := NewSimilarityScale(row).ThresholdOr(band, fallback)
-		for _, score := range row {
-			if score >= cutoff {
-				counts[i]++
-			}
+		row = append(row, from.dot(p.dense[j]))
+	}
+	cutoff := NewSimilarityScale(row).ThresholdOr(band, fallback)
+	count := 0
+	for _, score := range row {
+		if score >= cutoff {
+			count++
 		}
 	}
-	return counts
+	return count, row
+}
+
+// perNoteRowsPerWorker is how many rows have to be waiting before another
+// goroutine is worth starting.
+//
+// Low, because reading a row costs more than it used to. A row is scored from
+// the thought it belongs to, so a pair is multiplied once for each of its two
+// sides — where the stored table multiplied it once and read it twice. Split
+// across cores that is comfortably ahead; on one core it is behind, measured at
+// 3.7ms against 6.0ms for five hundred thoughts. So the split starts early
+// enough that the one-core case is reached only by spaces small enough for
+// neither number to matter.
+const perNoteRowsPerWorker = 64
+
+// perNoteMaxWorkers bounds the fan-out. This runs inside somebody's request,
+// and a machine serving several canvases at once should not hand one of them
+// every core it has.
+const perNoteMaxWorkers = 8
+
+func perNoteWorkers(n int) int {
+	workers := n / perNoteRowsPerWorker
+	if limit := runtime.GOMAXPROCS(0); workers > limit {
+		workers = limit
+	}
+	if workers > perNoteMaxWorkers {
+		workers = perNoteMaxWorkers
+	}
+	if workers < 1 {
+		return 1
+	}
+	return workers
 }
