@@ -555,6 +555,8 @@ export const en: Dictionary = {
   '임베딩 Timeout': 'Embedding timeout',
   '검색이 기다리는 시간입니다. 짧게 두세요 — 넘으면 로컬로 계산합니다.':
     'How long a search waits. Keep it short — past it, umm computes locally.',
+  '격자에 맞추기': 'Snap to grid',
+  '격자에 맞추기 끄기': 'Stop snapping to grid',
   되감기: 'Rewind',
   지금으로: 'Back to now',
   '하루 전': 'A day ago',
