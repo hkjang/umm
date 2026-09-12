@@ -1,8 +1,10 @@
 package intelligence
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
+	"runtime"
 	"testing"
 )
 
@@ -266,7 +268,14 @@ func densePerNote(vectors [][]float32, band Band, fallback float64) []int {
 }
 
 func TestPerNoteCountsMatchTheDenseLoop(t *testing.T) {
-	for _, n := range []int{2, 3, 17, 64, 200} {
+	// 600 is past the point where the rows are split across goroutines, so the
+	// dense loop is checking the parallel path and not only the serial one.
+	// Asserted rather than assumed: raising perNoteRowsPerWorker would
+	// otherwise quietly take this coverage away.
+	if perNoteWorkers(600) < 2 {
+		t.Fatalf("600 rows ran on %d worker(s); this test no longer covers the split", perNoteWorkers(600))
+	}
+	for _, n := range []int{2, 3, 17, 64, 200, 600} {
 		rng := rand.New(rand.NewSource(int64(n) + 500))
 		vectors := sparseVectors(n, rng)
 		got := Prepare(vectors).PerNoteCounts(Band(0.6), 0.42)
@@ -297,6 +306,77 @@ func TestPerNoteCountsTooFewToCompare(t *testing.T) {
 	}
 	if got := Prepare([][]float32{make([]float32, Dimensions)}).PerNoteCounts(Band(0.6), 0.42); len(got) != 1 || got[0] != 0 {
 		t.Fatalf("one vector returned %v", got)
+	}
+}
+
+// Splitting the rows must not change a single count, whatever the split is.
+// Every worker count from one upwards is compared against the same set done by
+// a single worker, so a mistake in the striding — a row done twice, a row done
+// by nobody, a worker writing over its neighbour — shows up as a difference
+// rather than as a race the detector only sometimes reports.
+func TestPerNoteCountsDoNotDependOnTheSplit(t *testing.T) {
+	const n = 1500
+	if perNoteWorkers(n) < 3 {
+		t.Fatalf("%d rows ran on %d worker(s); this test no longer covers the split", n, perNoteWorkers(n))
+	}
+	rng := rand.New(rand.NewSource(77))
+	vectors := sparseVectors(n, rng)
+	p := Prepare(vectors)
+	one := p.perNoteCounts(1, Band(0.6), 0.42)
+	// Zero means one — the caller of last resort gets an answer rather than a
+	// slice of zeros. More workers than rows is harmless: the extra ones find
+	// nothing to do.
+	sameCounts(t, p.perNoteCounts(0, Band(0.6), 0.42), one, "no workers asked for")
+	for _, workers := range []int{2, 3, 5, 8, 16, n, n + 7} {
+		sameCounts(t, p.perNoteCounts(workers, Band(0.6), 0.42), one, fmt.Sprintf("%d workers", workers))
+	}
+	sameCounts(t, p.PerNoteCounts(Band(0.6), 0.42), one, "the split it chooses itself")
+}
+
+// A score that lands exactly on the line is on the inside of it.
+//
+// Nothing random ever tests this: a cutoff is a mean plus a multiple of a
+// deviation and no ordinary score falls on it. So the line is placed by hand.
+// Three thoughts give each row two scores, below the four the relative scale
+// needs, so the cutoff is the fallback constant — and the first pair is built
+// to score exactly that. Whether the boundary is counted decides a number
+// someone reads off a card, so it is fixed here rather than left to whichever
+// comparison was typed.
+func TestPerNoteCountsIncludeAScoreOnTheLine(t *testing.T) {
+	on := make([]float32, Dimensions)
+	on[0] = 1
+	half := make([]float32, Dimensions)
+	half[0] = 0.5
+	vectors := [][]float32{on, half, make([]float32, Dimensions)}
+
+	const fallback = 0.5
+	if score := Prepare(vectors).Score(0, 1); score != fallback {
+		t.Fatalf("the pair built to sit on the line scored %v, not %v", score, fallback)
+	}
+	got := Prepare(vectors).PerNoteCounts(Band(0.6), fallback)
+	if got[0] != 1 {
+		t.Fatalf("a score exactly on the line was counted %d times, want 1", got[0])
+	}
+	if got[2] != 0 {
+		t.Fatalf("a thought resembling nothing counted %d, want 0", got[2])
+	}
+}
+
+// A space small enough that the fan-out would cost more than the work is left
+// alone, one core is never asked to start zero or negative workers, and no
+// space however large takes more than the cap.
+func TestPerNoteWorkersStaysWithinBounds(t *testing.T) {
+	for _, n := range []int{0, 1, 2, perNoteRowsPerWorker - 1} {
+		if got := perNoteWorkers(n); got != 1 {
+			t.Fatalf("%d rows asked for %d workers, want 1", n, got)
+		}
+	}
+	if got := perNoteWorkers(2 * perNoteRowsPerWorker); got < 2 && runtime.GOMAXPROCS(0) > 1 {
+		t.Fatalf("%d rows asked for %d workers on %d cores, want at least 2",
+			2*perNoteRowsPerWorker, got, runtime.GOMAXPROCS(0))
+	}
+	if got := perNoteWorkers(1 << 20); got > perNoteMaxWorkers {
+		t.Fatalf("a million rows asked for %d workers, above the %d cap", got, perNoteMaxWorkers)
 	}
 }
 

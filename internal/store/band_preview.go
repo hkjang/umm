@@ -137,9 +137,12 @@ func (s *Store) PreviewBands(ctx context.Context, relatedBand, clusterBand float
 			continue
 		}
 
-		// One preparation, four questions. Comparing every pair is the whole
-		// cost here and the pair scores are kept, so both bands are judged
-		// against arithmetic done once.
+		// One preparation, four questions. Preparing is linear and everything
+		// below it is quadratic, so the compression is worth doing once. The
+		// two related passes each score every pair again — this is an estimate
+		// run from a settings screen, not a canvas being opened, and the
+		// alternative was holding a table of every pair in every space at once
+		// while the loop moved on to the next one.
 		prepared := intelligence.Prepare(ordered)
 		relatedCurrent = append(relatedCurrent,
 			prepared.PerNoteCounts(intelligence.Band(settings.RelatedBand), legacyRelatedCutoff)...)
