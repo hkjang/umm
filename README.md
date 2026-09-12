@@ -195,7 +195,7 @@ umm이 [Ptium](https://github.com/hkjang/ptium)으로 발표 자료를 만듭니
 | :--- | :--- | :--- |
 | **📕 종합 기술 매뉴얼 완본** | 모든 아키텍처·기능·운영·API 통합 기술 완본 (A4 인쇄용) | [**docs/umm_complete_manual.pdf**](docs/umm_complete_manual.pdf) |
 | **🎬 3분 서비스 시연 영상** | 전 메뉴 기능 및 실무 동작 1080p 시연 영상 | [**docs/umm_overview.mp4**](docs/umm_overview.mp4) |
-| **📸 기능 및 화면 가이드** | 20여 개 전체 메뉴별 캡처 스크린샷과 CRU 동작 가이드 | [**PDF 바로보기**](docs/umm_features_guide.pdf) · [MD](docs/features.md) |
+| **📸 사용자 가이드** | 화면별 사용법과 자주 하는 작업 (캡처 포함) | [**PDF 바로보기**](docs/USER_GUIDE.pdf) · [MD](docs/USER_GUIDE.md) |
 | **👤 사용자 가이드** | 처음 5분, 화면별 사용법(실제 화면 캡처), 자주 하는 작업, 막혔을 때 | [**PDF 바로보기**](docs/USER_GUIDE.pdf) · [MD](docs/USER_GUIDE.md) |
 | **🛠️ 관리자 가이드** | 설치, 환경 변수 전수 표, 계정과 권한, 운영·장애 대응·보안 | [**PDF 바로보기**](docs/ADMIN_GUIDE.pdf) · [MD](docs/ADMIN_GUIDE.md) |
 | **🔌 API & MCP 가이드** | REST API 명세, SSE 실시간 스트림, AI MCP JSON-RPC | [**PDF 바로보기**](docs/umm_api_guide.pdf) · [MD](docs/api-guide.md) |

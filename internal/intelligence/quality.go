@@ -200,7 +200,7 @@ const defaultSemanticAccuracyBar = 0.65
 //
 // It is not a quality ranking. Models that score well here still disagree with
 // each other on individual sentences, and a higher number does not reliably mean
-// better clusters in a given workspace — see docs/admin-guide.md, where the
+// better clusters in a given workspace — see docs/ADMIN_GUIDE.md, where the
 // candidates are compared on this and on umm's end-to-end clustering test, which
 // they do not rank the same way.
 const defaultSemanticPurityBar = 0.6

@@ -1852,7 +1852,7 @@ function EmbeddingQualityPanel() {
               </Code>
               <Text size="xs" c="dimmed" mt={6}>
                 {t(
-                  '그 다음 아래 임베딩 Gateway 주소에 http://embeddings:11434 을, 임베딩 모델에 bge-m3 을 넣고 저장한 뒤 다시 측정하세요. 채팅 모델 주소는 그대로 두면 됩니다. 후보 모델 비교는 docs/admin-guide.md에 있습니다.',
+                  '그 다음 아래 임베딩 Gateway 주소에 http://embeddings:11434 을, 임베딩 모델에 bge-m3 을 넣고 저장한 뒤 다시 측정하세요. 채팅 모델 주소는 그대로 두면 됩니다. 후보 모델 비교는 docs/ADMIN_GUIDE.md에 있습니다.',
                 )}
               </Text>
             </Alert>

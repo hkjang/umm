@@ -16,7 +16,7 @@
 - 🎬 **[3분 서비스 소개 및 전체 기능 시연 영상 (MP4)](umm_overview.mp4)**: 3분 동안 전 메뉴 기능과 실무 동작을 설명하는 1080p FHD 시연 영상
 
 ### 1. 사용자 및 기능 가이드
-- 📄 **[기능 및 화면 가이드 (PDF)](umm_features_guide.pdf)** (`docs/umm_features_guide.pdf`) · [MD](features.md)
+- 📄 **[사용자 가이드 (PDF)](USER_GUIDE.pdf)** (`docs/USER_GUIDE.pdf`) · [MD](USER_GUIDE.md)
   - 20여 개 전체 메뉴별 실제 구동 화면 캡처 및 세부 CRU 기능 명세
 - 📄 **[사용자 가이드 (PDF)](USER_GUIDE.pdf)** (`docs/USER_GUIDE.pdf`) · [MD](USER_GUIDE.md)
   - 무한 캔버스 조작, 포스트잇 단축키, 연관 생각, 인력(Gravity), 내보내기 가이드

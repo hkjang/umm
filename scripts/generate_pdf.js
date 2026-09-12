@@ -248,11 +248,6 @@ function resolveImages(html, baseDir) {
 }
 
 const DOCS_TO_BUILD = [
-  {
-    src: path.join(DOCS_DIR, 'features.md'),
-    outPdf: path.join(DOCS_DIR, 'umm_features_guide.pdf'),
-    title: 'umm 기능 및 화면 가이드 (Features & UI Guide)',
-  },
   // USER_GUIDE.md and ADMIN_GUIDE.md are rendered with the shared guide tool
   // (aidev/tools/guide/md2pdf.mjs) so every project's guides look alike; they
   // are included in the complete manual below but not built separately here.
