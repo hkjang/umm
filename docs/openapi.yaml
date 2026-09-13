@@ -1107,7 +1107,7 @@ paths:
       responses: { '200': { description: Setting sections } }
   /admin/settings/{section}:
     parameters:
-      - { in: path, name: section, required: true, schema: { type: string, enum: [general, oidc, security, workflow, dream, ai_gateway] } }
+      - { in: path, name: section, required: true, schema: { type: string, enum: [general, oidc, security, workflow, dream, ai_gateway, intelligence, ptium, analytics] } }
     put:
       operationId: put_admin_settings_section
       tags: [Admin]
@@ -1116,6 +1116,18 @@ paths:
         OIDC client_secret and the AI gateway's api_key and embedding_api_key are AES-256-GCM
         encrypted before PostgreSQL storage. Masked secret saves merge the latest ciphertext
         under the same per-setting transaction lock used by master-key rotation.
+
+        The `analytics` section is visitor tracking: `enabled` (off by default), `provider`
+        (`momento` first — the in-house collector — then `ga4`, `gtm`, `matomo`, `custom`, `none`),
+        `momento_url`, `momento_site_id`, `momento_proxy` (serve the tracker and its events
+        through umm's own `/momento` path so no outside origin enters the content security
+        policy), `measurement_id`, `matomo_url`, `matomo_site_id`, `custom_snippet` (at most
+        8 KB, must contain a script tag), `allowed_hosts` (extra origins, `https://host`, comma
+        separated), `include_admin` and `placement` (`head` or `body`). Saving takes effect on
+        the next page load; the response nonce is added to every script tag of the snippet and
+        the snippet's origins to `script-src`, `connect-src` and `img-src` of that page only.
+        `'unsafe-inline'` is never added. A save that would render nothing — a provider with
+        its id missing, a snippet without a script tag — is refused with 400.
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
       responses: { '200': { description: Saved }, '400': { $ref: '#/components/responses/Error' } }
   /admin/oidc/test:
@@ -2081,6 +2093,50 @@ paths:
       responses:
         '200': { description: Paused, or already paused }
         '404': { description: No such webhook }
+  /admin/analytics/violations:
+    get:
+      operationId: get_admin_analytics_violations
+      tags: [Admin]
+      summary: What the content security policy refused while tracking was on
+      description: |
+        While visitor tracking is on, every tracked page's policy names `report-uri /csp-report`
+        and the browser posts each refusal there. umm keeps the distinct origins — at most a
+        hundred, in memory, per instance — with the directive that refused each, most recent
+        first. `allowed` marks an origin the current setting already covers, so a snippet that
+        has since been fixed stops showing as a problem. The settings screen turns each entry
+        into one click that adds the origin to `allowed_hosts`.
+
+        Nothing is recorded while tracking is off: an idle installation does not keep a list
+        anyone outside could fill.
+      responses:
+        '200':
+          description: Refused origins, most recent first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  active: { type: boolean, description: Whether tracking is on and reports are being kept }
+                  reportPath: { type: string, example: /csp-report }
+                  violations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        origin: { type: string, example: https://cdn.tracker.example }
+                        directive: { type: string, example: connect-src }
+                        page: { type: string, description: Path of the page that reported it }
+                        count: { type: integer }
+                        firstSeen: { type: string, format: date-time }
+                        lastSeen: { type: string, format: date-time }
+                        allowed: { type: boolean }
+    delete:
+      operationId: delete_admin_analytics_violations
+      tags: [Admin]
+      summary: Empty the list of refused origins
+      description: What an administrator does after fixing a snippet, to see whether anything is still refused.
+      responses:
+        '200': { description: Emptied }
 components:
   securitySchemes:
     cookieAuth: { type: apiKey, in: cookie, name: umm_session }

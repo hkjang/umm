@@ -21,6 +21,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/hkjang/umm/internal/analytics"
 	"github.com/hkjang/umm/internal/auth"
 	"github.com/hkjang/umm/internal/cryptoutil"
 	"github.com/hkjang/umm/internal/dream"
@@ -52,6 +53,17 @@ type Server struct {
 	policyMu       sync.Mutex
 	policy         securityPolicy
 	policyLoadedAt time.Time
+
+	// Visitor tracking: the cached setting, the origins the browser refused
+	// while it was on, and the connection to the Momento collector. See
+	// tracking.go.
+	trackingMu          sync.Mutex
+	tracking            analytics.Config
+	trackingLoadedAt    time.Time
+	violationsOnce      sync.Once
+	violationRecorder   *analytics.Recorder
+	momentoOnce         sync.Once
+	momentoRoundTripper http.RoundTripper
 }
 
 // Handler returns the traced HTTP handler the server listens with.
@@ -214,10 +226,17 @@ func (s *Server) router() chi.Router {
 				admin.Post("/ai-evals", s.createAIEval)
 				admin.Delete("/ai-evals/{caseID}", s.deleteAIEval)
 				admin.With(s.aiQuota).Post("/ai-evals/{caseID}/run", s.runAIEval)
+				admin.Get("/analytics/violations", s.analyticsViolations)
+				admin.Delete("/analytics/violations", s.forgetAnalyticsViolations)
 			})
 		})
 	})
 	r.Handle("/mcp", &mcp.Handler{Store: s.Store, Dreams: s.Dreams, Cipher: s.Cipher, Version: s.Version})
+	// Visitor tracking's two doors, both closed while tracking is off: the
+	// browser's policy reports, and the same-origin path to Momento.
+	r.Post(analytics.ReportPath, s.cspReport)
+	r.HandleFunc(analytics.ProxyPath, s.momentoProxy)
+	r.HandleFunc(analytics.ProxyPath+"/*", s.momentoProxy)
 	r.Handle("/*", s.spa())
 	return r
 }
@@ -229,33 +248,6 @@ const cspNonceKey contextKey = "csp-nonce"
 func cspNonce(r *http.Request) string {
 	nonce, _ := r.Context().Value(cspNonceKey).(string)
 	return nonce
-}
-
-// contentSecurityPolicy pins script execution to the exact bundle umm served.
-//
-// script-src uses a per-response nonce with 'strict-dynamic', so an injected
-// <script src="..."> is refused even when it points at an allowed origin.
-// style-src deliberately keeps 'unsafe-inline': Mantine writes its theme
-// variables into a runtime <style> element and React Flow positions every node
-// with a style attribute, so removing it would break the canvas without closing
-// a comparable hole. Everything else is denied outright.
-func contentSecurityPolicy(nonce string) string {
-	return strings.Join([]string{
-		"default-src 'self'",
-		"img-src 'self' data: blob:",
-		"font-src 'self' data:",
-		"style-src 'self' 'unsafe-inline'",
-		"style-src-attr 'unsafe-inline'",
-		"script-src 'nonce-" + nonce + "' 'strict-dynamic' 'self'",
-		"connect-src 'self'",
-		"worker-src 'self'",
-		"manifest-src 'self'",
-		"object-src 'none'",
-		"frame-src 'none'",
-		"frame-ancestors 'none'",
-		"base-uri 'self'",
-		"form-action 'self'",
-	}, "; ")
 }
 
 // requestSizeLimit caps request bodies.
@@ -395,7 +387,16 @@ func (s *Server) spa() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		document = injectNonce(document, cspNonce(r))
+		nonce := cspNonce(r)
+		document = injectNonce(document, nonce)
+		// The tracking snippet, when an administrator has turned it on for
+		// this page. Its origins go into this response's policy at the same
+		// time — the two are one decision, and only the shell document, never
+		// an asset or an API answer, makes it.
+		if tracking := s.trackingConfig(r.Context()); tracking.Active(r.URL.Path) {
+			document = injectSnippet(document, tracking.Snippet(nonce), tracking.Placement)
+			w.Header().Set("Content-Security-Policy", trackedContentSecurityPolicy(nonce, tracking, true))
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Length", strconv.Itoa(len(document)))

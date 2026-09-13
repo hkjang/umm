@@ -576,7 +576,7 @@ func PreservedSettingFields(key string) []string {
 
 func AllowedSetting(key string) bool {
 	switch key {
-	case "general", "oidc", "security", "workflow", "dream", "ai_gateway", "intelligence", "ptium":
+	case "general", "oidc", "security", "workflow", "dream", "ai_gateway", "intelligence", "ptium", "analytics":
 		return true
 	}
 	return false

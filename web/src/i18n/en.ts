@@ -1206,4 +1206,49 @@ export const en: Dictionary = {
     'Moved only the {count} thoughts that were in the way. The rest are untouched. Ctrl+Z undoes it.',
   '생각 {count}개를 묶음별로 정렬했습니다. 묶이지 않은 {kept}개는 그대로 두었습니다. Ctrl+Z로 되돌립니다.':
     'Arranged {count} thoughts by group. The {kept} that belong to no group were left alone. Ctrl+Z undoes it.',
+  // Visitor tracking (admin)
+  'Matomo 주소': 'Matomo address',
+  'Momento (사내 수집기)': 'Momento (in-house collector)',
+  'Momento 수집기 주소': 'Momento collector address',
+  'Momento는 사내에서 직접 운영하는 수집기라 데이터가 밖으로 나가지 않는 유일한 선택지입니다.':
+    'Momento is the collector run in-house — the one choice where nothing leaves the network.',
+  '같은 오리진 프록시로 보내기 (권장)': 'Send through the same-origin proxy (recommended)',
+  '관리 화면에서도 추적': 'Track the admin screens too',
+  '기록 비우기': 'Clear the list',
+  '기본은 아니오 — 관리자의 화면은 대개 세고 싶은 방문이 아닙니다.':
+    "Off by default — an administrator's screen is rarely the visit anyone wants to count.",
+  '넣는 자리': 'Placement',
+  '더한 출처는 위 카드를 저장해야 정책에 들어갑니다. 저장 뒤 화면을 새로 열면 그 출처는 더 이상 차단되지 않습니다.':
+    'An origin you add enters the policy when the card above is saved. Open a page again after saving and it is no longer refused.',
+  '방문 추적': 'Visitor tracking',
+  '방문 추적 켜기': 'Turn visitor tracking on',
+  '사이트 ID': 'Site ID',
+  '스니펫에서 자동으로 읽지 못한 출처를 https://host 형태로, 쉼표로 구분해 적습니다. 아래 차단 목록에서 한 번 눌러 더할 수도 있습니다.':
+    'Origins the snippet did not name itself, as https://host, comma separated. The refused list below adds one with a click.',
+  '어느 화면이 실제로 쓰이는지 세는 추적 스크립트를 화면에 붙입니다. 기본은 꺼짐이며, 켜기 전까지 방문에 관해 어디에도 아무것도 보내지 않습니다.':
+    'Attaches a tracking script that counts which screens are actually used. Off by default; until it is turned on nothing about a visit is sent anywhere.',
+  '정책이 차단한 출처': 'Origins the policy refused',
+  지시어: 'Directive',
+  '직접 붙여 넣기': 'Paste a snippet',
+  '차단 기록을 지우지 못했습니다.': 'Could not clear the refused list.',
+  '차단된 출처가 없습니다.': 'Nothing has been refused.',
+  '추가로 허용할 출처': 'Extra allowed origins',
+  '추적 도구': 'Tracker',
+  '추적 도구가 준 <script> 코드를 그대로 붙여 넣습니다. 8KB까지이며, 요청마다 nonce가 모든 <script> 태그에 자동으로 붙고 코드 안의 http(s) 출처가 보안 정책에 더해집니다.':
+    "Paste the <script> code the tracker gave you, as is. Up to 8 KB; each response's nonce is put on every <script> tag for you, and the http(s) origins in the code are added to the security policy.",
+  '추적 스니펫': 'Tracking snippet',
+  '추적이 꺼져 있는 동안에는 기록하지 않습니다.': 'Nothing is recorded while tracking is off.',
+  '추적이 켜져 있는 동안 브라우저가 보안 정책 때문에 거절한 주소입니다. 같은 출처는 한 줄로 모이고, 최근 100개까지 이 서버의 메모리에만 남습니다. 화면이 비어 있는데 수집이 안 된다면 여기부터 보세요.':
+    "Addresses the browser refused under the security policy while tracking was on. The same origin folds into one row, and up to 100 recent ones are kept in this server's memory only. If the dashboard is empty and nothing arrives, start here.",
+  출처: 'Origin',
+  '측정 ID': 'Measurement ID',
+  '컨테이너 ID': 'Container ID',
+  '켜면 브라우저는 umm의 /momento 경로로만 이야기하고 umm이 수집기로 넘깁니다. 외부 출처가 보안 정책에 아예 등장하지 않으므로 정책을 바꿀 수 없는 설치에서도 동작합니다.':
+    "When on, the browser talks only to umm's /momento path and umm passes it to the collector. No outside origin enters the security policy at all, so it works where the policy cannot be changed.",
+  '허용 목록에 더하기': 'Add to allowed',
+  허용됨: 'Allowed',
+  화면: 'Page',
+  횟수: 'Count',
+  "이 앱의 보안 정책(CSP)은 script-src를 응답마다 다른 nonce로 잠급니다. 'unsafe-inline'으로 풀지 않고, 스니펫의 모든 <script>에 그 nonce를 붙이고 스니펫이 쓰는 출처만 그 화면의 정책에 더합니다. 끄면 정책은 원래대로 좁아집니다.":
+    "This app's content security policy locks script-src to a nonce that differs per response. It is never loosened with 'unsafe-inline': the nonce is put on every <script> in the snippet and only the origins the snippet uses are added, for that page. Turn tracking off and the policy is as narrow as before.",
 };
