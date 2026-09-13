@@ -12,6 +12,8 @@ export interface Meta {
   serviceName: string;
   version: string;
   oidcEnabled: boolean;
+  /** Try a silent Keycloak sign-in before showing the login screen. Never true while oidcEnabled is false. */
+  oidcAutoLogin: boolean;
   dreamEnabled: boolean;
   dreamAllowUserDisable: boolean;
   mcpProtocol: string;

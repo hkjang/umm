@@ -24,7 +24,15 @@ export default function LoginPage() {
   const { t } = useTranslation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  // The SSO callback lands here with ?sso=error when Keycloak answered with
+  // something other than a code or "no session"; the person should know the
+  // button they may be about to press just failed. ?sso=none is the ordinary
+  // "not signed in there" and says nothing.
+  const [error, setError] = useState(() =>
+    new URLSearchParams(window.location.search).get('sso') === 'error'
+      ? t('Keycloak SSO 로그인이 완료되지 않았습니다. 다시 시도하거나 아이디와 비밀번호로 로그인하세요.')
+      : '',
+  );
   const [busy, setBusy] = useState(false);
 
   const submit = async (event: FormEvent) => {

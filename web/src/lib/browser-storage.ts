@@ -33,3 +33,4 @@ export const writeLocalStorage = (key: string, value: string) => writeStorage('l
 export const removeLocalStorage = (key: string) => removeStorage('localStorage', key);
 export const readSessionStorage = (key: string) => readStorage('sessionStorage', key);
 export const writeSessionStorage = (key: string, value: string) => writeStorage('sessionStorage', key, value);
+export const removeSessionStorage = (key: string) => removeStorage('sessionStorage', key);

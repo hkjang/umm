@@ -130,7 +130,7 @@ PostgreSQL 사용자는 대상 데이터베이스에 schema·table·extension(`p
 | 메뉴 | 정하는 것 | 부록 |
 | :--- | :--- | :--- |
 | 일반 | 서비스 이름, 공개 URL, 세션 시간, 시간대 | — |
-| Keycloak SSO | Issuer, Client, 관리자·팀장 그룹 매핑, 연결 시험 | 부록 2 |
+| Keycloak SSO | Issuer, Client, 관리자·팀장 그룹 매핑, 자동 로그인(`auto_login`), 연결 시험 | 부록 2 |
 | Dream Layer | 자동 생성 시각·주기, 컨텍스트 범위, 최대 응답 토큰, 품질 기준선 | 부록 3 |
 | AI Gateway | 채팅·임베딩 주소와 키, timeout·재시도, 비용, 임베딩 품질 측정, 자동 찾기 | 부록 4 |
 | Ptium 발표 자료 | Ptium 주소·API 키·`timeout_seconds`, 연결 시험 | 부록 8-2 |
@@ -311,6 +311,42 @@ psql "$POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/down/027_note_attachments.
    - **팀장 그룹/역할**: `umm-leads`
 3. **연결 시험**:
    - `연결 시험` 버튼을 클릭하여 OIDC Discovery 및 토큰 엔드포인트 도달 가능 여부를 실시간 검증합니다.
+
+### 부록 2-1. 자동 로그인 (`auto_login`, silent SSO)
+
+Keycloak 에 이미 로그인한 사람이 umm 을 열면 **로그인 화면 없이** 바로 본 화면으로 들어가게 하는
+설정입니다. 스위치 이름은 **"이미 Keycloak에 로그인한 사람은 로그인 화면 없이 바로 들어오기"**, 설정 키는
+`oidc.auto_login` 입니다. **기본값은 꺼짐**이며, 꺼진 설치에서는 아무것도 달라지지 않습니다.
+
+**동작.** 켜 두면 브라우저가 로그인 화면을 그리기 전에 `GET /api/v1/auth/oidc/start?prompt=none` 으로
+Keycloak 에 갑니다. `prompt=none` 은 "이미 있는 세션으로만 답하라"는 요청이라 Keycloak 은 화면을 그리지
+않습니다 — 세션이 있으면 코드가 곧바로 돌아와 평소처럼 로그인이 끝나고, 없으면 `error=login_required` 로
+돌아옵니다. 후자는 실패가 아니라 평범한 대답이며, 그때 umm 은 `/login?sso=none` 으로 보내 로그인 화면을
+보여 줍니다. 숨은 iframe 이 아니라 최상위 이동을 쓰므로 서드파티 쿠키가 막힌 브라우저에서도 동작하고,
+Keycloak 의 프레임 허용 여부와 무관합니다. 깊은 링크(`/space/<id>` 등)로 들어온 사람은 조용히 로그인한 뒤
+그 자리로 돌아갑니다(`return_to` 는 `/` 로 시작하고 `//` 로 시작하지 않는 경로만 받습니다).
+
+**루프 방지.** 거절당한 뒤 다시 시도하면 브라우저가 Keycloak 과 umm 사이를 끝없이 오가므로, 시도를 막는
+장치가 세 겹입니다.
+
+| 겹 | 장치 | 풀리는 때 |
+| :--- | :--- | :--- |
+| 1 | 한 탭 세션에 한 번만 시도 (`sessionStorage` 표시) | 새 탭을 열 때 |
+| 2 | 스스로 로그아웃했으면 시도하지 않음 | 다시 세션이 생길 때 |
+| 3 | 콜백이 거절을 받으면 `/login?sso=none` 으로 보내 주소에 표시를 남김 | 그 주소를 떠날 때 |
+
+브라우저 저장소를 읽을 수 없는 경우(사생활 보호 모드, 사이트 데이터 차단)는 "이미 시도했다"로 칩니다.
+콜백·로그인 경로와 `/api`·`/mcp`·`/healthz`·`/readyz`·`/metrics` 에서는 시도하지 않습니다.
+
+**서버 쪽 잠금.** `auto_login` 이 꺼져 있으면 서버는 `?prompt=none` 이 붙어 와도 조용히 평범한 로그인으로
+바꿉니다. 리다이렉트가 시작되는 자리가 관리자 설정에 묶여 있어야 하기 때문입니다 — 누구든 주소에
+`prompt=none` 을 붙여 흐름을 바꿀 수 있어서는 안 됩니다. `login_required`·`interaction_required`·
+`consent_required` 이외의 오류(예: `access_denied`)는 `/login?sso=error` 로 보내고 로그인 화면에 알림을
+띄우며, 서버 로그에 `OIDC provider returned an error error=<코드>` 로 남습니다.
+
+**확인.** Keycloak 에 로그인한 브라우저로 umm 을 열면 로그인 화면 없이 본 화면이 떠야 하고, 로그인하지 않은
+브라우저로 열면 로그인 화면이 한 번 뜬 뒤 새로고침을 반복해도 깜빡이지 않아야 하며, 로그아웃한 뒤 다시
+열어도 자동으로 로그인되지 않아야 합니다.
 
 ---
 

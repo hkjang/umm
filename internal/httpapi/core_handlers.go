@@ -85,7 +85,8 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 		AllowUserDisable bool `json:"allow_user_disable"`
 	}
 	_ = s.Store.GetSetting(r.Context(), "dream", &dreamConfig)
-	writeJSON(w, 200, map[string]any{"serviceName": general.ServiceName, "version": s.Version, "oidcEnabled": s.OIDC.Enabled(r.Context()), "dreamEnabled": dreamConfig.Enabled, "dreamAllowUserDisable": dreamConfig.AllowUserDisable, "mcpProtocol": "2026-07-28"})
+	oidcEnabled, oidcAutoLogin := s.OIDC.Public(r.Context())
+	writeJSON(w, 200, map[string]any{"serviceName": general.ServiceName, "version": s.Version, "oidcEnabled": oidcEnabled, "oidcAutoLogin": oidcAutoLogin, "dreamEnabled": dreamConfig.Enabled, "dreamAllowUserDisable": dreamConfig.AllowUserDisable, "mcpProtocol": "2026-07-28"})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {

@@ -52,8 +52,14 @@ paths:
       security: []
       tags: [Auth]
       summary: Begin Keycloak Authorization Code flow
+      description: >-
+        return_to must be a site path — starting with one slash, not two — or it becomes /.
+        prompt=none asks Keycloak to answer from an existing session without drawing a screen (silent SSO);
+        it is honoured only while the administrator has turned auto_login on, and is otherwise treated as an
+        ordinary login so that appending it to a URL cannot change the flow.
       parameters:
         - { in: query, name: return_to, schema: { type: string, default: / } }
+        - { in: query, name: prompt, schema: { type: string, enum: [none] } }
       responses: { '302': { description: Redirect to Keycloak } }
   /auth/oidc/callback:
     get:
@@ -61,10 +67,16 @@ paths:
       security: []
       tags: [Auth]
       summary: Complete Keycloak Authorization Code flow
+      description: >-
+        When Keycloak answers with error instead of code the browser is sent to the login screen:
+        /login?sso=none for login_required, interaction_required and consent_required (the ordinary reply to a
+        silent prompt=none attempt when there is no session — the marker tells the browser not to try again),
+        /login?sso=error for anything else.
       parameters:
         - { in: query, name: state, required: true, schema: { type: string } }
-        - { in: query, name: code, required: true, schema: { type: string } }
-      responses: { '302': { description: Session established and redirected } }
+        - { in: query, name: code, schema: { type: string } }
+        - { in: query, name: error, schema: { type: string } }
+      responses: { '302': { description: Session established and redirected to return_to, or refused and redirected to /login } }
   /auth/logout:
     post:
       operationId: post_auth_logout
@@ -2125,8 +2137,8 @@ components:
         latest: { $ref: '#/components/schemas/Note' }
     Meta:
       type: object
-      required: [serviceName, version, oidcEnabled, dreamEnabled, dreamAllowUserDisable, mcpProtocol]
-      properties: { serviceName: { type: string }, version: { type: string }, oidcEnabled: { type: boolean }, dreamEnabled: { type: boolean }, dreamAllowUserDisable: { type: boolean }, mcpProtocol: { type: string } }
+      required: [serviceName, version, oidcEnabled, oidcAutoLogin, dreamEnabled, dreamAllowUserDisable, mcpProtocol]
+      properties: { serviceName: { type: string }, version: { type: string }, oidcEnabled: { type: boolean }, oidcAutoLogin: { type: boolean, description: Whether the browser should try a silent prompt=none sign-in before showing the login screen; never true while oidcEnabled is false }, dreamEnabled: { type: boolean }, dreamAllowUserDisable: { type: boolean }, mcpProtocol: { type: string } }
     Session:
       type: object
       required: [id, current, createdAt, lastSeenAt, expiresAt]

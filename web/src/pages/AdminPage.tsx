@@ -731,6 +731,16 @@ export default function AdminPage() {
                 checked={!!settings.oidc.enabled}
                 onChange={(e) => update('oidc', 'enabled', e.currentTarget.checked)}
               />
+              <Switch
+                size="md"
+                label={t('이미 Keycloak에 로그인한 사람은 로그인 화면 없이 바로 들어오기')}
+                description={t(
+                  '켜면 브라우저가 먼저 조용히(prompt=none) Keycloak 세션을 확인하고, 세션이 있으면 바로 본 화면으로 들어갑니다. 없으면 평소처럼 로그인 화면이 뜨며, 한 탭에서 한 번만 시도합니다.',
+                )}
+                disabled={!settings.oidc.enabled}
+                checked={!!settings.oidc.auto_login}
+                onChange={(e) => update('oidc', 'auto_login', e.currentTarget.checked)}
+              />
               <TextInput
                 label="Issuer URL"
                 placeholder="https://keycloak.internal/realms/umm"
