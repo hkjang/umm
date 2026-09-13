@@ -724,6 +724,109 @@ paths:
       tags: [Thoughts]
       summary: Export notes and connections as Markdown
       responses: { '200': { description: Markdown file, content: { text/markdown: { schema: { type: string } } } }, '409': { description: Approval required } }
+  /handoff/targets:
+    get:
+      operationId: get_handoff_targets
+      tags: [Thoughts]
+      summary: Where a space can be sent, and as whom
+      description: |
+        The services an administrator has named in the `handoff` settings
+        section, kept to those that receive what umm sends (`markdown`). Empty
+        on a new installation, and the canvas shows no "send to another
+        service" menu while it is. `source` is the origin the receiving service
+        will be told to collect from: the configured public URL, or failing
+        that the origin this request arrived at.
+      responses:
+        '200':
+          description: Targets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [targets, source, format]
+                properties:
+                  targets:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, origin]
+                      properties:
+                        name: { type: string }
+                        origin: { type: string, format: uri, description: "Scheme and host only. The browser opens `<origin>/handoff?source=<source>&claim=<claim>`." }
+                  source: { type: string, format: uri }
+                  format: { type: string, enum: [markdown] }
+  /handoff/claims:
+    post:
+      operationId: post_handoff_claims
+      tags: [Thoughts]
+      summary: Issue a single-use claim for a space, to hand it to another service
+      description: |
+        The sending half of the in-house handoff standard. The claim is bound
+        to one space this person may read, is good for five minutes and for one
+        collection, and widens nothing: the space is checked the way every
+        export is, through the same approval gate, and the document is rendered
+        as this person. The document is the space's outline — its sentences in
+        the order the graph puts them — rendered now and kept with the claim,
+        so what is collected is exactly what `bytes` announced.
+
+        The claim never reaches the audit log or the access log.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resource, format]
+              properties:
+                resource: { type: string, format: uuid, description: The space. }
+                format: { type: string, enum: [markdown], description: umm sends Markdown and nothing else. }
+      responses:
+        '201':
+          description: The claim
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [claim, source, filename, content_type, bytes, expires_at]
+                properties:
+                  claim: { type: string, description: 256 bits of randomness, URL-safe. }
+                  source: { type: string, format: uri, description: Where to collect it from — this service's origin. }
+                  filename: { type: string }
+                  content_type: { type: string, enum: ['text/markdown; charset=utf-8'] }
+                  bytes: { type: integer }
+                  expires_at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409':
+          description: A team lead has to approve this export first
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  code: { type: string, enum: [approval_required] }
+  /handoff/claims/{claim}:
+    parameters:
+      - { in: path, name: claim, required: true, schema: { type: string } }
+    get:
+      operationId: get_handoff_claims_claim
+      security: []
+      tags: [Thoughts]
+      summary: Collect a handed-off document; the claim is the credential
+      description: |
+        No sign-in. The claim is spent by this request: a second collection,
+        an expired claim and a claim that was never issued all answer 404, and
+        the answer does not say which.
+      responses:
+        '200':
+          description: The document, named by Content-Disposition
+          headers:
+            Content-Disposition: { schema: { type: string }, description: "attachment; filename=\"...\"; filename*=UTF-8''..." }
+          content:
+            text/markdown:
+              schema: { type: string }
+        '404': { $ref: '#/components/responses/Error' }
   /spaces/{spaceId}/edges:
     parameters:
       - { $ref: '#/components/parameters/SpaceID' }
@@ -1107,7 +1210,7 @@ paths:
       responses: { '200': { description: Setting sections } }
   /admin/settings/{section}:
     parameters:
-      - { in: path, name: section, required: true, schema: { type: string, enum: [general, oidc, security, workflow, dream, ai_gateway, intelligence, ptium, analytics] } }
+      - { in: path, name: section, required: true, schema: { type: string, enum: [general, oidc, security, workflow, dream, ai_gateway, intelligence, ptium, analytics, handoff] } }
     put:
       operationId: put_admin_settings_section
       tags: [Admin]
@@ -1128,6 +1231,9 @@ paths:
         the snippet's origins to `script-src`, `connect-src` and `img-src` of that page only.
         `'unsafe-inline'` is never added. A save that would render nothing — a provider with
         its id missing, a snippet without a script tag — is refused with 400.
+        The `handoff` section is `{"targets": [{"name", "origin", "formats": [...]}]}` — the
+        services a space may be sent to; `origin` is a scheme and host with no path, and
+        `formats` are the standard's words (markdown, docx, csv, xlsx, txt, pptx). Empty by default.
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
       responses: { '200': { description: Saved }, '400': { $ref: '#/components/responses/Error' } }
   /admin/oidc/test:

@@ -171,12 +171,15 @@ func TestSensitiveCredentialPathsCannotBeResponseCached(t *testing.T) {
 		"/api/v1/api-keys/8dbe15dc-283d-4b64-ae36-728a5a04b8fc/rotate",
 		"/api/v1/webhooks",
 		"/api/v1/webhooks/8dbe15dc-283d-4b64-ae36-728a5a04b8fc/rotate-secret",
+		"/api/v1/handoff/claims",
 	} {
 		if !sensitiveCredentialPathPattern.MatchString(path) {
 			t.Errorf("sensitive credential path %q was not recognized", path)
 		}
 	}
-	for _, path := range []string{"/api/v1/notes", "/api/v1/webhooks/id/test", "/api/v1/api-keys/id"} {
+	// Collecting a claim is not minting one: the path carries the secret in, and
+	// the body is the document, which is worth compressing.
+	for _, path := range []string{"/api/v1/notes", "/api/v1/webhooks/id/test", "/api/v1/api-keys/id", "/api/v1/handoff/claims/abc", "/api/v1/handoff/targets"} {
 		if sensitiveCredentialPathPattern.MatchString(path) {
 			t.Errorf("ordinary mutation path %q was marked sensitive", path)
 		}

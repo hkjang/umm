@@ -44,6 +44,7 @@ import {
   IconPresentation,
   IconRobot,
   IconRoute,
+  IconSend,
   IconSettings,
   IconShield,
   IconTrash,
@@ -117,6 +118,7 @@ const menu = [
   ['ai_gateway', 'AI Gateway', IconRobot],
   ['ptium', msg('Ptium 발표 자료'), IconPresentation],
   ['analytics', msg('방문 추적'), IconChartBar],
+  ['handoff', msg('다른 서비스로 보내기'), IconSend],
   ['intelligence', msg('유사도 기준'), IconAdjustments],
   ['ai_evals', msg('AI 품질 평가'), IconFlask],
   ['security', msg('키 · 권한'), IconShield],
@@ -1134,6 +1136,14 @@ export default function AdminPage() {
               </Card>
             </Stack>
           )}
+          {section === 'handoff' && settings.handoff && (
+            <HandoffSettings
+              dirty={settingChanged(settings.handoff, savedSettings.handoff)}
+              targets={Array.isArray(settings.handoff.targets) ? settings.handoff.targets : []}
+              update={(targets) => update('handoff', 'targets', targets)}
+              save={() => save('handoff')}
+            />
+          )}
           {section === 'ai_gateway' && settings.ai_gateway && (
             <SettingCard
               dirty={settingChanged(settings.ai_gateway, savedSettings.ai_gateway)}
@@ -1683,6 +1693,105 @@ export default function AdminPage() {
 function sectionTitle(key: string, t: (value: string) => string): string {
   const found = menu.find(([name]) => name === key);
   return found ? t(found[1]) : key;
+}
+
+/**
+ * Where a space may be sent.
+ *
+ * The other half of the in-house handoff standard: umm issues a claim and
+ * opens the receiving service with it, so nobody downloads a file and no
+ * service holds a credential for another. The list is what the canvas offers
+ * under "다른 서비스로 보내기" — empty by default, and then the menu does not
+ * exist. A target is shown only when it receives what umm sends (Markdown),
+ * so "받는 형식" is what decides whether a named service is actually offered.
+ */
+interface HandoffTargetDraft {
+  name: string;
+  origin: string;
+  formats: string[];
+}
+const handoffFormats = ['markdown', 'docx', 'csv', 'xlsx', 'txt', 'pptx'];
+function HandoffSettings({
+  targets,
+  update,
+  save,
+  dirty,
+}: {
+  targets: HandoffTargetDraft[];
+  update: (targets: HandoffTargetDraft[]) => void;
+  save: () => void;
+  dirty: boolean;
+}) {
+  const { t } = useTranslation();
+  const change = (index: number, patch: Partial<HandoffTargetDraft>) =>
+    update(targets.map((target, at) => (at === index ? { ...target, ...patch } : target)));
+  return (
+    <SettingCard
+      dirty={dirty}
+      title={t('다른 서비스로 보내기')}
+      description={t(
+        '공간을 문서로 넘길 수 있는 사내 서비스입니다. 비워 두면 캔버스에 보내기 메뉴가 나타나지 않습니다. umm은 markdown만 보내므로, markdown을 받는 서비스만 메뉴에 오릅니다.',
+      )}
+      onSave={save}
+      actions={
+        <Button
+          size="xs"
+          variant="light"
+          leftSection={<IconSend size={14} />}
+          disabled={targets.length >= 20}
+          onClick={() => update([...targets, { name: '', origin: '', formats: ['markdown'] }])}
+        >
+          {t('보낼 곳 추가')}
+        </Button>
+      }
+    >
+      {targets.length === 0 && <Text c="dimmed">{t('아직 보낼 곳이 없습니다.')}</Text>}
+      {targets.map((target, index) => (
+        <Paper key={index} withBorder radius="md" p="md">
+          <Stack gap="sm">
+            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+              <TextInput
+                label={t('이름')}
+                description={t('메뉴에 보이는 이름입니다. 예: Ptium')}
+                value={target.name}
+                onChange={(e) => change(index, { name: e.currentTarget.value })}
+              />
+              <TextInput
+                label={t('주소 (오리진)')}
+                description={t('스킴과 호스트까지만, 경로 없이. 예: https://ptium.intra')}
+                placeholder="https://ptium.intra"
+                value={target.origin}
+                onChange={(e) => change(index, { origin: e.currentTarget.value })}
+              />
+            </SimpleGrid>
+            <Checkbox.Group
+              label={t('받는 형식')}
+              description={t('그 서비스가 받을 수 있는 형식입니다. markdown이 없으면 메뉴에 오르지 않습니다.')}
+              value={target.formats}
+              onChange={(formats) => change(index, { formats })}
+            >
+              <Group mt="xs" gap="md">
+                {handoffFormats.map((format) => (
+                  <Checkbox key={format} value={format} label={format} />
+                ))}
+              </Group>
+            </Checkbox.Group>
+            <Group justify="flex-end">
+              <Button
+                size="xs"
+                variant="subtle"
+                color="red"
+                leftSection={<IconTrash size={14} />}
+                onClick={() => update(targets.filter((_, at) => at !== index))}
+              >
+                {t('지우기')}
+              </Button>
+            </Group>
+          </Stack>
+        </Paper>
+      ))}
+    </SettingCard>
+  );
 }
 
 function SettingCard({

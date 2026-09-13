@@ -48,6 +48,7 @@ import {
   IconFocus2,
   IconPresentation,
   IconSearch,
+  IconSend,
   IconSettings,
   IconShare,
   IconSparkles,
@@ -97,6 +98,7 @@ import { msg, useTranslation } from '../i18n';
 import ImportThoughtsModal from '../components/ImportThoughtsModal';
 import PresentationModal from '../components/PresentationModal';
 import { opensSummarised } from '../opening-view';
+import { openHandoff, type HandoffClaim, type HandoffTarget } from '../lib/handoff';
 import BranchPanel from '../components/BranchPanel';
 import { neighbourhood } from '../lens';
 import { hasOverlaps, packGroups, ringAround, spreadOverlaps, type Placement } from '../layout';
@@ -420,6 +422,9 @@ function CanvasInner() {
   // would otherwise see whatever `conflict` was when it was registered.
   const decidingRef = useRef(false);
   const [importOpen, setImportOpen] = useState(false);
+  // Where a space can be sent, as the administrator named them. Empty on a new
+  // installation, and then the menu has no such section at all.
+  const [handoffTargets, setHandoffTargets] = useState<HandoffTarget[]>([]);
   const [presentationOpen, setPresentationOpen] = useState(false);
   // Captured when the modal opens rather than read from it, so the deck matches
   // what was selected at the moment the person asked, not whatever the canvas
@@ -490,6 +495,11 @@ function CanvasInner() {
   useEffect(() => {
     if (activeSpace) writeLocalStorage('umm:last-space', activeSpace);
   }, [activeSpace]);
+  useEffect(() => {
+    api<{ targets: HandoffTarget[] }>('/handoff/targets', { silent: true })
+      .then(({ targets }) => setHandoffTargets(targets))
+      .catch(() => setHandoffTargets([]));
+  }, []);
   useEffect(() => {
     api<Preferences>('/preferences', { silent: true })
       .then((value) => {
@@ -2058,6 +2068,48 @@ function CanvasInner() {
       setExportBusy('');
     }
   };
+  /**
+   * The space to another service, without anybody downloading a file.
+   *
+   * umm issues a claim for this space and opens the receiving service with
+   * it; that service collects the document from umm and the claim is spent.
+   * The same approval gate as any export, because this is the space's words
+   * leaving it. The window is opened inside the click — see lib/handoff.
+   */
+  const sendTo = async (target: HandoffTarget) => {
+    if (exportBusy) return;
+    setExportBusy('handoff');
+    // ensureExport has already said what it needs to say when approval is
+    // pending; the window is closed and nothing more is shown.
+    const approvalPending = new Error('approval pending');
+    try {
+      const opened = await openHandoff(target, async () => {
+        if (!(await ensureExport('handoff'))) throw approvalPending;
+        return api<HandoffClaim>('/handoff/claims', {
+          ...json('POST', { resource: activeSpace, format: 'markdown' }),
+          silent: true,
+        });
+      });
+      if (opened) {
+        showSuccess(t('{name}에서 이 공간을 여는 중입니다.', { name: target.name }), t('다른 서비스로 보내기'));
+      } else {
+        showError(
+          t('새 창이 막혔습니다. 이 사이트의 팝업을 허용하고 다시 시도해 주세요.'),
+          t('다른 서비스로 보내기'),
+          'export:handoff',
+        );
+      }
+    } catch (error) {
+      if (error === approvalPending) return;
+      showError(
+        error instanceof Error ? error.message : t('{name}(으)로 보내지 못했습니다.', { name: target.name }),
+        t('다른 서비스로 보내기'),
+        'export:handoff',
+      );
+    } finally {
+      setExportBusy('');
+    }
+  };
   const dismissDream = async () => {
     if (!morningDream) return;
     writeSessionStorage(`dream:${morningDream.dreamId}`, 'seen');
@@ -2527,6 +2579,22 @@ function CanvasInner() {
                 >
                   {t('PDF 다운로드')}
                 </Menu.Item>
+                {handoffTargets.length > 0 && (
+                  <>
+                    <Menu.Divider />
+                    <Menu.Label>{t('다른 서비스로 보내기')}</Menu.Label>
+                    {handoffTargets.map((target) => (
+                      <Menu.Item
+                        key={target.origin}
+                        disabled={!!exportBusy}
+                        leftSection={<IconSend size={16} />}
+                        onClick={() => void sendTo(target)}
+                      >
+                        {target.name}
+                      </Menu.Item>
+                    ))}
+                  </>
+                )}
                 <Menu.Divider />
                 <Menu.Item leftSection={<IconFileImport size={16} />} onClick={() => setImportOpen(true)}>
                   {t('마크다운 가져오기')}
