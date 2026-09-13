@@ -363,6 +363,176 @@ describe("reading umm's own export", () => {
   });
 });
 
+// A thought whose own words look like the file's structure.
+//
+// The general rules cut at every heading and every horizontal rule, which is
+// how people separate ideas when they write Markdown by hand. Inside an export
+// those marks are usually part of what somebody pasted into a thought, and
+// cutting there broke one thought into several — of which only the last kept
+// the metadata list, so the rest came back with no id, no position and no
+// colour, and every connection drawn to them could not be redrawn.
+describe('a thought in an export that is written in Markdown itself', () => {
+  const withStructure = (body: string) =>
+    [
+      '# 돌아오는 공간',
+      '',
+      'Exported from umm at 2026-08-26T16:01:02+09:00.',
+      '',
+      '## 붙여 넣은 생각',
+      '',
+      body,
+      '',
+      '- id: `f2543505-ca63-49a0-ba05-bd9d1cd37f13`',
+      '- type: `question`',
+      '- source: `user`',
+      '- color: `blue`',
+      '- canvas: `120, 240`',
+      '',
+    ].join('\n');
+
+  it('comes back whole when its body holds a heading', () => {
+    expect(splitMarkdownThoughts(withStructure('### 배경\n\n왜 이 결정을 했는지'))).toEqual([
+      {
+        title: '붙여 넣은 생각',
+        content: '### 배경\n\n왜 이 결정을 했는지',
+        sourceId: 'f2543505-ca63-49a0-ba05-bd9d1cd37f13',
+        x: 120,
+        y: 240,
+        kind: 'question',
+        color: 'blue',
+      },
+    ]);
+  });
+
+  it('comes back whole when its body holds a horizontal rule', () => {
+    const restored = splitMarkdownThoughts(withStructure('앞의 절반\n\n---\n\n뒤의 절반'));
+    expect(restored).toHaveLength(1);
+    expect(restored[0].content).toBe('앞의 절반\n\n---\n\n뒤의 절반');
+    expect(restored[0].sourceId).toBe('f2543505-ca63-49a0-ba05-bd9d1cd37f13');
+  });
+
+  // The metadata list is read on its own rather than searched for in the whole
+  // section. Searching found this line first, so the thought came back under a
+  // name nothing in the restored space answered to.
+  it('does not take an id out of its body', () => {
+    const restored = splitMarkdownThoughts(withStructure('- id: `ours-2024-11`\n- 담당: 우리 팀'));
+    expect(restored[0].sourceId).toBe('f2543505-ca63-49a0-ba05-bd9d1cd37f13');
+    expect(restored[0].content).toBe('- id: `ours-2024-11`\n- 담당: 우리 팀');
+  });
+
+  // Two exports joined by the import screen's rule. The rule no longer cuts
+  // inside a thought, so the seam has to be told from a rule in a body by the
+  // line before it: metadata means the first file has finished.
+  it('still tells two exports apart when the last thought of the first has none', () => {
+    const plain = [
+      '# 앞의 공간',
+      '',
+      'Exported from umm at 2026-08-26T16:01:02+09:00.',
+      '',
+      '## 앞의 생각',
+      '',
+      '앞의 본문',
+      '',
+      '- id: `bfe3a64a-dfc4-4f41-af41-b95afb511003`',
+      '',
+    ].join('\n');
+    const restored = splitMarkdownThoughts([plain, withStructure('뒤의 본문')].join('\n\n---\n\n'));
+    expect(restored.map((thought) => [thought.title, thought.content])).toEqual([
+      ['앞의 생각', '앞의 본문'],
+      ['붙여 넣은 생각', '뒤의 본문'],
+    ]);
+    expect(restored[0].sourceId).toBe('bfe3a64a-dfc4-4f41-af41-b95afb511003');
+  });
+});
+
+// An export followed by somebody's ordinary notes.
+//
+// The import screen joins whatever is picked with a rule, and an export picked
+// alongside a plain file lands in front of it about half the time. Reading
+// everything after the banner by the exporter's rules swallowed the plain
+// file: its headings stopped cutting, its rule stopped cutting, and the whole
+// of it — rule, headings and all — was carried into the body of the export's
+// last thought, on top of that thought's own metadata list. Three notes
+// collapsed into one wall of text and the export's thought lost its id.
+describe('an export with ordinary Markdown appended after it', () => {
+  const exported = [
+    '# 공간',
+    '',
+    'Exported from umm at 2026-09-10T16:07:17+09:00.',
+    '',
+    '## 첫 생각',
+    '',
+    '본문',
+    '',
+    '- id: `aaaa`',
+    '- canvas: `10, 20`',
+    '',
+  ].join('\n');
+  const notes = ['# 노트 A', '', '가', '', '# 노트 B', '', '나', '', '# 노트 C', '', '다'].join('\n');
+
+  it('reads the plain file by the general rules again', () => {
+    const document = readMarkdownDocument([exported, notes].join('\n\n---\n\n'));
+    expect(document.isExport).toBe(true);
+    expect(document.thoughts).toEqual([
+      { title: '첫 생각', content: '본문', sourceId: 'aaaa', x: 10, y: 20 },
+      { title: '노트 A', content: '가' },
+      { title: '노트 B', content: '나' },
+      { title: '노트 C', content: '다' },
+    ]);
+  });
+
+  // The plain file may use the export's own words, and past the seam none of
+  // them mean anything: a note called Connections is a note.
+  it('does not read the plain file as part of the export', () => {
+    const mine = [
+      '# Connections',
+      '',
+      '- 이건 목록이지 연결이 아님',
+      '',
+      '---',
+      '',
+      '## Thought',
+      '',
+      '내가 그렇게 부른 생각',
+    ].join('\n');
+    const document = readMarkdownDocument([exported, mine].join('\n\n---\n\n'));
+    expect(document.connections).toEqual([]);
+    expect(document.thoughts.slice(1)).toEqual([
+      { title: 'Connections', content: '- 이건 목록이지 연결이 아님' },
+      { title: 'Thought', content: '내가 그렇게 부른 생각' },
+    ]);
+  });
+
+  // The seam is found after the closing sections too, not only after a thought.
+  it('finds the seam after the connections and the lines of thinking', () => {
+    const thoughts = splitMarkdownThoughts([ummExport, notes].join('\n\n---\n\n'));
+    expect(thoughts.map((thought) => thought.title)).toEqual([
+      '',
+      '제목이 있는 생각',
+      '',
+      '노트 A',
+      '노트 B',
+      '노트 C',
+    ]);
+    expect(thoughts.slice(0, 3).every((thought) => thought.sourceId !== undefined)).toBe(true);
+    expect(thoughts.slice(3).every((thought) => thought.sourceId === undefined)).toBe(true);
+  });
+
+  // And in the other order — typed first, then an export, then plain notes —
+  // each part is read by its own rules.
+  it('reads typed text, an export and a plain file each by their own rules', () => {
+    const typed = ['# 먼저 적은 것', '', '한 줄'].join('\n');
+    const thoughts = splitMarkdownThoughts([typed, exported, notes].join('\n\n---\n\n'));
+    expect(thoughts.map((thought) => [thought.title, thought.sourceId])).toEqual([
+      ['먼저 적은 것', undefined],
+      ['첫 생각', 'aaaa'],
+      ['노트 A', undefined],
+      ['노트 B', undefined],
+      ['노트 C', undefined],
+    ]);
+  });
+});
+
 describe('restoring a space rather than a list of sentences', () => {
   // Where a thought sits is part of what it says on this canvas, so an export
   // that comes back in a fresh grid has lost something people built by hand.

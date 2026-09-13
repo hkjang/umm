@@ -85,10 +85,35 @@ const headingLine = /^#{1,6}\s+\S/;
  * to whatever is already in the box, so an export very often arrives second:
  * type a thought, pick your export, and a banner-near-the-top rule would miss
  * it and hand back every id and canvas position it was meant to strip.
+ *
+ * From that point the file is cut where the exporter cuts it and nowhere else.
+ * The general rules read a document the way a person wrote it — every heading
+ * and every horizontal rule ends a thought — but inside an export those marks
+ * are usually somebody's own words. A thought holding a pasted `### Overview`,
+ * or a rule between two paragraphs, was broken into pieces on the way back in,
+ * and only the last piece kept the metadata: the rest arrived with no id, so
+ * their connections could not be redrawn and they landed in a fresh grid in the
+ * default colour, in no line of thinking. The exporter writes one `## ` per
+ * thought and a `# ` only above a banner, so those two marks are the cuts.
+ *
+ * An export also ends. The import screen joins files with a horizontal rule,
+ * and what follows the rule may be anybody's Markdown, to be read by the
+ * general rules again; the export's rules stop where the export stops. The
+ * rule itself cannot say which it is — a rule between two paragraphs of a
+ * thought looks exactly like the one between two files — but the line before
+ * it can. The exporter ends every section it writes in a line of its own: a
+ * thought in its metadata list, the closing sections in a connection or a line
+ * of thinking. A rule after one of those lines follows a finished section, and
+ * nothing the exporter writes puts a rule there, so it is the seam between
+ * files. A rule after anything else is inside a thought.
  */
 const exportBanner = /^Exported from umm at\s+\S+$/;
 const exportMetadata = /^-\s+(?:id|type|source|color|canvas|line):\s+`/;
 const exportSections = new Set(['Connections', 'Lines of thinking']);
+/** One thought's section in an export. Deeper headings belong to its body. */
+const exportThoughtHeading = /^##\s+\S/;
+/** The space name an export opens with — the only `#` the exporter writes. */
+const exportFileHeading = /^#\s+\S/;
 /** `- id: `uuid`` under a thought: where it lived before. */
 const exportedID = /^-\s+id:\s+`([^`]+)`/m;
 /** `- canvas: `x, y`` under a thought: where it sat on the canvas. */
@@ -126,8 +151,16 @@ function isExportBanner(content: string): boolean {
   return exportBanner.test(content.trim());
 }
 
-/** Drops the trailing metadata list the exporter writes under each thought. */
-function withoutExportMetadata(content: string): string {
+/**
+ * Separates what somebody wrote from the list the exporter wrote under it.
+ *
+ * The list is read on its own rather than searched for in the whole section,
+ * because a body may say `- id: \`ours-2024-11\`` about somebody's own
+ * numbering — and the first match wins, so that line used to become the
+ * thought's id. The real one was then never seen, and every connection drawn to
+ * that thought pointed at a name nothing in the restored space answered to.
+ */
+function splitExportMetadata(content: string): { body: string; metadata: string } {
   const lines = content.split('\n');
   let end = lines.length;
   while (end > 0) {
@@ -138,7 +171,30 @@ function withoutExportMetadata(content: string): string {
     }
     break;
   }
-  return lines.slice(0, end).join('\n').trim();
+  return { body: lines.slice(0, end).join('\n').trim(), metadata: lines.slice(end).join('\n') };
+}
+
+/**
+ * Whether the exporter would have written this line last in a section: the
+ * metadata under a thought, a connection, or a line of thinking. Nothing the
+ * exporter writes comes after one of these but the next section.
+ */
+function closesExportSection(line: string): boolean {
+  return exportMetadata.test(line) || exportedConnection.test(line) || exportedLine.test(line);
+}
+
+/**
+ * Whether a horizontal rule met here is the seam between two files rather than
+ * part of a thought. See the note above exportBanner: the exporter never puts a
+ * rule after a finished section, so a rule there is the import screen's.
+ */
+function endsExport(section: string[]): boolean {
+  for (let at = section.length - 1; at >= 0; at -= 1) {
+    const line = section[at].trim();
+    if (line === '') continue;
+    return closesExportSection(line);
+  }
+  return false;
 }
 
 /**
@@ -175,6 +231,109 @@ function describesTheSpace(title: string, content: string): boolean {
 const thematicBreak = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 
 /**
+ * Whether this line begins a section of an export: a thought, or the space name
+ * of another export appended directly after this one.
+ */
+function startsExportSection(lines: string[], index: number): boolean {
+  if (exportThoughtHeading.test(lines[index])) return true;
+  if (!exportFileHeading.test(lines[index])) return false;
+  for (let next = index + 1; next < lines.length; next += 1) {
+    if (lines[next].trim() === '') continue;
+    return exportBanner.test(lines[next].trim());
+  }
+  return false;
+}
+
+/** One section as it was cut, and whether umm wrote it. */
+interface Section {
+  lines: string[];
+  /** True from a banner to the end of that export; false for anybody's Markdown. */
+  inExport: boolean;
+}
+
+/** The title and body of one section, however it was cut. */
+function sectionOf(lines: string[]): { title: string; content: string } {
+  const body = lines.join('\n').trim();
+  const [first, ...rest] = body.split('\n');
+  const title = headingLine.test(first) ? first.replace(/^#{1,6}\s+/, '').trim() : '';
+  return { title, content: title ? rest.join('\n').trim() : body };
+}
+
+/**
+ * Cuts a document into sections, by the general rules for anybody's Markdown
+ * and by the exporter's own from a banner to the end of that export.
+ *
+ * `structured` is decided over the whole document rather than any one run of
+ * it, so a plainly typed paragraph keeps reading as one thought when an export
+ * is appended under it.
+ */
+function splitSections(lines: string[]): Section[] {
+  const structured = lines.some((line) => headingLine.test(line) || thematicBreak.test(line));
+  const blocks: Section[] = [];
+  let current: string[] = [];
+  let insideExport = false;
+  const flush = () => {
+    if (current.some((line) => line.trim() !== '')) {
+      blocks.push({ lines: current, inExport: insideExport });
+      // The banner is where umm's writing begins. It is found here, as its
+      // section closes, so the very next line is already read by the
+      // exporter's rules.
+      if (isExportBanner(sectionOf(current).content)) insideExport = true;
+    }
+    current = [];
+  };
+
+  if (structured) {
+    let insideFence = false;
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      // A heading inside a fenced code block is content, not a section break.
+      if (/^\s*(?:```|~~~)/.test(line)) insideFence = !insideFence;
+      if (insideFence) {
+        current.push(line);
+        continue;
+      }
+      if (insideExport) {
+        if (thematicBreak.test(line) && endsExport(current)) {
+          // The seam between two files. What follows is read as it was
+          // written — by the general rules, until another banner says
+          // otherwise.
+          flush();
+          insideExport = false;
+          continue;
+        }
+        if (startsExportSection(lines, index)) flush();
+        current.push(line);
+        continue;
+      }
+      if (thematicBreak.test(line)) {
+        flush();
+        continue;
+      }
+      if (headingLine.test(line)) flush();
+      current.push(line);
+    }
+    flush();
+    return blocks;
+  }
+
+  // Nothing structured anywhere, so no banner either: an export always opens
+  // with a heading.
+  let blank = 0;
+  for (const line of lines) {
+    if (line.trim() === '') {
+      blank += 1;
+      if (blank >= 1 && current.length > 0) flush();
+      continue;
+    }
+    blank = 0;
+    current.push(line);
+  }
+  flush();
+  return blocks;
+}
+
+/**
  * splitMarkdownThoughts turns a Markdown document into one thought per section.
  *
  * Sections are cut at headings and thematic breaks, which is how people already
@@ -184,67 +343,28 @@ const thematicBreak = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
  */
 export function readMarkdownDocument(source: string): ImportedDocument {
   const lines = source.replaceAll('\r\n', '\n').replaceAll('\r', '\n').split('\n');
-  const structured = lines.some((line) => headingLine.test(line) || thematicBreak.test(line));
-  const blocks: string[][] = [];
-  let current: string[] = [];
-  const flush = () => {
-    if (current.some((line) => line.trim() !== '')) blocks.push(current);
-    current = [];
-  };
+  const blocks = splitSections(lines);
 
-  if (structured) {
-    let insideFence = false;
-    for (const line of lines) {
-      // A heading inside a fenced code block is content, not a section break.
-      if (/^\s*(?:```|~~~)/.test(line)) insideFence = !insideFence;
-      if (!insideFence && thematicBreak.test(line)) {
-        flush();
-        continue;
-      }
-      if (!insideFence && headingLine.test(line)) {
-        flush();
-      }
-      current.push(line);
-    }
-    flush();
-  } else {
-    let blank = 0;
-    for (const line of lines) {
-      if (line.trim() === '') {
-        blank += 1;
-        if (blank >= 1 && current.length > 0) flush();
-        continue;
-      }
-      blank = 0;
-      current.push(line);
-    }
-    flush();
-  }
-
-  // Set once the banner is seen, and stays set: a document may hold several
-  // exports one after another, which is exactly what picking two files makes.
-  let ummExport = false;
   let banner: string | undefined;
   const thoughts: ImportedThought[] = [];
   const connections: ImportedConnection[] = [];
   const linesOfThinking: ImportedLine[] = [];
   for (const block of blocks) {
-    const body = block.join('\n').trim();
-    if (!body) continue;
-    const [first, ...rest] = body.split('\n');
-    let title = headingLine.test(first) ? first.replace(/^#{1,6}\s+/, '').trim() : '';
-    let content = title ? rest.join('\n').trim() : body;
+    const section = sectionOf(block.lines);
+    let title = section.title;
+    let content = section.content;
+    if (!title && !content) continue;
     let carried: Partial<ImportedThought> = {};
 
     if (isExportBanner(content)) {
-      // The banner is umm describing the file, not a thought in it. It also
-      // marks everything after it as umm's own writing.
-      ummExport = true;
+      // The banner is umm describing the file, not a thought in it. A document
+      // may hold several — picking two files makes exactly that — and the
+      // first is the one a retry draft is written under.
       banner ??= content.trim();
       continue;
     }
 
-    if (ummExport) {
+    if (block.inExport) {
       // The connections and the lines of thinking describe the space rather
       // than being thoughts someone had in it.
       if (title === 'Connections' && describesTheSpace(title, content)) {
@@ -267,17 +387,18 @@ export function readMarkdownDocument(source: string): ImportedDocument {
         continue;
       }
       if (describesTheSpace(title, content)) continue;
-      const id = exportedID.exec(content)?.[1];
-      const canvas = exportedCanvas.exec(content);
-      const line = exportedLineLabel.exec(content)?.[1];
-      const kind = exportedKind.exec(content)?.[1];
-      const color = exportedColor.exec(content)?.[1];
+      const { body, metadata } = splitExportMetadata(content);
+      const id = exportedID.exec(metadata)?.[1];
+      const canvas = exportedCanvas.exec(metadata);
+      const line = exportedLineLabel.exec(metadata)?.[1];
+      const kind = exportedKind.exec(metadata)?.[1];
+      const color = exportedColor.exec(metadata)?.[1];
       if (id) carried = { sourceId: id };
       if (canvas) carried = { ...carried, x: Number(canvas[1]), y: Number(canvas[2]) };
       if (line) carried = { ...carried, line };
       if (kind) carried = { ...carried, kind };
       if (color) carried = { ...carried, color };
-      content = withoutExportMetadata(content);
+      content = body;
       // A thought that had no title gets one from the exporter; giving it back
       // would name every restored thought "Thought".
       if (title === untitledThought) title = '';
@@ -292,7 +413,7 @@ export function readMarkdownDocument(source: string): ImportedDocument {
     thoughts: thoughts.filter((thought) => thought.content !== ''),
     connections,
     lines: linesOfThinking,
-    isExport: ummExport,
+    isExport: banner !== undefined,
     banner,
   };
 }
