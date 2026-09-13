@@ -737,6 +737,12 @@ export const en: Dictionary = {
   'Issuer URL, Client ID, Client Secret만으로 Discovery를 통해 자동 연결합니다.':
     'Issuer URL, client ID and client secret are all that discovery needs.',
   'Keycloak SSO 활성화': 'Enable Keycloak SSO',
+  '이미 Keycloak에 로그인한 사람은 로그인 화면 없이 바로 들어오기':
+    'Let people already signed in at Keycloak walk straight in, with no login screen',
+  '켜면 브라우저가 먼저 조용히(prompt=none) Keycloak 세션을 확인하고, 세션이 있으면 바로 본 화면으로 들어갑니다. 없으면 평소처럼 로그인 화면이 뜨며, 한 탭에서 한 번만 시도합니다.':
+    'When on, the browser first asks Keycloak silently (prompt=none) whether a session exists and, if so, goes straight to the app. If not, the usual login screen appears; the attempt is made once per tab.',
+  'Keycloak SSO 로그인이 완료되지 않았습니다. 다시 시도하거나 아이디와 비밀번호로 로그인하세요.':
+    'Keycloak SSO did not complete. Try again, or sign in with your username and password.',
   '관리자 그룹/역할': 'Administrator group or role',
   '팀장 그룹/역할': 'Team lead group or role',
   '내부 AI Gateway': 'Internal AI gateway',

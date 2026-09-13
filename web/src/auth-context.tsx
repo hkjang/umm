@@ -3,6 +3,13 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { APIError, api, setOfflineQueueOwner, type Meta, type Preferences, type User } from './api';
 import { isLocale, setLocale } from './i18n/translate';
 import { readLocalStorage, removeLocalStorage, writeLocalStorage } from './lib/browser-storage';
+import {
+  beginSilentSso,
+  clearSilentSsoState,
+  markSignedOut,
+  shouldAttemptSilentSso,
+  silentSsoReturnTo,
+} from './lib/silent-sso';
 
 interface AuthContextValue {
   meta?: Meta;
@@ -81,7 +88,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>();
   const [loading, setLoading] = useState(true);
 
-  const refresh = useCallback(async () => {
+  // load asks the server who is here; refresh is the same for callers who do
+  // not need the answer handed back.
+  const load = useCallback(async () => {
     const [metaResult, userResult] = await Promise.all([
       api<Meta>('/meta').catch(() => undefined),
       /*
@@ -98,11 +107,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
        * the two are told apart here: fall back to the session this browser last
        * had, and clear it the moment the server actually says no.
        */
-      api<User>('/me', { silent: true }).catch((reason) => {
-        if (reason instanceof APIError && reason.status === 0) return rememberedSession();
-        forgetSession();
-        return undefined;
-      }),
+      api<User>('/me', { silent: true })
+        .then((me) => {
+          // A session exists again, so a deliberate sign-out is over and a
+          // silent SSO attempt may be made afresh next time it is needed.
+          clearSilentSsoState();
+          return me;
+        })
+        .catch((reason) => {
+          if (reason instanceof APIError && reason.status === 0) return rememberedSession();
+          forgetSession();
+          return undefined;
+        }),
     ]);
     await setOfflineQueueOwner(userResult?.id);
     if (metaResult) setMeta(metaResult);
@@ -114,18 +130,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setColorScheme,
       );
     }
+    return { meta: metaResult, user: userResult };
   }, [setColorScheme]);
+  const refresh = useCallback(async () => {
+    await load();
+  }, [load]);
 
   // Authentication bootstrap intentionally runs once. A provider color-scheme
   // change can replace Mantine's setter but must not repeat the login fetch.
   useEffect(() => {
-    refresh().finally(() => setLoading(false));
+    load().then(
+      (loaded) => {
+        /*
+         * Nobody is signed in here, but they may be at Keycloak. When the
+         * administrator has turned auto-login on, leave for the provider
+         * before the login screen is drawn — someone with a session there
+         * comes back signed in and never sees it. Whether to go is decided
+         * in silent-sso.ts, and it says no far more often than yes: once per
+         * tab, never after a sign-out, never when the address carries the
+         * provider's refusal. The spinner stays up while the browser leaves,
+         * so the screen does not flash a login form on the way out.
+         */
+        if (!loaded.user && shouldAttemptSilentSso(loaded.meta, window.location)) {
+          beginSilentSso(silentSsoReturnTo(window.location));
+          return;
+        }
+        setLoading(false);
+      },
+      () => setLoading(false),
+    );
   }, []); // oxlint-disable-line react-hooks/exhaustive-deps, react/exhaustive-effect-dependencies
 
   const logout = useCallback(async () => {
     await api('/auth/logout', { method: 'POST' });
     await setOfflineQueueOwner(undefined);
     forgetSession();
+    // Signing out on purpose must not be answered by signing straight back
+    // in, or logout looks broken. The mark is lifted the next time a session
+    // is seen.
+    markSignedOut();
     setUser(undefined);
   }, []);
 
