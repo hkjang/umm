@@ -154,40 +154,45 @@ test.describe('canvas', () => {
      * three card-based tests found cluster boxes instead of their note. It
      * passed in CI only because CI always starts from an empty database.
      */
-    const space = await page.evaluate(async (name) => {
-      const created = await (
-        await fetch('/api/v1/spaces', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name }),
-        })
-      ).json();
-      return created.id as string;
-    }, `${topic}-공간`);
-    await page.goto(`/space/${space}`);
-    await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
-
-    // Two huddles, and enough notes that summarising is worth doing at all.
-    for (let group = 0; group < 2; group++) {
-      for (let i = 0; i < 14; i++) {
-        await page.evaluate(
-          async ({ text, x, y, space }) => {
-            await fetch(`/api/v1/spaces/${space}/notes`, {
+    /*
+     * Filled before it is ever opened. This test used to open the empty space
+     * first and post the notes while the canvas was looking at it. The live
+     * stream brought the first few in, the opening fit framed those few, and
+     * since v0.73.0 the canvas keeps where you were looking per space: that
+     * fit — zoom 0.67 on six notes, well above the summary threshold — was
+     * written down as this person's place, and the reload below restored it
+     * instead of fitting all twenty-eight. On a fast machine the notes landed
+     * before the fit and it passed; on CI it failed on both attempts.
+     *
+     * Arriving at a space that is already full is what the test is about, so
+     * the notes go in through the API and the canvas is opened once.
+     */
+    const space = await page.evaluate(
+      async ({ name, topic }) => {
+        const post = async (path: string, body: unknown) =>
+          (
+            await fetch(path, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ content: text, x, y }),
+              body: JSON.stringify(body),
+            })
+          ).json();
+        const created = await post('/api/v1/spaces', { name });
+        // Two huddles, and enough notes that summarising is worth doing at all.
+        for (let group = 0; group < 2; group++) {
+          for (let i = 0; i < 14; i++) {
+            await post(`/api/v1/spaces/${created.id}/notes`, {
+              content: `${topic}-${group}-${i}`,
+              x: group * 2600 + (i % 4) * 320,
+              y: Math.floor(i / 4) * 230,
             });
-          },
-          {
-            text: `${topic}-${group}-${i}`,
-            x: group * 2600 + (i % 4) * 320,
-            y: Math.floor(i / 4) * 230,
-            space: page.url().split('/space/')[1],
-          },
-        );
-      }
-    }
-    await page.reload();
+          }
+        }
+        return created.id as string;
+      },
+      { name: `${topic}-공간`, topic },
+    );
+    await page.goto(`/space/${space}`);
     await expect(page.getByRole('textbox', { name: '생각 검색' })).toBeVisible();
     await expect(page.getByRole('status', { name: '생각 불러오는 중' })).toHaveCount(0);
 
