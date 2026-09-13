@@ -25,7 +25,7 @@ import (
 )
 
 var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{8,128}$`)
-var sensitiveCredentialPathPattern = regexp.MustCompile(`^/api/v1/(?:api-keys(?:/[^/]+/rotate)?|webhooks(?:/[^/]+/rotate-secret)?)$`)
+var sensitiveCredentialPathPattern = regexp.MustCompile(`^/api/v1/(?:api-keys(?:/[^/]+/rotate)?|webhooks(?:/[^/]+/rotate-secret)?|handoff/claims)$`)
 
 const idempotencyPendingLease = 2 * time.Minute
 const idempotencyLeaseRefresh = 30 * time.Second

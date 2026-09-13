@@ -95,9 +95,14 @@ func (s *Server) router() chi.Router {
 		api.Post("/auth/login", s.login)
 		api.Get("/auth/oidc/start", s.OIDC.Start)
 		api.Get("/auth/oidc/callback", s.OIDC.Callback)
+		// Collecting a handed-off document needs no sign-in: the claim is the
+		// credential. See handoff_handlers.go for why that is safe.
+		api.Get("/handoff/claims/{claim}", s.redeemHandoffClaim)
 		api.Group(func(protected chi.Router) {
 			protected.Use(auth.Require, s.idempotency)
 			protected.Post("/auth/logout", s.logout)
+			protected.Get("/handoff/targets", s.handoffTargets)
+			protected.Post("/handoff/claims", s.issueHandoffClaim)
 			protected.Get("/me", s.me)
 			protected.Get("/metrics", s.prometheusMetrics)
 			protected.Get("/today", s.todayReview)
@@ -318,7 +323,7 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(wrapped, r)
 		if !strings.HasPrefix(r.URL.Path, "/health") {
-			slog.Info("http request", "method", r.Method, "path", r.URL.Path, "duration_ms", time.Since(start).Milliseconds())
+			slog.Info("http request", "method", r.Method, "path", loggedPath(r.URL.Path), "duration_ms", time.Since(start).Milliseconds())
 		}
 	})
 }

@@ -139,6 +139,8 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 				return errors.New("OIDC Client ID가 필요합니다")
 			}
 		}
+	case "handoff":
+		return validateHandoffSettings(v)
 	case "intelligence":
 		// Clamping a bad value would hide the mistake: an administrator who typed
 		// 40 into a standard-deviation field needs to be told it is not one,

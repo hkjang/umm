@@ -566,6 +566,22 @@ export const en: Dictionary = {
   '문서 차례': 'Document outline',
   '문서 차례 (Markdown)': 'Document outline (Markdown)',
   '문서 차례를 만들지 못했습니다.': 'Could not build the document outline.',
+  // Handing a space to another service ------------------------------------
+  '다른 서비스로 보내기': 'Send to another service',
+  '{name}에서 이 공간을 여는 중입니다.': 'Opening this space in {name}.',
+  '{name}(으)로 보내지 못했습니다.': 'Could not send to {name}.',
+  '새 창이 막혔습니다. 이 사이트의 팝업을 허용하고 다시 시도해 주세요.':
+    'The new window was blocked. Allow pop-ups for this site and try again.',
+  '공간을 문서로 넘길 수 있는 사내 서비스입니다. 비워 두면 캔버스에 보내기 메뉴가 나타나지 않습니다. umm은 markdown만 보내므로, markdown을 받는 서비스만 메뉴에 오릅니다.':
+    'In-house services a space can be handed to as a document. Leave it empty and the canvas shows no send menu. umm sends markdown only, so only services that receive markdown appear in the menu.',
+  '보낼 곳 추가': 'Add a target',
+  '아직 보낼 곳이 없습니다.': 'No targets yet.',
+  '메뉴에 보이는 이름입니다. 예: Ptium': 'The name shown in the menu, e.g. Ptium',
+  '주소 (오리진)': 'Address (origin)',
+  '스킴과 호스트까지만, 경로 없이. 예: https://ptium.intra': 'Scheme and host only, no path, e.g. https://ptium.intra',
+  '받는 형식': 'Receives',
+  '그 서비스가 받을 수 있는 형식입니다. markdown이 없으면 메뉴에 오르지 않습니다.':
+    'The formats that service can receive. Without markdown it is not offered in the menu.',
   '내 AI 사용 내역': 'My AI usage',
   '내 생각이 언제, 무엇을 위해 AI 모델로 갔는지입니다.': 'When your thoughts went to an AI model, and what for.',
   '{count}일': '{count} days',
