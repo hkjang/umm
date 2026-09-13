@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/hkjang/umm/internal/analytics"
 	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/intelligence"
 	"github.com/hkjang/umm/internal/presentation"
@@ -93,6 +94,9 @@ func (s *Server) putAdminSetting(w http.ResponseWriter, r *http.Request) {
 	}
 	if section == "intelligence" {
 		s.Store.InvalidateIntelligenceSettings()
+	}
+	if section == analytics.SettingKey {
+		s.invalidateTracking()
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "settings.update", "settings", section, map[string]any{})
 	writeJSON(w, 200, map[string]bool{"ok": true})
@@ -305,6 +309,19 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 		if !ok || math.Trunc(timeout) != timeout || timeout < 5 || timeout > 300 {
 			return errors.New("Ptium Timeout은 5~300초 사이의 정수여야 합니다")
 		}
+	case analytics.SettingKey:
+		// The package that renders the snippet is the one that knows what a
+		// complete configuration is, so the rules live there and are read here
+		// through the same struct the serving path reads the row into.
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return errors.New("방문 추적 설정 형식이 올바르지 않습니다")
+		}
+		var config analytics.Config
+		if err := json.Unmarshal(raw, &config); err != nil {
+			return errors.New("방문 추적 설정 형식이 올바르지 않습니다")
+		}
+		return config.Validate()
 	}
 	return nil
 }

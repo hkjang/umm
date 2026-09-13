@@ -33,6 +33,7 @@ import {
   IconAdjustments,
   IconBolt,
   IconBrain,
+  IconChartBar,
   IconCheck,
   IconFlask,
   IconKey,
@@ -115,6 +116,7 @@ const menu = [
   ['dream', 'Dream Layer', IconBrain],
   ['ai_gateway', 'AI Gateway', IconRobot],
   ['ptium', msg('Ptium 발표 자료'), IconPresentation],
+  ['analytics', msg('방문 추적'), IconChartBar],
   ['intelligence', msg('유사도 기준'), IconAdjustments],
   ['ai_evals', msg('AI 품질 평가'), IconFlask],
   ['security', msg('키 · 권한'), IconShield],
@@ -171,6 +173,14 @@ interface SpaceMember {
   username: string;
   active: boolean;
   permission: string;
+}
+interface PolicyViolation {
+  origin: string;
+  directive: string;
+  page: string;
+  count: number;
+  lastSeen: string;
+  allowed: boolean;
 }
 type AdminSection = (typeof menu)[number][0];
 const adminSections = new Set<AdminSection>(menu.map(([key]) => key));
@@ -364,6 +374,49 @@ export default function AdminPage() {
       setBusy('');
     }
   };
+
+  // What the browser's policy refused while tracking was on. Fetched when the
+  // section is opened and on demand, because the list only means anything to
+  // someone looking at a snippet that is not reporting.
+  const [violations, setViolations] = useState<PolicyViolation[]>([]);
+  const [violationsLoading, setViolationsLoading] = useState(false);
+  const loadViolations = useCallback(async () => {
+    setViolationsLoading(true);
+    try {
+      const result = await api<{ violations: PolicyViolation[] }>('/admin/analytics/violations');
+      setViolations(result.violations ?? []);
+    } catch {
+      setViolations([]);
+    } finally {
+      setViolationsLoading(false);
+    }
+  }, []);
+  const forgetViolations = async () => {
+    setBusy('violations-forget');
+    try {
+      await api('/admin/analytics/violations', { method: 'DELETE' });
+      setViolations([]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('차단 기록을 지우지 못했습니다.'));
+    } finally {
+      setBusy('');
+    }
+  };
+  // One click from "this origin was refused" to "this origin is allowed". The
+  // list keeps what is there, in order, and ignores an origin already present.
+  const allowOrigin = (origin: string) => {
+    const existing = String(settings.analytics?.allowed_hosts || '');
+    const entries = existing
+      .split(/[,\s]+/)
+      .map((entry) => entry.trim().replace(/\/$/, ''))
+      .filter(Boolean);
+    const cleaned = origin.replace(/\/$/, '');
+    if (entries.some((entry) => entry.toLowerCase() === cleaned.toLowerCase())) return;
+    update('analytics', 'allowed_hosts', [...entries, cleaned].join(', '));
+  };
+  useEffect(() => {
+    if (section === 'analytics') void loadViolations();
+  }, [section, loadViolations]);
 
   const testGateway = async () => {
     const gateway = settings.ai_gateway || {};
@@ -861,6 +914,225 @@ export default function AdminPage() {
                 />
               </SimpleGrid>
             </SettingCard>
+          )}
+          {section === 'analytics' && settings.analytics && (
+            <Stack gap="lg">
+              <SettingCard
+                dirty={settingChanged(settings.analytics, savedSettings.analytics)}
+                title={t('방문 추적')}
+                description={t(
+                  '어느 화면이 실제로 쓰이는지 세는 추적 스크립트를 화면에 붙입니다. 기본은 꺼짐이며, 켜기 전까지 방문에 관해 어디에도 아무것도 보내지 않습니다.',
+                )}
+                onSave={() => save('analytics')}
+              >
+                <Switch
+                  size="lg"
+                  label={t('방문 추적 켜기')}
+                  checked={!!settings.analytics.enabled}
+                  onChange={(e) => update('analytics', 'enabled', e.currentTarget.checked)}
+                />
+                <Select
+                  label={t('추적 도구')}
+                  description={t(
+                    'Momento는 사내에서 직접 운영하는 수집기라 데이터가 밖으로 나가지 않는 유일한 선택지입니다.',
+                  )}
+                  allowDeselect={false}
+                  data={[
+                    { value: 'momento', label: t('Momento (사내 수집기)') },
+                    { value: 'ga4', label: 'Google Analytics 4' },
+                    { value: 'gtm', label: 'Google Tag Manager' },
+                    { value: 'matomo', label: 'Matomo' },
+                    { value: 'custom', label: t('직접 붙여 넣기') },
+                  ]}
+                  value={settings.analytics.provider || 'momento'}
+                  onChange={(value) => update('analytics', 'provider', value || 'momento')}
+                />
+                {(settings.analytics.provider || 'momento') === 'momento' && (
+                  <>
+                    <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                      <TextInput
+                        label={t('Momento 수집기 주소')}
+                        placeholder="https://momento.internal"
+                        value={settings.analytics.momento_url || ''}
+                        onChange={(e) => update('analytics', 'momento_url', e.currentTarget.value)}
+                      />
+                      <TextInput
+                        label={t('사이트 ID')}
+                        placeholder="umm-prd"
+                        value={settings.analytics.momento_site_id || ''}
+                        onChange={(e) => update('analytics', 'momento_site_id', e.currentTarget.value)}
+                      />
+                    </SimpleGrid>
+                    <Switch
+                      label={t('같은 오리진 프록시로 보내기 (권장)')}
+                      description={t(
+                        '켜면 브라우저는 umm의 /momento 경로로만 이야기하고 umm이 수집기로 넘깁니다. 외부 출처가 보안 정책에 아예 등장하지 않으므로 정책을 바꿀 수 없는 설치에서도 동작합니다.',
+                      )}
+                      checked={settings.analytics.momento_proxy !== false}
+                      onChange={(e) => update('analytics', 'momento_proxy', e.currentTarget.checked)}
+                    />
+                  </>
+                )}
+                {(settings.analytics.provider === 'ga4' || settings.analytics.provider === 'gtm') && (
+                  <TextInput
+                    label={settings.analytics.provider === 'ga4' ? t('측정 ID') : t('컨테이너 ID')}
+                    placeholder={settings.analytics.provider === 'ga4' ? 'G-XXXXXXXXXX' : 'GTM-XXXXXXX'}
+                    value={settings.analytics.measurement_id || ''}
+                    onChange={(e) => update('analytics', 'measurement_id', e.currentTarget.value)}
+                  />
+                )}
+                {settings.analytics.provider === 'matomo' && (
+                  <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                    <TextInput
+                      label={t('Matomo 주소')}
+                      placeholder="https://matomo.internal"
+                      value={settings.analytics.matomo_url || ''}
+                      onChange={(e) => update('analytics', 'matomo_url', e.currentTarget.value)}
+                    />
+                    <TextInput
+                      label={t('사이트 ID')}
+                      placeholder="1"
+                      value={settings.analytics.matomo_site_id || ''}
+                      onChange={(e) => update('analytics', 'matomo_site_id', e.currentTarget.value)}
+                    />
+                  </SimpleGrid>
+                )}
+                {settings.analytics.provider === 'custom' && (
+                  <Textarea
+                    label={t('추적 스니펫')}
+                    description={t(
+                      '추적 도구가 준 <script> 코드를 그대로 붙여 넣습니다. 8KB까지이며, 요청마다 nonce가 모든 <script> 태그에 자동으로 붙고 코드 안의 http(s) 출처가 보안 정책에 더해집니다.',
+                    )}
+                    autosize
+                    minRows={4}
+                    maxRows={14}
+                    styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+                    value={settings.analytics.custom_snippet || ''}
+                    onChange={(e) => update('analytics', 'custom_snippet', e.currentTarget.value)}
+                  />
+                )}
+                <TextInput
+                  label={t('추가로 허용할 출처')}
+                  description={t(
+                    '스니펫에서 자동으로 읽지 못한 출처를 https://host 형태로, 쉼표로 구분해 적습니다. 아래 차단 목록에서 한 번 눌러 더할 수도 있습니다.',
+                  )}
+                  placeholder="https://cdn.example, https://collect.example"
+                  value={settings.analytics.allowed_hosts || ''}
+                  onChange={(e) => update('analytics', 'allowed_hosts', e.currentTarget.value)}
+                />
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <Select
+                    label={t('넣는 자리')}
+                    allowDeselect={false}
+                    data={[
+                      { value: 'head', label: '<head>' },
+                      { value: 'body', label: '<body>' },
+                    ]}
+                    value={settings.analytics.placement === 'body' ? 'body' : 'head'}
+                    onChange={(value) => update('analytics', 'placement', value || 'head')}
+                  />
+                  <Switch
+                    mt={{ sm: 28 }}
+                    label={t('관리 화면에서도 추적')}
+                    description={t('기본은 아니오 — 관리자의 화면은 대개 세고 싶은 방문이 아닙니다.')}
+                    checked={!!settings.analytics.include_admin}
+                    onChange={(e) => update('analytics', 'include_admin', e.currentTarget.checked)}
+                  />
+                </SimpleGrid>
+                <Alert color="blue">
+                  {t(
+                    "이 앱의 보안 정책(CSP)은 script-src를 응답마다 다른 nonce로 잠급니다. 'unsafe-inline'으로 풀지 않고, 스니펫의 모든 <script>에 그 nonce를 붙이고 스니펫이 쓰는 출처만 그 화면의 정책에 더합니다. 끄면 정책은 원래대로 좁아집니다.",
+                  )}
+                </Alert>
+              </SettingCard>
+              <Card className="admin-setting-card" radius="lg" p={{ base: 'lg', sm: 'xl' }} withBorder>
+                <Group justify="space-between" align="flex-start">
+                  <div>
+                    <Title order={2} fz="xl">
+                      {t('정책이 차단한 출처')}
+                    </Title>
+                    <Text c="dimmed" mt={5}>
+                      {t(
+                        '추적이 켜져 있는 동안 브라우저가 보안 정책 때문에 거절한 주소입니다. 같은 출처는 한 줄로 모이고, 최근 100개까지 이 서버의 메모리에만 남습니다. 화면이 비어 있는데 수집이 안 된다면 여기부터 보세요.',
+                      )}
+                    </Text>
+                  </div>
+                  <Group gap="xs">
+                    <Button
+                      size="xs"
+                      variant="light"
+                      leftSection={<IconRefresh size={14} />}
+                      loading={violationsLoading}
+                      onClick={() => void loadViolations()}
+                    >
+                      {t('새로 고침')}
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="subtle"
+                      color="gray"
+                      leftSection={<IconTrash size={14} />}
+                      loading={busy === 'violations-forget'}
+                      disabled={violations.length === 0}
+                      onClick={() => void forgetViolations()}
+                    >
+                      {t('기록 비우기')}
+                    </Button>
+                  </Group>
+                </Group>
+                {violations.length === 0 ? (
+                  <Text c="dimmed" mt="md">
+                    {settings.analytics.enabled
+                      ? t('차단된 출처가 없습니다.')
+                      : t('추적이 꺼져 있는 동안에는 기록하지 않습니다.')}
+                  </Text>
+                ) : (
+                  <Table mt="md" verticalSpacing="xs">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>{t('출처')}</Table.Th>
+                        <Table.Th>{t('지시어')}</Table.Th>
+                        <Table.Th>{t('화면')}</Table.Th>
+                        <Table.Th ta="right">{t('횟수')}</Table.Th>
+                        <Table.Th />
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {violations.map((violation) => (
+                        <Table.Tr key={`${violation.directive} ${violation.origin}`}>
+                          <Table.Td>
+                            <Code>{violation.origin}</Code>
+                          </Table.Td>
+                          <Table.Td>
+                            <Code>{violation.directive}</Code>
+                          </Table.Td>
+                          <Table.Td>{violation.page}</Table.Td>
+                          <Table.Td ta="right">{violation.count}</Table.Td>
+                          <Table.Td ta="right">
+                            {violation.allowed ? (
+                              <Badge color="teal" variant="light">
+                                {t('허용됨')}
+                              </Badge>
+                            ) : (
+                              <Button size="compact-xs" variant="light" onClick={() => allowOrigin(violation.origin)}>
+                                {t('허용 목록에 더하기')}
+                              </Button>
+                            )}
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                )}
+                {violations.some((violation) => !violation.allowed) && (
+                  <Text c="dimmed" fz="sm" mt="sm">
+                    {t(
+                      '더한 출처는 위 카드를 저장해야 정책에 들어갑니다. 저장 뒤 화면을 새로 열면 그 출처는 더 이상 차단되지 않습니다.',
+                    )}
+                  </Text>
+                )}
+              </Card>
+            </Stack>
           )}
           {section === 'ai_gateway' && settings.ai_gateway && (
             <SettingCard
