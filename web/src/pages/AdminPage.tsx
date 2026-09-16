@@ -37,6 +37,7 @@ import {
   IconCheck,
   IconFlask,
   IconKey,
+  IconMail,
   IconPlayerPlay,
   IconPlugConnected,
   IconRefresh,
@@ -119,6 +120,7 @@ const menu = [
   ['ptium', msg('Ptium 발표 자료'), IconPresentation],
   ['analytics', msg('방문 추적'), IconChartBar],
   ['handoff', msg('다른 서비스로 보내기'), IconSend],
+  ['mail', msg('메일 알림'), IconMail],
   ['intelligence', msg('유사도 기준'), IconAdjustments],
   ['ai_evals', msg('AI 품질 평가'), IconFlask],
   ['security', msg('키 · 권한'), IconShield],
@@ -175,6 +177,21 @@ interface SpaceMember {
   username: string;
   active: boolean;
   permission: string;
+}
+interface MailDelivery {
+  id: string;
+  event: string;
+  recipient: string;
+  subject: string;
+  status: string;
+  attempts: number;
+  errorMessage?: string;
+  createdAt: string;
+}
+interface MailDeliveryPage {
+  deliveries: MailDelivery[];
+  total: number;
+  byStatus: Record<string, number>;
 }
 interface PolicyViolation {
   origin: string;
@@ -419,6 +436,43 @@ export default function AdminPage() {
   useEffect(() => {
     if (section === 'analytics') void loadViolations();
   }, [section, loadViolations]);
+
+  // What left the building. Fetched when the section is opened and after a
+  // test send, because "did it go out?" is the question this screen answers.
+  const [mailDeliveries, setMailDeliveries] = useState<MailDeliveryPage | null>(null);
+  const [mailDeliveriesLoading, setMailDeliveriesLoading] = useState(false);
+  const [mailTestRecipient, setMailTestRecipient] = useState('');
+  const loadMailDeliveries = useCallback(async () => {
+    setMailDeliveriesLoading(true);
+    try {
+      setMailDeliveries(await api<MailDeliveryPage>('/admin/mail/deliveries?limit=50'));
+    } catch {
+      setMailDeliveries(null);
+    } finally {
+      setMailDeliveriesLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (section === 'mail') void loadMailDeliveries();
+  }, [section, loadMailDeliveries]);
+  // One real mail through the saved settings — the relay's own answer, here,
+  // before anybody depends on it.
+  const testMail = async () => {
+    setBusy('mail-test');
+    setError('');
+    try {
+      const result = await api<{ sent: boolean; recipient: string }>(
+        '/admin/mail/test',
+        json('POST', { recipient: mailTestRecipient.trim() }),
+      );
+      setMessage(t('릴레이가 받았습니다 · {recipient} 로 보냈습니다.', { recipient: result.recipient }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('시험 발송 실패'));
+    } finally {
+      setBusy('');
+      void loadMailDeliveries();
+    }
+  };
 
   const testGateway = async () => {
     const gateway = settings.ai_gateway || {};
@@ -1143,6 +1197,258 @@ export default function AdminPage() {
               update={(targets) => update('handoff', 'targets', targets)}
               save={() => save('handoff')}
             />
+          )}
+          {section === 'mail' && settings.mail && (
+            <Stack gap="lg">
+              <SettingCard
+                dirty={settingChanged(settings.mail, savedSettings.mail)}
+                title={t('메일 알림')}
+                description={t(
+                  '사내 SMTP 릴레이로 알림을 보냅니다. 기본은 꺼짐이며, 켜기 전까지 아무에게도 아무것도 보내지 않습니다. 사내 릴레이는 대개 포트 25 · 인증 없음 · TLS 없음이므로 그것이 기본값이고, 인증과 암호화는 있을 때만 씁니다.',
+                )}
+                onSave={() => save('mail')}
+              >
+                <Switch
+                  size="lg"
+                  label={t('메일 알림 켜기')}
+                  description={t(
+                    '켜려면 릴레이 주소가 있어야 합니다. 먼저 저장하고 시험 발송으로 릴레이를 확인한 뒤 켜는 순서를 권합니다.',
+                  )}
+                  checked={!!settings.mail.enabled}
+                  onChange={(e) => update('mail', 'enabled', e.currentTarget.checked)}
+                />
+                <SimpleGrid cols={{ base: 1, sm: 3 }}>
+                  <TextInput
+                    label={t('SMTP 릴레이 주소')}
+                    description={t('호스트 이름이나 IP 만. 포트는 옆에.')}
+                    placeholder="relay.intra"
+                    value={settings.mail.smtp_host || ''}
+                    onChange={(e) => update('mail', 'smtp_host', e.currentTarget.value)}
+                  />
+                  <NumberInput
+                    label={t('포트')}
+                    min={1}
+                    max={65535}
+                    value={settings.mail.smtp_port ?? 25}
+                    onChange={(v) => update('mail', 'smtp_port', v)}
+                  />
+                  <Select
+                    label={t('보안')}
+                    description={t('auto 는 릴레이가 STARTTLS 를 알리면 쓰고 아니면 평문으로 보냅니다.')}
+                    allowDeselect={false}
+                    data={[
+                      { value: 'auto', label: t('auto (릴레이가 알리는 대로)') },
+                      { value: 'none', label: t('none (평문)') },
+                      { value: 'starttls', label: 'STARTTLS' },
+                      { value: 'tls', label: t('tls (처음부터 TLS, 보통 465)') },
+                    ]}
+                    value={settings.mail.security || 'auto'}
+                    onChange={(value) => update('mail', 'security', value || 'auto')}
+                  />
+                </SimpleGrid>
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <TextInput
+                    label={t('사용자 이름 (선택)')}
+                    description={t('인증 없는 릴레이면 비워 둡니다.')}
+                    value={settings.mail.username || ''}
+                    onChange={(e) => update('mail', 'username', e.currentTarget.value)}
+                  />
+                  <PasswordInput
+                    label={t('비밀번호 (선택)')}
+                    description={
+                      settings.mail.password_configured
+                        ? t('설정됨. 저장된 값은 화면에 돌아오지 않습니다 — 바꿀 때만 새 값을 적습니다.')
+                        : t('저장하면 암호화되어 보관되고 화면에 돌아오지 않습니다.')
+                    }
+                    placeholder={settings.mail.password_configured ? t('설정됨') : ''}
+                    value={settings.mail.password || ''}
+                    onChange={(e) => update('mail', 'password', e.currentTarget.value)}
+                  />
+                </SimpleGrid>
+                <Switch
+                  label={t('릴레이 인증서 검증 건너뛰기')}
+                  description={t('사내 사설 인증서일 때만. STARTTLS · tls 에서만 뜻이 있습니다.')}
+                  checked={!!settings.mail.skip_tls_verify}
+                  onChange={(e) => update('mail', 'skip_tls_verify', e.currentTarget.checked)}
+                />
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <TextInput
+                    label={t('보내는 사람 주소')}
+                    description={t(
+                      '비우면 umm@<릴레이 주소> 를 씁니다. 릴레이가 발신 도메인을 검사하면 실제 주소를 적습니다.',
+                    )}
+                    placeholder="umm@company.example"
+                    value={settings.mail.from_address || ''}
+                    onChange={(e) => update('mail', 'from_address', e.currentTarget.value)}
+                  />
+                  <TextInput
+                    label={t('보내는 사람 이름')}
+                    placeholder="umm"
+                    value={settings.mail.from_name || ''}
+                    onChange={(e) => update('mail', 'from_name', e.currentTarget.value)}
+                  />
+                </SimpleGrid>
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <TextInput
+                    label={t('메일 속 링크 주소')}
+                    description={t('비우면 일반 → 공개 URL 을 씁니다.')}
+                    placeholder="https://umm.intra"
+                    value={settings.mail.base_url || ''}
+                    onChange={(e) => update('mail', 'base_url', e.currentTarget.value)}
+                  />
+                  <NumberInput
+                    label={t('제한 시간')}
+                    suffix={t(' 초')}
+                    min={1}
+                    max={120}
+                    value={settings.mail.timeout_seconds ?? 10}
+                    onChange={(v) => update('mail', 'timeout_seconds', v)}
+                  />
+                </SimpleGrid>
+                <Divider label={t('어떤 일을 알릴지')} labelPosition="left" />
+                <Text c="dimmed" fz="sm">
+                  {t(
+                    '이 메일이 오지 않으면 누군가 기다리게 되는 다섯 가지입니다. 자기가 한 일은 자기에게 보내지 않고, 한 번의 작업은 한 사람에게 한 통입니다.',
+                  )}
+                </Text>
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  {(
+                    [
+                      ['notify_approval_request', t('검토 요청이 도착함 → 검토할 수 있는 팀장·관리자')],
+                      ['notify_approval_decision', t('내 요청이 승인·반려됨 → 요청한 사람')],
+                      ['notify_space_shared', t('공간이 나에게 공유됨 → 공유받은 사람')],
+                      ['notify_mention', t('댓글에서 나를 언급함 → 언급된 사람')],
+                      ['notify_comment', t('내 생각에 댓글이 달림 → 생각의 작성자')],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <Checkbox
+                      key={key}
+                      label={label}
+                      checked={settings.mail[key] !== false}
+                      onChange={(e) => update('mail', key, e.currentTarget.checked)}
+                    />
+                  ))}
+                </SimpleGrid>
+              </SettingCard>
+              <Card className="admin-setting-card" radius="lg" p={{ base: 'lg', sm: 'xl' }} withBorder>
+                <Title order={3} fz="lg">
+                  {t('시험 발송')}
+                </Title>
+                <Text c="dimmed" mt={5}>
+                  {t(
+                    '저장한 설정으로 실제 한 통을 보내고 릴레이의 답을 그 자리에서 보여 줍니다. 릴레이 설정은 한 번에 맞는 일이 드뭅니다. 알림을 켜지 않아도 보낼 수 있습니다.',
+                  )}
+                </Text>
+                <Group mt="md" align="flex-end">
+                  <TextInput
+                    style={{ flex: 1 }}
+                    label={t('받는 사람')}
+                    description={t('비우면 내 계정의 메일 주소로 보냅니다.')}
+                    placeholder="me@company.example"
+                    value={mailTestRecipient}
+                    onChange={(e) => setMailTestRecipient(e.currentTarget.value)}
+                  />
+                  <Button
+                    leftSection={<IconSend size={14} />}
+                    loading={busy === 'mail-test'}
+                    disabled={settingChanged(settings.mail, savedSettings.mail)}
+                    onClick={() => void testMail()}
+                  >
+                    {t('시험 발송')}
+                  </Button>
+                </Group>
+                {settingChanged(settings.mail, savedSettings.mail) && (
+                  <Text c="yellow.8" fz="sm" mt="sm">
+                    {t('저장하지 않은 변경이 있습니다. 시험 발송은 저장된 설정으로 나갑니다 — 먼저 저장하세요.')}
+                  </Text>
+                )}
+              </Card>
+              <Card className="admin-setting-card" radius="lg" p={{ base: 'lg', sm: 'xl' }} withBorder>
+                <Group justify="space-between" align="flex-start">
+                  <div>
+                    <Title order={3} fz="lg">
+                      {t('발송 기록')}
+                    </Title>
+                    <Text c="dimmed" mt={5}>
+                      {t(
+                        '무엇이 건물 밖으로 나갔는지. 시도마다 한 줄 — 성공과 실패 모두 — 이고 본문은 담지 않습니다. 90일 동안 보관합니다.',
+                      )}
+                    </Text>
+                  </div>
+                  <Group gap="xs">
+                    {mailDeliveries && (
+                      <Text c="dimmed" fz="sm">
+                        {t('전체 {total} · 성공 {sent} · 실패 {failed}', {
+                          total: mailDeliveries.total,
+                          sent: mailDeliveries.byStatus.sent ?? 0,
+                          failed: mailDeliveries.byStatus.failed ?? 0,
+                        })}
+                      </Text>
+                    )}
+                    <Button
+                      size="xs"
+                      variant="light"
+                      leftSection={<IconRefresh size={14} />}
+                      loading={mailDeliveriesLoading}
+                      onClick={() => void loadMailDeliveries()}
+                    >
+                      {t('새로고침')}
+                    </Button>
+                  </Group>
+                </Group>
+                {!mailDeliveries || mailDeliveries.deliveries.length === 0 ? (
+                  <Text c="dimmed" mt="md">
+                    {t('아직 보낸 메일이 없습니다.')}
+                  </Text>
+                ) : (
+                  <Table mt="md" verticalSpacing="xs">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th>{t('시각')}</Table.Th>
+                        <Table.Th>{t('이벤트')}</Table.Th>
+                        <Table.Th>{t('받는 사람')}</Table.Th>
+                        <Table.Th>{t('제목')}</Table.Th>
+                        <Table.Th>{t('결과')}</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {mailDeliveries.deliveries.map((delivery) => (
+                        <Table.Tr key={delivery.id}>
+                          <Table.Td>{new Date(delivery.createdAt).toLocaleString()}</Table.Td>
+                          <Table.Td>
+                            <Code>{delivery.event}</Code>
+                          </Table.Td>
+                          <Table.Td>{delivery.recipient}</Table.Td>
+                          <Table.Td>{delivery.subject}</Table.Td>
+                          <Table.Td>
+                            {delivery.status === 'sent' ? (
+                              <Badge color="teal" variant="light">
+                                {t('성공')}
+                              </Badge>
+                            ) : delivery.status === 'failed' ? (
+                              <Tooltip
+                                label={delivery.errorMessage || ''}
+                                multiline
+                                w={360}
+                                disabled={!delivery.errorMessage}
+                              >
+                                <Badge color="red" variant="light">
+                                  {t('실패 · {attempts}회', { attempts: delivery.attempts })}
+                                </Badge>
+                              </Tooltip>
+                            ) : (
+                              <Badge color="gray" variant="light">
+                                {t('보내는 중')}
+                              </Badge>
+                            )}
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                )}
+              </Card>
+            </Stack>
           )}
           {section === 'ai_gateway' && settings.ai_gateway && (
             <SettingCard
