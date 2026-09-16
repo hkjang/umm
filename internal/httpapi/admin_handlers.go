@@ -16,6 +16,7 @@ import (
 	"github.com/hkjang/umm/internal/analytics"
 	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/intelligence"
+	"github.com/hkjang/umm/internal/mail"
 	"github.com/hkjang/umm/internal/presentation"
 	"github.com/hkjang/umm/internal/store"
 )
@@ -324,6 +325,16 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 			return errors.New("방문 추적 설정 형식이 올바르지 않습니다")
 		}
 		return config.Validate()
+	case mail.SettingKey:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return errors.New("메일 설정 형식이 올바르지 않습니다")
+		}
+		var settings mail.Settings
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			return errors.New("메일 설정 형식이 올바르지 않습니다")
+		}
+		return settings.Validate()
 	}
 	return nil
 }

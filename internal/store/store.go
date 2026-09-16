@@ -552,6 +552,8 @@ func SecretSettingFields(key string) []string {
 		return []string{"api_key", "embedding_api_key"}
 	case "ptium":
 		return []string{"api_key"}
+	case "mail":
+		return []string{"password"}
 	}
 	return nil
 }
@@ -576,7 +578,7 @@ func PreservedSettingFields(key string) []string {
 
 func AllowedSetting(key string) bool {
 	switch key {
-	case "general", "oidc", "security", "workflow", "dream", "ai_gateway", "intelligence", "ptium", "analytics", "handoff":
+	case "general", "oidc", "security", "workflow", "dream", "ai_gateway", "intelligence", "ptium", "analytics", "handoff", "mail":
 		return true
 	}
 	return false

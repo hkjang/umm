@@ -1267,4 +1267,64 @@ export const en: Dictionary = {
   횟수: 'Count',
   "이 앱의 보안 정책(CSP)은 script-src를 응답마다 다른 nonce로 잠급니다. 'unsafe-inline'으로 풀지 않고, 스니펫의 모든 <script>에 그 nonce를 붙이고 스니펫이 쓰는 출처만 그 화면의 정책에 더합니다. 끄면 정책은 원래대로 좁아집니다.":
     "This app's content security policy locks script-src to a nonce that differs per response. It is never loosened with 'unsafe-inline': the nonce is put on every <script> in the snippet and only the origins the snippet uses are added, for that page. Turn tracking off and the policy is as narrow as before.",
+  // Admin — mail notifications ---------------------------------------------
+  '메일 알림': 'Mail notifications',
+  '메일 알림 켜기': 'Turn mail notifications on',
+  '사내 SMTP 릴레이로 알림을 보냅니다. 기본은 꺼짐이며, 켜기 전까지 아무에게도 아무것도 보내지 않습니다. 사내 릴레이는 대개 포트 25 · 인증 없음 · TLS 없음이므로 그것이 기본값이고, 인증과 암호화는 있을 때만 씁니다.':
+    'Sends notifications through the company SMTP relay. Off by default; nothing goes to anyone until it is turned on. An internal relay is usually port 25, no credentials, no TLS — those are the defaults, and authentication and encryption are used only when present.',
+  '켜려면 릴레이 주소가 있어야 합니다. 먼저 저장하고 시험 발송으로 릴레이를 확인한 뒤 켜는 순서를 권합니다.':
+    'Needs a relay address to turn on. Save first, prove the relay with a test send, then turn it on.',
+  'SMTP 릴레이 주소': 'SMTP relay address',
+  '호스트 이름이나 IP 만. 포트는 옆에.': 'Host name or IP only; the port goes next to it.',
+  포트: 'Port',
+  보안: 'Security',
+  'auto 는 릴레이가 STARTTLS 를 알리면 쓰고 아니면 평문으로 보냅니다.':
+    'auto uses STARTTLS when the relay offers it and plain text otherwise.',
+  'auto (릴레이가 알리는 대로)': 'auto (whatever the relay offers)',
+  'none (평문)': 'none (plain text)',
+  'tls (처음부터 TLS, 보통 465)': 'tls (TLS from the start, usually 465)',
+  '사용자 이름 (선택)': 'Username (optional)',
+  '인증 없는 릴레이면 비워 둡니다.': 'Leave empty for a relay without authentication.',
+  '비밀번호 (선택)': 'Password (optional)',
+  '설정됨. 저장된 값은 화면에 돌아오지 않습니다 — 바꿀 때만 새 값을 적습니다.':
+    'Configured. The stored value never comes back to the screen — type a new one only to change it.',
+  '저장하면 암호화되어 보관되고 화면에 돌아오지 않습니다.':
+    'Stored encrypted once saved, and never returned to the screen.',
+  설정됨: 'Configured',
+  '릴레이 인증서 검증 건너뛰기': 'Skip relay certificate verification',
+  '사내 사설 인증서일 때만. STARTTLS · tls 에서만 뜻이 있습니다.':
+    'Only for a private in-house certificate. Meaningful with STARTTLS and tls only.',
+  '보내는 사람 주소': 'Sender address',
+  '비우면 umm@<릴레이 주소> 를 씁니다. 릴레이가 발신 도메인을 검사하면 실제 주소를 적습니다.':
+    'Empty means umm@<relay address>. If the relay checks the sender domain, use a real address.',
+  '보내는 사람 이름': 'Sender name',
+  '메일 속 링크 주소': 'Link address in mail',
+  '비우면 일반 → 공개 URL 을 씁니다.': 'Empty means the public URL from General.',
+  '제한 시간': 'Timeout',
+  '어떤 일을 알릴지': 'What to send',
+  '이 메일이 오지 않으면 누군가 기다리게 되는 다섯 가지입니다. 자기가 한 일은 자기에게 보내지 않고, 한 번의 작업은 한 사람에게 한 통입니다.':
+    'The five things somebody is left waiting for if the mail does not arrive. Nobody is told about their own action, and one action is one mail per person.',
+  '검토 요청이 도착함 → 검토할 수 있는 팀장·관리자':
+    'A review request arrives → the leads and administrators who can decide it',
+  '내 요청이 승인·반려됨 → 요청한 사람': 'My request was approved or rejected → the requester',
+  '공간이 나에게 공유됨 → 공유받은 사람': 'A space was shared with me → the person it was shared with',
+  '댓글에서 나를 언급함 → 언급된 사람': 'Named in a comment → the person named',
+  '내 생각에 댓글이 달림 → 생각의 작성자': 'A comment on my thought → the author of the thought',
+  '시험 발송': 'Test send',
+  '저장한 설정으로 실제 한 통을 보내고 릴레이의 답을 그 자리에서 보여 줍니다. 릴레이 설정은 한 번에 맞는 일이 드뭅니다. 알림을 켜지 않아도 보낼 수 있습니다.':
+    'Sends one real mail with the saved settings and shows the relay’s answer right here. Relay settings are rarely right the first time. Works without notifications turned on.',
+  '받는 사람': 'Recipient',
+  '비우면 내 계정의 메일 주소로 보냅니다.': 'Empty means my own account’s address.',
+  '저장하지 않은 변경이 있습니다. 시험 발송은 저장된 설정으로 나갑니다 — 먼저 저장하세요.':
+    'There are unsaved changes. The test send uses the saved settings — save first.',
+  '릴레이가 받았습니다 · {recipient} 로 보냈습니다.': 'The relay accepted it · sent to {recipient}.',
+  '시험 발송 실패': 'Test send failed',
+  '발송 기록': 'Deliveries',
+  '무엇이 건물 밖으로 나갔는지. 시도마다 한 줄 — 성공과 실패 모두 — 이고 본문은 담지 않습니다. 90일 동안 보관합니다.':
+    'What left the building. One row per attempt — sent and failed alike — with no body. Kept for 90 days.',
+  '전체 {total} · 성공 {sent} · 실패 {failed}': '{total} total · {sent} sent · {failed} failed',
+  '아직 보낸 메일이 없습니다.': 'No mail has been sent yet.',
+  이벤트: 'Event',
+  '실패 · {attempts}회': 'Failed · {attempts} attempts',
+  '보내는 중': 'Sending',
 };
