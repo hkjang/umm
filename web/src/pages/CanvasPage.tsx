@@ -513,8 +513,13 @@ function CanvasInner() {
     if (params.spaceId && params.spaceId !== activeSpace) {
       setActiveSpace(params.spaceId);
       // A different space opens fresh, so its opening view is predicted again
-      // rather than inherited from wherever the last one had been zoomed to.
+      // rather than inherited from wherever the last one had been zoomed to —
+      // and it opens at now, because a moment belongs to the space it was read
+      // from. Carried over, the rewind would date this space's current thoughts
+      // by the other one's clock, hold it read-only for that reason, and keep
+      // the event stream from delivering anybody else's change.
       setViewportKnown(false);
+      setRewind(undefined);
     }
   }, [params.spaceId]);
   const loadCanvas = useCallback(
