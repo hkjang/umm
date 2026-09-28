@@ -74,10 +74,38 @@ export function shouldAttemptSilentSso(
   return true;
 }
 
+/**
+ * An address kept inside the site: a path that starts with one slash. Two
+ * slashes, or a slash and a backslash — which browsers read as two — would
+ * leave it, so they become the front page. The server applies the same rule.
+ */
+export function insideSite(target: string | null | undefined) {
+  if (!target || !target.startsWith('/') || target.startsWith('//') || /[\\\r\n]/.test(target)) return '/';
+  return target;
+}
+
 /** Where a silent attempt should land: the address being opened, kept inside the site. */
 export function silentSsoReturnTo(location: Pick<Location, 'pathname' | 'search' | 'hash'>) {
-  const target = location.pathname + location.search + location.hash;
-  return target.startsWith('/') && !target.startsWith('//') ? target : '/';
+  return insideSite(location.pathname + location.search + location.hash);
+}
+
+/**
+ * Where signing in from the login screen should take someone. The screen is
+ * drawn at whatever address was opened, so that address is the answer — except
+ * at /login itself, where the flow that sent them there carries the address in
+ * return_to (a refused silent attempt, a failed SSO callback).
+ */
+export function signInReturnTo(location: Pick<Location, 'pathname' | 'search' | 'hash'>) {
+  if (/^\/login(\/|$)/.test(location.pathname)) {
+    return insideSite(new URLSearchParams(location.search).get('return_to'));
+  }
+  return silentSsoReturnTo(location);
+}
+
+/** The address of an ordinary, visible SSO login that returns to `returnTo`. */
+export function ssoLoginUrl(returnTo: string) {
+  const target = insideSite(returnTo);
+  return target === '/' ? '/api/v1/auth/oidc/start' : `/api/v1/auth/oidc/start?return_to=${encodeURIComponent(target)}`;
 }
 
 /** Sends the browser to the provider for a silent attempt. Marks the attempt first, so a failure to return still counts. */

@@ -829,6 +829,38 @@ export default function AdminPage() {
                 <b>{settings.general?.public_url}/api/v1/auth/oidc/callback</b>
                 {t('으로 정확히 등록하세요.')}
               </Alert>
+              <Switch
+                size="md"
+                label={t('MCP 클라이언트가 Keycloak 로그인으로 연결하기')}
+                description={t(
+                  '켜면 /mcp 가 개인 키 대신 Keycloak 이 발급한 액세스 토큰도 받습니다. 주소만 등록한 MCP 클라이언트는 브라우저에서 Keycloak 로그인 창을 열고, 토큰의 scope 가 곧 도구 권한입니다. 키는 그대로 동작합니다.',
+                )}
+                disabled={!settings.oidc.enabled}
+                checked={!!settings.oidc.mcp_oauth}
+                onChange={(e) => update('oidc', 'mcp_oauth', e.currentTarget.checked)}
+              />
+              {settings.oidc.enabled && settings.oidc.mcp_oauth && (
+                <>
+                  <TextInput
+                    label={t('MCP 토큰 audience')}
+                    description={t(
+                      '토큰의 aud 가 이 값과 같아야 받습니다. 비워 두면 공개 URL 뒤에 /mcp 를 붙인 값이고, Keycloak 의 Audience 매퍼에 같은 값을 넣습니다.',
+                    )}
+                    placeholder={`${settings.general?.public_url || ''}/mcp`}
+                    value={settings.oidc.mcp_audience || ''}
+                    onChange={(e) => update('oidc', 'mcp_audience', e.currentTarget.value)}
+                  />
+                  <Alert color="blue">
+                    {t(
+                      'Keycloak 에는 세 가지가 더 필요합니다. PKCE 를 쓰는 Public Client 하나, 위 audience 를 넣는 Audience 매퍼, 그리고 이름이 곧 권한인 Client Scope 들',
+                    )}{' '}
+                    <b>notes:read · notes:write · spaces:read · dreams:read</b>
+                    {t('입니다. 여기서 허용한 키 권한 밖의 scope 는 토큰에 있어도 무시됩니다. 클라이언트는')}{' '}
+                    <b>{settings.general?.public_url}/.well-known/oauth-protected-resource/mcp</b>
+                    {t('에서 나머지를 스스로 찾습니다. 자세한 절차는 관리자 가이드 부록 2-2 에 있습니다.')}
+                  </Alert>
+                </>
+              )}
             </SettingCard>
           )}
           {section === 'dream' && settings.dream && (

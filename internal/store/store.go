@@ -388,15 +388,7 @@ func (s *Store) UserByID(ctx context.Context, id uuid.UUID) (User, error) {
 }
 
 func (s *Store) UpsertOIDCUser(ctx context.Context, subject, username, display, email, role string) (User, error) {
-	if username == "" {
-		username = "oidc-" + subject
-	}
-	if display == "" {
-		display = username
-	}
-	if role != "admin" && role != "team_lead" {
-		role = "user"
-	}
+	username, display, role = oidcUserDefaults(subject, username, display, role)
 	var u User
 	err := s.Pool.QueryRow(ctx, `
 		INSERT INTO users(username,display_name,email,role,oidc_subject)
@@ -408,6 +400,48 @@ func (s *Store) UpsertOIDCUser(ctx context.Context, subject, username, display, 
 		_, _ = s.Pool.Exec(ctx, `INSERT INTO user_preferences(user_id) VALUES($1) ON CONFLICT DO NOTHING`, u.ID)
 	}
 	return u, err
+}
+
+// UserByOIDCSubject finds the person a provider's subject stands for.
+func (s *Store) UserByOIDCSubject(ctx context.Context, subject string) (User, error) {
+	var u User
+	err := s.Pool.QueryRow(ctx, `SELECT id,username,display_name,COALESCE(email,''),role,team_id,active FROM users WHERE oidc_subject=$1`, subject).
+		Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Role, &u.TeamID, &u.Active)
+	return u, err
+}
+
+// ProvisionOIDCUser creates the row for a subject seen for the first time and
+// returns the row as it is when the subject is already known — unlike
+// UpsertOIDCUser, it changes nothing about an existing person. An access token
+// arriving at MCP is not a sign-in: it must not reset a role or reactivate an
+// account, and this is the write that cannot.
+func (s *Store) ProvisionOIDCUser(ctx context.Context, subject, username, display, email, role string) (User, error) {
+	username, display, role = oidcUserDefaults(subject, username, display, role)
+	_, err := s.Pool.Exec(ctx, `
+		INSERT INTO users(username,display_name,email,role,oidc_subject)
+		VALUES($1,$2,NULLIF($3,''),$4,$5)
+		ON CONFLICT(oidc_subject) DO NOTHING`, username, display, email, role, subject)
+	if err != nil {
+		return User{}, err
+	}
+	u, err := s.UserByOIDCSubject(ctx, subject)
+	if err == nil {
+		_, _ = s.Pool.Exec(ctx, `INSERT INTO user_preferences(user_id) VALUES($1) ON CONFLICT DO NOTHING`, u.ID)
+	}
+	return u, err
+}
+
+func oidcUserDefaults(subject, username, display, role string) (string, string, string) {
+	if username == "" {
+		username = "oidc-" + subject
+	}
+	if display == "" {
+		display = username
+	}
+	if role != "admin" && role != "team_lead" {
+		role = "user"
+	}
+	return username, display, role
 }
 
 func (s *Store) GetSetting(ctx context.Context, key string, dst any) error {

@@ -30,6 +30,7 @@ User API/MCP key (one-time plaintext display)
 - OIDC: Authorization Code flow, state 일회 사용/10분 만료, provider Discovery, ID token 서명·issuer·audience 검증
 - Roles: `user`, `team_lead`, `admin`
 - API/MCP: Bearer key와 세부 scope. MCP는 browser cookie를 허용하지 않음
+- MCP OAuth (`oidc.mcp_oauth`, 기본 꺼짐): `/mcp`가 Keycloak 액세스 토큰을 받음. umm은 RFC 9728 리소스 서버로서 metadata 문서와 401 challenge만 제공하고 토큰 발급·등록·갱신은 Keycloak이 담당. 토큰은 SSO Issuer의 JWKS 서명·`iss`·`aud`(기본 `<공개 URL>/mcp`)·`exp`를 검증하고, `scope` 클레임을 관리자가 허용한 API 키 scope 목록으로 잘라 권한으로 씀 — 토큰이 키 정책을 우회하지 못함. `sub`는 `oidc_subject`로 매핑하며 기존 사용자의 역할·활성 상태는 바꾸지 않음. 거절 이유는 로그에만 남기고 클라이언트에는 `invalid_token`만 답함. Discovery는 10분 캐시
 - AI Assist scope: 선택 note 본문을 외부 Gateway로 전송하고 AI 쿼터를 소비하는 `/ai/assist`는 전용 `ai:assist`를 요구하며, 일반 `notes:read` key에는 이 권한을 암묵적으로 부여하지 않음
 - Metrics boundary: `/api/v1/metrics`는 관리자 browser session 또는 명시적인 `metrics:read` API key만 허용. 일반 session의 내부 wildcard와 관리자 계정이 발급한 다른 scope key는 운영 지표 권한으로 승격하지 않음
 - Session boundary: 관리자 API, 개인 설정, API key 생성·회전·폐기는 브라우저 세션만 허용해 제한 key의 권한 상승을 차단

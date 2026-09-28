@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -31,6 +32,13 @@ type OIDCSettings struct {
 	// redirect, and where a redirect can start from is the administrator's
 	// decision — see Start, which ignores prompt=none while this is off.
 	AutoLogin bool `json:"auto_login"`
+	// MCPOAuth lets /mcp accept an access token Keycloak issued, so an MCP
+	// client signs the person in through the provider instead of carrying a
+	// key. Off by default; see access_token.go for what a token has to carry.
+	MCPOAuth bool `json:"mcp_oauth"`
+	// MCPAudience is the aud claim a token has to carry. Empty means the
+	// resource identifier itself: the public URL with /mcp appended.
+	MCPAudience string `json:"mcp_audience"`
 }
 
 // silentRefusals are the answers prompt=none gives when the provider has no
@@ -48,6 +56,38 @@ type OIDCService struct {
 	Store    *store.Store
 	Cipher   *cryptoutil.Cipher
 	Sessions *Service
+
+	// The provider is discovery plus a key set, fetched from Keycloak. One
+	// login could afford to fetch it; an access token on every MCP request
+	// cannot, so it is kept for a while and refetched when the issuer changes.
+	providerMu      sync.Mutex
+	providerIssuer  string
+	providerFetched time.Time
+	provider        *oidc.Provider
+}
+
+// providerTTL bounds how long a fetched provider is reused. The key set inside
+// it refetches on its own when a token names a key it has not seen, so this
+// only has to catch an issuer that moved its endpoints.
+const providerTTL = 10 * time.Minute
+
+// discovery fetches or reuses the provider for an issuer. fresh forces a fetch,
+// which is what a connection test is for. The provider is built on a background
+// context with its own client on purpose: a request context would be cancelled
+// with the request that created it, and the key set keeps the context.
+func (s *OIDCService) discovery(issuer string, fresh bool) (*oidc.Provider, error) {
+	s.providerMu.Lock()
+	defer s.providerMu.Unlock()
+	if !fresh && s.provider != nil && s.providerIssuer == issuer && time.Since(s.providerFetched) < providerTTL {
+		return s.provider, nil
+	}
+	ctx := oidc.ClientContext(context.Background(), &http.Client{Timeout: 10 * time.Second})
+	provider, err := oidc.NewProvider(ctx, issuer)
+	if err != nil {
+		return nil, err
+	}
+	s.provider, s.providerIssuer, s.providerFetched = provider, issuer, time.Now()
+	return provider, nil
 }
 
 func (s *OIDCService) Enabled(ctx context.Context) bool {
@@ -66,11 +106,15 @@ func (s *OIDCService) Public(ctx context.Context) (enabled, autoLogin bool) {
 	return true, cfg.AutoLogin
 }
 func (s *OIDCService) Test(ctx context.Context) error {
-	_, _, _, err := s.configuration(ctx)
+	_, _, _, err := s.configure(ctx, true)
 	return err
 }
 
 func (s *OIDCService) configuration(ctx context.Context) (OIDCSettings, *oidc.Provider, oauth2.Config, error) {
+	return s.configure(ctx, false)
+}
+
+func (s *OIDCService) configure(ctx context.Context, fresh bool) (OIDCSettings, *oidc.Provider, oauth2.Config, error) {
 	var cfg OIDCSettings
 	var general GeneralSettings
 	if err := s.Store.GetSetting(ctx, "oidc", &cfg); err != nil {
@@ -93,7 +137,7 @@ func (s *OIDCService) configuration(ctx context.Context) (OIDCSettings, *oidc.Pr
 			return cfg, nil, oauth2.Config{}, err
 		}
 	}
-	provider, err := oidc.NewProvider(ctx, strings.TrimRight(cfg.IssuerURL, "/"))
+	provider, err := s.discovery(strings.TrimRight(cfg.IssuerURL, "/"), fresh)
 	if err != nil {
 		return cfg, nil, oauth2.Config{}, err
 	}
@@ -110,20 +154,28 @@ func (s *OIDCService) configuration(ctx context.Context) (OIDCSettings, *oidc.Pr
 }
 
 func (s *OIDCService) Start(w http.ResponseWriter, r *http.Request) {
+	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
+	// Every way this can fail lands on the login screen, never on a page of
+	// plain text. A silent attempt is a navigation the person did not ask for:
+	// with Keycloak down it used to strand them on "503 dial tcp …" at an API
+	// address, where a reload only fetched the same page again. The reason
+	// goes to the log; the screen says SSO did not complete and offers the
+	// password form.
 	settings, _, cfg, err := s.configuration(r.Context())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		slog.Warn("OIDC login could not start", "error", err)
+		http.Redirect(w, r, loginLanding("error", returnTo), http.StatusFound)
 		return
 	}
 	state, err := randomToken(32)
 	if err != nil {
-		http.Error(w, "unable to start login", 500)
+		http.Redirect(w, r, loginLanding("error", returnTo), http.StatusFound)
 		return
 	}
-	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
 	_, err = s.Store.Pool.Exec(r.Context(), `INSERT INTO oauth_states(state_hash,return_to,expires_at) VALUES($1,$2,now()+interval '10 minutes')`, digest(state), returnTo)
 	if err != nil {
-		http.Error(w, "unable to start login", 500)
+		slog.Warn("OIDC login state could not be stored", "error", err)
+		http.Redirect(w, r, loginLanding("error", returnTo), http.StatusFound)
 		return
 	}
 	// prompt=none asks the provider to answer from a session it already has
@@ -143,16 +195,54 @@ func (s *OIDCService) Start(w http.ResponseWriter, r *http.Request) {
 // one slash, not two — is honoured; anything else, including an absolute URL
 // or a scheme-relative one, becomes the front page, so the login flow cannot
 // be used as a springboard to somewhere else.
+//
+// A backslash counts as a slash: browsers read "/\\evil.example" as
+// "//evil.example", so it is refused the same way.
 func safeReturnTo(value string) string {
-	if !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.ContainsAny(value, "\r\n") {
+	if !strings.HasPrefix(value, "/") || strings.ContainsAny(value, "\r\n\\") {
+		return "/"
+	}
+	if strings.HasPrefix(value, "//") {
 		return "/"
 	}
 	return value
 }
 
+// loginLanding is where the flow sends someone it could not sign in: the login
+// screen, with the outcome in the address — sso=none for "no session at the
+// provider", sso=error for anything else — and the address they were opening,
+// so signing in from there still takes them to it. The marker is also what
+// stops the browser trying silently again, even with storage cleared.
+func loginLanding(outcome, returnTo string) string {
+	landing := "/login?sso=" + outcome
+	if returnTo = safeReturnTo(returnTo); returnTo != "/" {
+		landing += "&return_to=" + url.QueryEscape(returnTo)
+	}
+	return landing
+}
+
+// fail ends a callback that cannot sign anyone in. The detail is logged and
+// never shown: it can name the provider's internals.
+func fail(w http.ResponseWriter, r *http.Request, returnTo, reason string, err error) {
+	slog.Warn("OIDC callback failed", "reason", reason, "error", err)
+	http.Redirect(w, r, loginLanding("error", returnTo), http.StatusFound)
+}
+
 func (s *OIDCService) Callback(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
+	// The state is spent first, whatever else the answer says: it is single
+	// use, and it holds the address the person was opening, which every
+	// outcome below — success, refusal, failure — takes them back towards.
+	returnTo := "/"
+	stateValid := false
+	if state != "" {
+		err := s.Store.Pool.QueryRow(r.Context(), `DELETE FROM oauth_states WHERE state_hash=$1 AND expires_at>now() RETURNING return_to`, digest(state)).Scan(&returnTo)
+		stateValid = err == nil
+		if !stateValid {
+			returnTo = "/"
+		}
+	}
 	// The provider reports a refusal as an error parameter rather than a code.
 	// prompt=none answers login_required whenever there is no session — an
 	// ordinary reply, not a failure — and the one thing that must not happen
@@ -161,45 +251,42 @@ func (s *OIDCService) Callback(w http.ResponseWriter, r *http.Request) {
 	// refusal lands on the login screen with a marker in the address: it is
 	// the one guard that survives a cleared or unreadable browser storage.
 	if providerError := r.URL.Query().Get("error"); providerError != "" {
-		if state != "" {
-			_, _ = s.Store.Pool.Exec(r.Context(), `DELETE FROM oauth_states WHERE state_hash=$1`, digest(state))
-		}
 		if silentRefusals[providerError] {
-			http.Redirect(w, r, "/login?sso=none", http.StatusFound)
+			http.Redirect(w, r, loginLanding("none", returnTo), http.StatusFound)
 			return
 		}
 		slog.Warn("OIDC provider returned an error", "error", providerError)
-		http.Redirect(w, r, "/login?sso=error", http.StatusFound)
+		http.Redirect(w, r, loginLanding("error", returnTo), http.StatusFound)
 		return
 	}
-	if state == "" || code == "" {
-		http.Error(w, "invalid OIDC callback", 400)
+	if code == "" {
+		fail(w, r, returnTo, "callback without a code", nil)
 		return
 	}
-	var returnTo string
-	err := s.Store.Pool.QueryRow(r.Context(), `DELETE FROM oauth_states WHERE state_hash=$1 AND expires_at>now() RETURNING return_to`, digest(state)).Scan(&returnTo)
-	if err != nil {
-		http.Error(w, "OIDC state expired or invalid", 400)
+	if !stateValid {
+		// Expired, spent, or never issued: a back button pressed after a
+		// login, or a link replayed from history. Not something to explain.
+		fail(w, r, "/", "state expired or invalid", nil)
 		return
 	}
 	settings, provider, cfg, err := s.configuration(r.Context())
 	if err != nil {
-		http.Error(w, "OIDC configuration unavailable", 503)
+		fail(w, r, returnTo, "configuration unavailable", err)
 		return
 	}
 	token, err := cfg.Exchange(r.Context(), code)
 	if err != nil {
-		http.Error(w, "OIDC token exchange failed", 401)
+		fail(w, r, returnTo, "token exchange failed", err)
 		return
 	}
 	rawID, ok := token.Extra("id_token").(string)
 	if !ok {
-		http.Error(w, "OIDC id_token missing", 401)
+		fail(w, r, returnTo, "id_token missing", nil)
 		return
 	}
 	idToken, err := provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}).Verify(r.Context(), rawID)
 	if err != nil {
-		http.Error(w, "OIDC token verification failed", 401)
+		fail(w, r, returnTo, "id_token verification failed", err)
 		return
 	}
 	var claims struct {
@@ -213,29 +300,36 @@ func (s *OIDCService) Callback(w http.ResponseWriter, r *http.Request) {
 		} `json:"realm_access"`
 	}
 	if err = idToken.Claims(&claims); err != nil {
-		http.Error(w, "OIDC claims invalid", 401)
+		fail(w, r, returnTo, "claims invalid", err)
 		return
 	}
-	groups := append(claims.Groups, claims.RealmAccess.Roles...)
-	role := "user"
-	if slices.Contains(groups, settings.AdminGroup) {
-		role = "admin"
-	} else if slices.Contains(groups, settings.TeamLeadGroup) {
-		role = "team_lead"
-	}
+	role := settings.roleFor(append(claims.Groups, claims.RealmAccess.Roles...))
 	u, err := s.Store.UpsertOIDCUser(r.Context(), claims.Subject, claims.PreferredUsername, claims.Name, claims.Email, role)
 	if err != nil {
-		http.Error(w, "unable to provision OIDC user", 500)
+		fail(w, r, returnTo, "user provisioning failed", err)
 		return
 	}
 	session, err := s.Sessions.CreateSession(r.Context(), u.ID, OriginOf(r))
 	if err != nil {
-		http.Error(w, "unable to create session", 500)
+		fail(w, r, returnTo, "session creation failed", err)
 		return
 	}
 	SetSessionCookie(w, r, session)
 	s.Store.Audit(r.Context(), &u.ID, "auth.oidc.login", "user", u.ID.String(), json.RawMessage(`{}`))
-	http.Redirect(w, r, returnTo, http.StatusFound)
+	http.Redirect(w, r, safeReturnTo(returnTo), http.StatusFound)
+}
+
+// roleFor maps the provider's groups and realm roles to umm's role. An empty
+// administrator group never matches, so nobody is an administrator because the
+// field was left blank.
+func (cfg OIDCSettings) roleFor(groups []string) string {
+	if cfg.AdminGroup != "" && slices.Contains(groups, cfg.AdminGroup) {
+		return "admin"
+	}
+	if cfg.TeamLeadGroup != "" && slices.Contains(groups, cfg.TeamLeadGroup) {
+		return "team_lead"
+	}
+	return "user"
 }
 
 func SetSessionCookie(w http.ResponseWriter, r *http.Request, token string) {

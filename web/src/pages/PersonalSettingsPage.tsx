@@ -547,6 +547,14 @@ export default function PersonalSettingsPage() {
           <Alert mt="lg" color="blue" variant="light">
             {t('MCP 엔드포인트는')} <Code>/mcp</Code>
             {t('이며, Bearer 키로 인증합니다. 현재 프로토콜은 2026-07-28과 이전 initialize 흐름을 함께 지원합니다.')}
+            {meta?.mcpOAuth && (
+              <>
+                {' '}
+                {t(
+                  'Keycloak 로그인으로도 연결할 수 있습니다. MCP 클라이언트에 이 주소만 등록하면 키 없이 브라우저에서 Keycloak 로그인 창이 열리고, 그때 고른 권한만큼만 도구를 씁니다.',
+                )}
+              </>
+            )}
           </Alert>
         </Card>
         <Card radius="lg" p="xl" withBorder>
