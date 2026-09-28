@@ -2299,8 +2299,8 @@ components:
         latest: { $ref: '#/components/schemas/Note' }
     Meta:
       type: object
-      required: [serviceName, version, oidcEnabled, oidcAutoLogin, dreamEnabled, dreamAllowUserDisable, mcpProtocol]
-      properties: { serviceName: { type: string }, version: { type: string }, oidcEnabled: { type: boolean }, oidcAutoLogin: { type: boolean, description: Whether the browser should try a silent prompt=none sign-in before showing the login screen; never true while oidcEnabled is false }, dreamEnabled: { type: boolean }, dreamAllowUserDisable: { type: boolean }, mcpProtocol: { type: string } }
+      required: [serviceName, version, oidcEnabled, oidcAutoLogin, mcpOAuth, dreamEnabled, dreamAllowUserDisable, mcpProtocol]
+      properties: { serviceName: { type: string }, version: { type: string }, oidcEnabled: { type: boolean }, oidcAutoLogin: { type: boolean, description: Whether the browser should try a silent prompt=none sign-in before showing the login screen; never true while oidcEnabled is false }, mcpOAuth: { type: boolean, description: Whether /mcp accepts a Keycloak access token in place of a key, in which case /.well-known/oauth-protected-resource/mcp describes the resource; never true while oidcEnabled is false }, dreamEnabled: { type: boolean }, dreamAllowUserDisable: { type: boolean }, mcpProtocol: { type: string } }
     Session:
       type: object
       required: [id, current, createdAt, lastSeenAt, expiresAt]

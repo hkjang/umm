@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/analytics"
+	"github.com/hkjang/umm/internal/auth"
 	"github.com/hkjang/umm/internal/dream"
 	"github.com/hkjang/umm/internal/intelligence"
 	"github.com/hkjang/umm/internal/presentation"
@@ -138,6 +139,9 @@ func (s *Server) validateSetting(section string, v map[string]any) error {
 			if strings.TrimSpace(fmt.Sprint(v["client_id"])) == "" {
 				return errors.New("OIDC Client ID가 필요합니다")
 			}
+		}
+		if err := auth.ValidateMCPSettings(v); err != nil {
+			return err
 		}
 	case "handoff":
 		return validateHandoffSettings(v)

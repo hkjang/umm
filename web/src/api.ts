@@ -14,6 +14,8 @@ export interface Meta {
   oidcEnabled: boolean;
   /** Try a silent Keycloak sign-in before showing the login screen. Never true while oidcEnabled is false. */
   oidcAutoLogin: boolean;
+  /** An MCP client may sign in through Keycloak instead of carrying a key. Absent from older servers. */
+  mcpOAuth?: boolean;
   dreamEnabled: boolean;
   dreamAllowUserDisable: boolean;
   mcpProtocol: string;

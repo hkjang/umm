@@ -6,7 +6,7 @@
 
 ## 1. 인증 체계 (Authentication)
 
-모든 API 및 MCP 호출은 개인 설정(`/settings`)에서 발급받은 **Bearer API Key** 또는 세션 쿠키를 사용합니다:
+모든 API 및 MCP 호출은 개인 설정(`/settings`)에서 발급받은 **Bearer API Key** 또는 세션 쿠키를 사용합니다. 관리자가 켠 경우 MCP 는 **Keycloak 액세스 토큰**도 받습니다(3장):
 
 ```http
 Authorization: Bearer umm_key_a1b2c3d4_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
@@ -172,7 +172,7 @@ Canvas의 메모·연결·댓글 생성/수정/삭제 요청에 8~128자의 `Ide
 ## 3. Model Context Protocol (MCP) 엔드포인트
 
 - **엔드포인트**: `POST /mcp`
-- **인증**: `Authorization: Bearer <API_KEY>`
+- **인증**: `Authorization: Bearer <API_KEY>`, 또는 관리자가 `oidc.mcp_oauth` 를 켰다면 Keycloak 액세스 토큰. 자격 없는 호출은 `401` 과 `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"` 를 받고, 그 문서를 따라 클라이언트가 스스로 Keycloak 로그인을 엽니다. 토큰의 `scope` 가 곧 도구 권한이며 키와 같은 이름을 씁니다 — 자세한 것은 [MCP.md](MCP.md)
 - **프로토콜**: JSON-RPC 2.0 (Stateless HTTP POST)
 
 ### 🛠️ 제공 도구 목록 (Tools)

@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   beginSilentSso,
   clearSilentSsoState,
+  insideSite,
   markSignedOut,
   shouldAttemptSilentSso,
+  signInReturnTo,
   silentSsoReturnTo,
+  ssoLoginUrl,
 } from './silent-sso';
 
 const on = { oidcEnabled: true, oidcAutoLogin: true };
@@ -68,5 +71,32 @@ describe('silent SSO', () => {
       '/api/v1/auth/oidc/start?prompt=none&return_to=' + encodeURIComponent('/space/abc?note=1'),
     );
     expect(silentSsoReturnTo(at('//evil.example/x'))).toBe('/');
+  });
+});
+
+// Both ways in from the login screen go back to the address that was opened.
+// A refused silent attempt and a failed SSO callback land on /login and carry
+// that address in return_to; anything that would leave the site is dropped.
+describe('where signing in returns to', () => {
+  it('is the address the login screen was drawn at', () => {
+    expect(signInReturnTo(at('/space/abc', '?note=1', '#x'))).toBe('/space/abc?note=1#x');
+  });
+
+  it('is the carried address on /login', () => {
+    expect(signInReturnTo(at('/login', '?sso=none&return_to=%2Fspace%2Fabc'))).toBe('/space/abc');
+    expect(signInReturnTo(at('/login', '?sso=error'))).toBe('/');
+  });
+
+  it('never leaves the site', () => {
+    for (const outside of ['https://evil.example/', '//evil.example/x', '/\\evil.example/x', 'evil']) {
+      expect(insideSite(outside)).toBe('/');
+      expect(signInReturnTo(at('/login', `?return_to=${encodeURIComponent(outside)}`))).toBe('/');
+    }
+  });
+
+  it('is passed to the organization-account login', () => {
+    expect(ssoLoginUrl('/space/abc?note=1')).toBe('/api/v1/auth/oidc/start?return_to=%2Fspace%2Fabc%3Fnote%3D1');
+    expect(ssoLoginUrl('/')).toBe('/api/v1/auth/oidc/start');
+    expect(ssoLoginUrl('//evil.example')).toBe('/api/v1/auth/oidc/start');
   });
 });

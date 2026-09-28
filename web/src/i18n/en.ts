@@ -89,7 +89,14 @@ export const en: Dictionary = {
   '다시 생각할 시간이에요': 'Time to revisit',
   '나의 Thought Space로 들어갑니다.': 'Enter your Thought Space.',
   로그인: 'Sign in',
-  'Keycloak SSO로 계속': 'Continue with Keycloak SSO',
+  '조직 계정으로 로그인': 'Sign in with work account',
+  '조직 계정으로 로그인하면 원래 보던 화면으로 돌아갑니다.':
+    'Sign in with your organization account and you return to where you were.',
+  '조직 계정 세션이 없어 자동으로 로그인하지 않았습니다. 아래 버튼으로 로그인하세요.':
+    'You were not signed in automatically because there is no organization-account session. Sign in with the button below.',
+  '아이디와 비밀번호로 로그인': 'Sign in with username and password',
+  '조직 계정이 없거나 SSO를 쓸 수 없을 때를 위한 umm 자체 계정입니다.':
+    'An umm account of its own, for when you have no organization account or SSO is unavailable.',
   '로그인이 일시적으로 잠겼습니다': 'Sign-in is temporarily locked',
 
   // Today -------------------------------------------------------------------
@@ -760,6 +767,20 @@ export const en: Dictionary = {
   'Keycloak SSO 로그인이 완료되지 않았습니다. 다시 시도하거나 아이디와 비밀번호로 로그인하세요.':
     'Keycloak SSO did not complete. Try again, or sign in with your username and password.',
   '관리자 그룹/역할': 'Administrator group or role',
+  'MCP 클라이언트가 Keycloak 로그인으로 연결하기': 'Let MCP clients connect by signing in at Keycloak',
+  '켜면 /mcp 가 개인 키 대신 Keycloak 이 발급한 액세스 토큰도 받습니다. 주소만 등록한 MCP 클라이언트는 브라우저에서 Keycloak 로그인 창을 열고, 토큰의 scope 가 곧 도구 권한입니다. 키는 그대로 동작합니다.':
+    "When on, /mcp also accepts an access token issued by Keycloak in place of a personal key. An MCP client given only the address opens a Keycloak sign-in in the browser, and the token's scopes are its tool permissions. Keys keep working.",
+  'MCP 토큰 audience': 'MCP token audience',
+  '토큰의 aud 가 이 값과 같아야 받습니다. 비워 두면 공개 URL 뒤에 /mcp 를 붙인 값이고, Keycloak 의 Audience 매퍼에 같은 값을 넣습니다.':
+    'A token is accepted only when its aud equals this. Empty means the public URL with /mcp appended; put the same value in the Keycloak audience mapper.',
+  'Keycloak 에는 세 가지가 더 필요합니다. PKCE 를 쓰는 Public Client 하나, 위 audience 를 넣는 Audience 매퍼, 그리고 이름이 곧 권한인 Client Scope 들':
+    'Keycloak needs three more things: one public client using PKCE, an audience mapper that inserts the audience above, and client scopes whose names are the permissions',
+  '입니다. 여기서 허용한 키 권한 밖의 scope 는 토큰에 있어도 무시됩니다. 클라이언트는':
+    '. A scope outside the key permissions allowed here is ignored even when a token carries it. Clients find the rest on their own at',
+  '에서 나머지를 스스로 찾습니다. 자세한 절차는 관리자 가이드 부록 2-2 에 있습니다.':
+    '. The full procedure is in appendix 2-2 of the administrator guide.',
+  'Keycloak 로그인으로도 연결할 수 있습니다. MCP 클라이언트에 이 주소만 등록하면 키 없이 브라우저에서 Keycloak 로그인 창이 열리고, 그때 고른 권한만큼만 도구를 씁니다.':
+    'You can also connect by signing in at Keycloak. Register just this address in your MCP client: a Keycloak sign-in opens in the browser, no key needed, and the tools you can use are the permissions you grant there.',
   '팀장 그룹/역할': 'Team lead group or role',
   '내부 AI Gateway': 'Internal AI gateway',
   'OpenAI 호환 Chat Completions 엔드포인트를 사용합니다. 외부 연결 없이 내부 모델 서버를 지정할 수 있습니다.':

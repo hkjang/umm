@@ -785,6 +785,32 @@ textarea,
   background: var(--surface);
   min-height: 100vh;
 }
+/* With SSO on, the password form folds away under the organization-account
+   button, behind a quiet toggle rather than a second call to action. */
+.local-login-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--muted-ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.local-login-toggle:hover {
+  color: var(--ink);
+}
+.local-login-toggle span {
+  flex: 1;
+  text-align: left;
+}
+.local-login-toggle svg:last-child {
+  transition: transform 0.2s ease;
+}
+.local-login-toggle svg.is-open {
+  transform: rotate(180deg);
+}
 .settings-page {
   height: calc(100dvh - var(--app-shell-header-offset, 66px));
   min-height: 0;

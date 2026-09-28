@@ -236,7 +236,16 @@ func (s *Server) router() chi.Router {
 			})
 		})
 	})
-	r.Handle("/mcp", &mcp.Handler{Store: s.Store, Dreams: s.Dreams, Cipher: s.Cipher, Version: s.Version})
+	agents := &mcp.Handler{Store: s.Store, Dreams: s.Dreams, Cipher: s.Cipher, Version: s.Version}
+	if s.OIDC != nil {
+		agents.Tokens = s.OIDC
+	}
+	r.Handle(auth.MCPResourcePath, agents)
+	// Where an MCP client refused at /mcp learns to sign in through Keycloak.
+	// Both forms RFC 9728 allows; each answers 404 until an administrator
+	// turns Keycloak sign-in for MCP on.
+	r.Get(auth.ProtectedResourceMetadataPath, agents.ServeResourceMetadata)
+	r.Get(auth.ProtectedResourceMetadataPath+auth.MCPResourcePath, agents.ServeResourceMetadata)
 	// Visitor tracking's two doors, both closed while tracking is off: the
 	// browser's policy reports, and the same-origin path to Momento.
 	r.Post(analytics.ReportPath, s.cspReport)

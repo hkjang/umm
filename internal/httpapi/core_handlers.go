@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/auth"
 	"github.com/hkjang/umm/internal/dream"
+	"github.com/hkjang/umm/internal/mcp"
 	"github.com/hkjang/umm/internal/store"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -86,7 +87,10 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.Store.GetSetting(r.Context(), "dream", &dreamConfig)
 	oidcEnabled, oidcAutoLogin := s.OIDC.Public(r.Context())
-	writeJSON(w, 200, map[string]any{"serviceName": general.ServiceName, "version": s.Version, "oidcEnabled": oidcEnabled, "oidcAutoLogin": oidcAutoLogin, "dreamEnabled": dreamConfig.Enabled, "dreamAllowUserDisable": dreamConfig.AllowUserDisable, "mcpProtocol": "2026-07-28"})
+	// Whether an MCP client may sign in through Keycloak rather than carry a
+	// key. Public, like the metadata document it stands for.
+	_, mcpOAuth := s.OIDC.MCPResource(r.Context(), nil)
+	writeJSON(w, 200, map[string]any{"serviceName": general.ServiceName, "version": s.Version, "oidcEnabled": oidcEnabled, "oidcAutoLogin": oidcAutoLogin, "mcpOAuth": mcpOAuth, "dreamEnabled": dreamConfig.Enabled, "dreamAllowUserDisable": dreamConfig.AllowUserDisable, "mcpProtocol": mcp.CurrentProtocol})
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {

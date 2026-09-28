@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,9 +23,94 @@ type Handler struct {
 	Dreams *dream.Service
 	// Cipher unwraps the stored Ptium credential. Without it the bridge would
 	// send ciphertext as a bearer token and Ptium would answer 401.
-	Cipher  presentation.Decrypter
+	Cipher presentation.Decrypter
+	// Tokens accepts a Keycloak access token in place of a key, once an
+	// administrator has turned that on. Nil means keys only.
+	Tokens  AccessTokens
 	Version string
 }
+
+// AccessTokens is the OAuth half of the door: it verifies a token the auth
+// middleware did not recognise as a key, and describes this server to a client
+// that has none yet.
+type AccessTokens interface {
+	AuthenticateAccessToken(ctx context.Context, raw string) (auth.Principal, error)
+	MCPResource(ctx context.Context, toolScopes []string) (auth.ProtectedResource, bool)
+}
+
+// toolScopes are the scopes the tools below ask for, advertised to a client
+// choosing what to request at sign-in. Sorted, like the tools.
+var toolScopes = []string{"dreams:read", "notes:read", "notes:write", "spaces:read"}
+
+// keyPrefix is how every key umm has ever issued begins. A bearer value
+// without it is not a key, and the only other thing it can be is a token.
+const keyPrefix = "umm_key_"
+
+// resource reports whether Keycloak sign-in is on for MCP and, if so, how a
+// client is told about it.
+func (h *Handler) resource(ctx context.Context) (auth.ProtectedResource, bool) {
+	if h.Tokens == nil {
+		return auth.ProtectedResource{}, false
+	}
+	return h.Tokens.MCPResource(ctx, toolScopes)
+}
+
+// ServeResourceMetadata answers RFC 9728's well-known document for /mcp, and
+// 404 while Keycloak sign-in for MCP is off: a client must not be sent to an
+// authorization server whose tokens would then be refused.
+func (h *Handler) ServeResourceMetadata(w http.ResponseWriter, r *http.Request) {
+	resource, on := h.resource(r.Context())
+	if !on {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-cache")
+	_ = json.NewEncoder(w).Encode(resource)
+}
+
+// authenticate finds who is calling. The middleware has already recognised a
+// key or a session; a bearer value it did not recognise is handed to Keycloak
+// verification, when that is on. A session is refused either way: MCP takes
+// a credential with scopes on it, and a browser cookie has all of them.
+func (h *Handler) authenticate(r *http.Request, resource auth.ProtectedResource, oauthOn bool) (auth.Principal, bool) {
+	p, ok := auth.PrincipalFrom(r.Context())
+	if ok {
+		return p, p.AuthType == "api_key" || p.AuthType == auth.AuthTypeOAuth
+	}
+	if !oauthOn {
+		return auth.Principal{}, false
+	}
+	header := r.Header.Get("Authorization")
+	raw := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	if raw == "" || raw == header || strings.HasPrefix(raw, keyPrefix) {
+		return auth.Principal{}, false
+	}
+	p, err := h.Tokens.AuthenticateAccessToken(r.Context(), raw)
+	if err != nil {
+		return auth.Principal{}, false
+	}
+	return p, true
+}
+
+// unauthorized is the refusal at the door. With Keycloak sign-in on it carries
+// the challenge an MCP client follows to sign in, naming the metadata document
+// and, when a token was presented and refused, saying so — and no more than
+// so. Without it the answer is the one keys-only clients have always read.
+func unauthorized(w http.ResponseWriter, resource auth.ProtectedResource, oauthOn, tokenPresented bool) {
+	message := "Bearer API key required"
+	if oauthOn {
+		message = "Bearer API key or Keycloak access token required"
+		challenge := `Bearer realm="umm", resource_metadata="` + resource.MetadataURL + `"`
+		if tokenPresented {
+			challenge += `, error="invalid_token"`
+		}
+		w.Header().Set("WWW-Authenticate", challenge)
+	}
+	w.WriteHeader(http.StatusUnauthorized)
+	writeRPC(w, response{JSONRPC: "2.0", Error: &rpcError{Code: -32001, Message: message}})
+}
+
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
@@ -54,10 +140,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeRPC(w, response{JSONRPC: "2.0", Error: &rpcError{Code: -32600, Message: "POST required"}})
 		return
 	}
-	p, ok := auth.PrincipalFrom(r.Context())
-	if !ok || p.AuthType != "api_key" {
-		w.WriteHeader(http.StatusUnauthorized)
-		writeRPC(w, response{JSONRPC: "2.0", Error: &rpcError{Code: -32001, Message: "Bearer API key required"}})
+	resource, oauthOn := h.resource(r.Context())
+	p, ok := h.authenticate(r, resource, oauthOn)
+	if !ok {
+		_, hadPrincipal := auth.PrincipalFrom(r.Context())
+		unauthorized(w, resource, oauthOn, !hadPrincipal && r.Header.Get("Authorization") != "")
 		return
 	}
 	if origin := r.Header.Get("Origin"); origin != "" && !h.validOrigin(r, origin) {
@@ -165,11 +252,17 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 		return map[string]any{"content": []map[string]string{{"type": "text", "text": string(raw)}}, "structuredContent": v, "isError": false}, nil
 	}
 	require := func(scope string) error {
-		if !p.Scopes["*"] && !p.Scopes[scope] {
-			return fmt.Errorf("API key requires %s scope", scope)
+		if p.Scopes["*"] || p.Scopes[scope] {
+			return nil
 		}
-		return nil
+		if p.AuthType == auth.AuthTypeOAuth {
+			return fmt.Errorf("the Keycloak token lacks the %s scope", scope)
+		}
+		return fmt.Errorf("API key requires %s scope", scope)
 	}
+	// Written into the audit row of every change, so a reader can tell a
+	// key from a Keycloak sign-in.
+	credential := map[string]any{"key": p.AuthType == "api_key", "auth": p.AuthType}
 	spaceID := func() (uuid.UUID, error) { return uuid.Parse(fmt.Sprint(args["space_id"])) }
 	// fmt.Sprint renders a missing key as the literal "<nil>", which read as a
 	// value turns an omitted argument into a real one. These three read it as
@@ -367,7 +460,7 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 		if err != nil {
 			return nil, err
 		}
-		h.Store.Audit(ctx, &p.User.ID, "mcp.note.create", "note", n.ID.String(), map[string]any{"key": true})
+		h.Store.Audit(ctx, &p.User.ID, "mcp.note.create", "note", n.ID.String(), credential)
 		return success(n)
 	case "capture_thought":
 		if err := require("notes:write"); err != nil {
@@ -381,7 +474,7 @@ func (h *Handler) call(r *http.Request, p auth.Principal, params callParams) (an
 		if err != nil {
 			return nil, err
 		}
-		h.Store.Audit(ctx, &p.User.ID, "mcp.thought.capture", "note", n.ID.String(), map[string]any{"key": true})
+		h.Store.Audit(ctx, &p.User.ID, "mcp.thought.capture", "note", n.ID.String(), credential)
 		return success(n)
 	case "connect_notes":
 		if err := require("notes:write"); err != nil {

@@ -162,6 +162,11 @@ func TestSilentSSOIsTheAdministratorsToStartAndLandsRefusalsOnTheLoginScreenInte
 	if landing.Path != "/login" || landing.Query().Get("sso") != "none" {
 		t.Fatalf("a refused silent attempt landed on %s, want /login?sso=none", landing)
 	}
+	// And it keeps the address that was being opened, so signing in from the
+	// login screen still lands there rather than on the front page.
+	if got := landing.Query().Get("return_to"); got != "/space/abc" {
+		t.Fatalf("a refused silent attempt dropped the deep link: return_to=%q", got)
+	}
 	var leftover int
 	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM oauth_states WHERE state_hash=$1`, digestOf(state)).Scan(&leftover); err != nil {
 		t.Fatal(err)
@@ -175,8 +180,34 @@ func TestSilentSSOIsTheAdministratorsToStartAndLandsRefusalsOnTheLoginScreenInte
 		t.Fatalf("a provider error landed on %s, want /login?sso=error", landing)
 	}
 
-	// A return_to that would leave the site is not a place to return to.
-	for _, outside := range []string{"https://evil.example/", "//evil.example/x", "evil"} {
+	// A callback that cannot sign anyone in — an expired or replayed state,
+	// or a code the provider will not exchange — lands on the login screen,
+	// never on a page of plain text.
+	landing = redirect("/auth/oidc/callback?state=never-issued&code=abc")
+	if landing.Path != "/login" || landing.Query().Get("sso") != "error" || landing.Query().Get("return_to") != "" {
+		t.Fatalf("an unknown state landed on %s, want /login?sso=error with no return_to", landing)
+	}
+	location = redirect("/auth/oidc/start?return_to=%2Fspace%2Fdef")
+	landing = redirect("/auth/oidc/callback?state=" + url.QueryEscape(location.Query().Get("state")) + "&code=abc")
+	if landing.Path != "/login" || landing.Query().Get("sso") != "error" || landing.Query().Get("return_to") != "/space/def" {
+		t.Fatalf("a failed exchange landed on %s, want /login?sso=error&return_to=/space/def", landing)
+	}
+
+	// Keycloak unreachable. A silent attempt is a navigation nobody asked
+	// for, and it used to end on "503" text at an API address that a reload
+	// only fetched again. It lands on the login screen with the marker that
+	// stops another attempt, and the deep link kept.
+	issuer.Close()
+	server.OIDC = &auth.OIDCService{Store: db, Cipher: cipher, Sessions: authService}
+	router.Get("/auth/oidc/start-cold", server.OIDC.Start)
+	landing = redirect("/auth/oidc/start-cold?prompt=none&return_to=%2Fspace%2Fabc")
+	if landing.Path != "/login" || landing.Query().Get("sso") != "error" || landing.Query().Get("return_to") != "/space/abc" {
+		t.Fatalf("with Keycloak down a silent attempt landed on %s, want /login?sso=error&return_to=/space/abc", landing)
+	}
+
+	// A return_to that would leave the site is not a place to return to. A
+	// backslash is one: browsers read /\evil.example as //evil.example.
+	for _, outside := range []string{"https://evil.example/", "//evil.example/x", "evil", "/\\evil.example/x"} {
 		location = redirect("/auth/oidc/start?return_to=" + url.QueryEscape(outside))
 		if err := db.Pool.QueryRow(ctx, `SELECT return_to FROM oauth_states WHERE state_hash=$1`, digestOf(location.Query().Get("state"))).Scan(&returnTo); err != nil {
 			t.Fatal(err)
