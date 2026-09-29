@@ -6,13 +6,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/hkjang/umm/internal/auth"
+	"github.com/hkjang/umm/internal/presentation"
 	"github.com/hkjang/umm/internal/store"
 )
 
@@ -73,6 +76,7 @@ func presentationAPI(t *testing.T) presentationHarness {
 	server := &Server{Store: db}
 	router := chi.NewRouter()
 	router.Get("/spaces/{spaceID}/presentation/preview", server.previewPresentation)
+	router.Get("/spaces/{spaceID}/export/outline", server.exportOutline)
 	router.Post("/spaces/{spaceID}/presentations", server.createPresentation)
 	router.Get("/spaces/{spaceID}/presentations", server.listPresentations)
 	router.Get("/notes/{noteID}/presentations", server.notePresentations)
@@ -115,16 +119,7 @@ func TestPreviewWorksBeforePtiumIsConnectedIntegration(t *testing.T) {
 	if response.Code != 200 {
 		t.Fatalf("status %d: %s", response.Code, response.Body.String())
 	}
-	var preview struct {
-		Source    string `json:"source"`
-		Checked   bool   `json:"checked"`
-		Storyline struct {
-			Title  string `json:"Title"`
-			Slides []struct {
-				Title string `json:"Title"`
-			} `json:"Slides"`
-		} `json:"storyline"`
-	}
+	var preview presentation.Preview
 	if err := json.Unmarshal(response.Body.Bytes(), &preview); err != nil {
 		t.Fatal(err)
 	}
@@ -923,5 +918,86 @@ func TestOnlyAFailedDeckMayBeRetriedIntegration(t *testing.T) {
 	}
 	if code := h.do(t, http.MethodPost, "/presentations/"+uuid.New().String()+"/retry", "").Code; code != 404 {
 		t.Fatalf("an unknown link was retried: %d", code)
+	}
+}
+
+// Both exports must treat whitespace-only titles like an omitted title, while
+// preserving the thoughts and their order through the real store and service.
+func TestPresentationTitleFallbackIntegration(t *testing.T) {
+	h := presentationAPI(t)
+	base := "/spaces/" + h.spaceID.String()
+	previewFor := func(t *testing.T, query string) presentation.Preview {
+		t.Helper()
+		response := h.do(t, http.MethodGet, base+"/presentation/preview"+query, "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("preview status %d: %s", response.Code, response.Body.String())
+		}
+		var preview presentation.Preview
+		if err := json.Unmarshal(response.Body.Bytes(), &preview); err != nil {
+			t.Fatal(err)
+		}
+		return preview
+	}
+	outlineFor := func(t *testing.T, query string) string {
+		t.Helper()
+		response := h.do(t, http.MethodGet, base+"/export/outline"+query, "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("outline status %d: %s", response.Code, response.Body.String())
+		}
+		return response.Body.String()
+	}
+	const spaceName = "회고 주기 재검토"
+	baseline := previewFor(t, "")
+	baselineOutline := outlineFor(t, "")
+	if len(baseline.Storyline.SlideSources()) != len(h.notes) {
+		t.Fatal("baseline did not include both thoughts")
+	}
+	for _, tc := range []struct {
+		name, title, want string
+		omitted           bool
+	}{
+		{name: "omitted", want: spaceName, omitted: true},
+		{name: "empty", want: spaceName},
+		{name: "ASCII spaces", title: "   ", want: spaceName},
+		{name: "tabs and newlines", title: "\t\r\n", want: spaceName},
+		{name: "Unicode spaces", title: "\u00a0\u2003\u3000", want: spaceName},
+		{name: "ordinary title", title: "임원 보고", want: "임원 보고"},
+		{name: "padded title", title: "  임원 보고  ", want: "임원 보고"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			query := ""
+			if !tc.omitted {
+				query = "?" + url.Values{"title": {tc.title}}.Encode()
+			}
+			preview := previewFor(t, query)
+			if preview.Storyline.Title != tc.want {
+				t.Errorf("preview title = %q, want %q", preview.Storyline.Title, tc.want)
+			}
+			cover := "# " + tc.want + "\n@cover\n"
+			if !strings.HasPrefix(preview.Source, cover) || strings.Count(preview.Source, "\n@cover\n") != 1 {
+				t.Errorf("preview must start with exactly one cover %q: %q", cover, preview.Source)
+			}
+			if !reflect.DeepEqual(preview.Storyline.Slides, baseline.Storyline.Slides) {
+				t.Error("title changed the thoughts or their order")
+			}
+			sources := preview.Storyline.SlideSources()
+			if len(sources) == 0 || sources[0].SlidePosition != 2 {
+				t.Errorf("first content must follow the cover at position 2: %+v", sources)
+			}
+			if !reflect.DeepEqual(sources, baseline.Storyline.SlideSources()) {
+				t.Error("title changed thought source positions or count")
+			}
+			if preview.Source != strings.Replace(baseline.Source, "# "+spaceName+"\n", "# "+tc.want+"\n", 1) {
+				t.Error("preview changed beyond the title")
+			}
+			outline := outlineFor(t, query)
+			heading := "# " + tc.want + "\n\n"
+			if !strings.HasPrefix(outline, heading) {
+				t.Errorf("outline must start with %q: %q", heading, outline)
+			}
+			if outline != strings.Replace(baselineOutline, "# "+spaceName+"\n\n", heading, 1) {
+				t.Error("outline changed beyond the title")
+			}
+		})
 	}
 }
