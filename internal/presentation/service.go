@@ -333,7 +333,7 @@ func (s *Service) compile(ctx context.Context, userID uuid.UUID, req Request) (S
 		return Storyline{}, "", err
 	}
 
-	title := req.Title
+	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		title = s.spaceName(ctx, userID, req.SpaceID)
 	}
