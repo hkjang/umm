@@ -163,6 +163,20 @@ func TestAttachmentAcceptsALongNonASCIIFilenameIntegration(t *testing.T) {
 	}
 }
 
+// Some clients hand over the whole path the picture was read from. What is
+// stored — and what the download is named later — has to be the piece the
+// person would say, not the directories glued in front of it.
+func TestAttachmentStoresOnlyTheLastPieceOfAPathIntegration(t *testing.T) {
+	db, userID, _, note := attachmentSpace(t)
+	saved, err := db.AttachToNote(context.Background(), userID, note.ID, "C:\\사진\\회의.png", realPNG(t))
+	if err != nil {
+		t.Fatalf("a picture was refused over its label: %v", err)
+	}
+	if saved.Filename != "회의.png" {
+		t.Fatalf("stored label %q, want %q", saved.Filename, "회의.png")
+	}
+}
+
 // Nothing is not a picture, and saying "too large" about it sends someone to
 // look for a limit they are nowhere near.
 func TestAttachmentEmptyUploadIsNotAnImageIntegration(t *testing.T) {

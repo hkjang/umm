@@ -38,8 +38,47 @@ func TestSafeFilenameKeepsAShortNameWhole(t *testing.T) {
 	}
 }
 
-func TestSafeFilenameDropsSeparatorsAndControls(t *testing.T) {
-	if got := safeFilename("../etc/pass\"wd\x00.png"); got != "..etcpasswd.png" {
+// Some clients hand over the whole path they read the picture from. The name a
+// person would say is the last piece of it; gluing the directories to the front
+// makes a label nobody recognises, and this label is what the file is called
+// again when it is downloaded.
+func TestSafeFilenameKeepsOnlyTheLastPieceOfAPath(t *testing.T) {
+	for given, want := range map[string]string{
+		"C:\\사진\\회의.png": "회의.png",
+		"a/b/c.png":      "c.png",
+		"/tmp/화이트보드.png": "화이트보드.png",
+		"회의.png":         "회의.png",
+		"C:/사진/회의.png":   "회의.png",
+	} {
+		if got := safeFilename(given); got != want {
+			t.Errorf("safeFilename(%q) = %q, want %q", given, got, want)
+		}
+	}
+}
+
+// A name that ends in a separator has an empty last piece. Losing the label
+// entirely over that is worse than naming the picture after the piece before
+// it, which is still something the person typed.
+func TestSafeFilenameWalksBackPastATrailingSeparator(t *testing.T) {
+	for given, want := range map[string]string{
+		"사진/":      "사진",
+		"a/b/":     "b",
+		"C:\\사진\\": "사진",
+	} {
+		if got := safeFilename(given); got != want {
+			t.Errorf("safeFilename(%q) = %q, want %q", given, got, want)
+		}
+	}
+}
+
+// The last piece is still cleaned: this string reaches a Content-Disposition
+// header and a text column.
+func TestSafeFilenameDropsControlsAndQuotesFromTheLastPiece(t *testing.T) {
+	got := safeFilename("../etc/pass\"wd\x00.png")
+	if got != "passwd.png" {
 		t.Fatalf("got %q", got)
+	}
+	if strings.ContainsAny(got, "/\\") {
+		t.Fatalf("a separator survived: %q", got)
 	}
 }

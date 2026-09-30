@@ -147,13 +147,35 @@ func (s *Store) AttachToNote(ctx context.Context, userID, noteID uuid.UUID, file
 // per character, so a plain byte slice ends mid-character — and PostgreSQL
 // refuses text that is not valid UTF-8. That refusal loses the picture, which
 // was never the problem, over the label, which is decoration.
+// Some clients send the whole path a picture was read from, and the name a
+// person would say is only its last piece — removing the separators alone would
+// glue "C:\사진\회의.png" into "C:사진회의.png". Both separators are split on
+// here rather than by filepath.Base, which on Linux does not know that "\" ever
+// separated anything. An empty last piece is walked back rather than accepted:
+// a name ending in a separator would otherwise leave no label at all, and the
+// piece before it is still something the person typed.
 func safeFilename(name string) string {
+	pieces := strings.FieldsFunc(strings.TrimSpace(name), func(r rune) bool {
+		return r == '/' || r == '\\'
+	})
+	for i := len(pieces) - 1; i >= 0; i-- {
+		if cleaned := cleanFilenamePiece(pieces[i]); cleaned != "" {
+			return cleaned
+		}
+	}
+	return ""
+}
+
+// cleanFilenamePiece removes what must not reach a header or a text column. The
+// separators are dropped again here — they cannot survive the split above, and
+// that is the point: nothing downstream has to trust that they were.
+func cleanFilenamePiece(piece string) string {
 	cleaned := strings.Map(func(r rune) rune {
 		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' || r == '"' {
 			return -1
 		}
 		return r
-	}, strings.TrimSpace(name))
+	}, strings.TrimSpace(piece))
 	return textutil.LimitUTF8Bytes(cleaned, 120)
 }
 
