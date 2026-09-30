@@ -96,9 +96,19 @@ func (s *Server) exportOutline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The file is named after the space, as the backup and the handoff are: an
+	// outline that is always called `umm-outline.md` piles up as
+	// `umm-outline (1).md` in a browser and overwrites itself for anything that
+	// saves by the header. The stem is not the backup's, because the two hold
+	// different things and must not land on one file. A space whose name cannot
+	// be read is still worth exporting, so an unreadable one leaves the stem as
+	// it is rather than refusing — the header stays readable either way.
+	var spaceName string
+	_ = s.Store.Pool.QueryRow(r.Context(), `SELECT name FROM spaces WHERE id=$1`, spaceID).Scan(&spaceName)
+
 	s.Store.Audit(r.Context(), &p.User.ID, "space.export", "space", spaceID.String(), map[string]any{"format": "outline"})
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="umm-outline.md"`)
+	w.Header().Set("Content-Disposition", attachmentDisposition("umm-outline-"+spaceName, ".md"))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(outline))
 }
