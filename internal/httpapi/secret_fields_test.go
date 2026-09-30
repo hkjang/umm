@@ -17,6 +17,9 @@ import (
 // at the moment the test runs, and an empty one on a fresh install must not be
 // the reason this passes.
 func looksLikeASecret(field string) bool {
+	if field == "password" {
+		return true
+	}
 	for _, marker := range []string{"_key", "_secret", "_token", "_password", "_credential"} {
 		if strings.HasSuffix(field, marker) {
 			return true

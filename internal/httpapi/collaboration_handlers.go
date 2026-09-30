@@ -278,6 +278,7 @@ func (s *Server) shareSpace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.Store.Audit(r.Context(), &p.User.ID, "space.share.request", "approval", requestID.String(), payload)
+		s.mailApprovalRequested(r.Context(), p.User, "space_share", s.spaceName(r.Context(), spaceID), "공간 공유: "+targetName+" ("+body.Permission+")")
 		writeJSON(w, 202, map[string]any{"required": true, "requestId": requestID, "status": "pending"})
 		return
 	}
@@ -286,6 +287,7 @@ func (s *Server) shareSpace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "space.share", "space", spaceID.String(), payload)
+	s.mailSpaceShared(r.Context(), p.User, spaceID, targetID, body.Permission)
 	writeJSON(w, 201, map[string]any{"required": false, "status": "shared"})
 }
 

@@ -254,7 +254,7 @@ func (s *Server) createComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := principal(r)
-	comment, _, err := s.Store.CreateComment(r.Context(), p.User.ID, noteID, body.ParentID, body.Body, mentionedUsernameTokens(body.Body))
+	comment, spaceID, err := s.Store.CreateComment(r.Context(), p.User.ID, noteID, body.ParentID, body.Body, mentionedUsernameTokens(body.Body))
 	if err != nil {
 		status, message := commentCreateError(err)
 		if status >= http.StatusInternalServerError {
@@ -264,6 +264,7 @@ func (s *Server) createComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "comment.create", "comment", comment.ID.String(), map[string]any{"noteId": noteID})
+	s.mailComment(r.Context(), p.User, spaceID, noteID, comment.ID, body.Body)
 	writeJSON(w, http.StatusCreated, comment)
 }
 

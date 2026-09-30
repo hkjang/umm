@@ -46,6 +46,7 @@ func (s *Server) createApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "approval.request", "approval", id.String(), map[string]any{"action": body.Action})
+	s.mailApprovalRequested(r.Context(), p.User, body.Action, s.approvalSubject(r.Context(), body.ResourceType, body.ResourceID), body.Comment)
 	writeJSON(w, 201, map[string]any{"required": true, "id": id, "status": "pending"})
 }
 
@@ -124,11 +125,11 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var action string
+	var action, resourceType string
 	var resourceID, requesterID uuid.UUID
 	var requestTeam *uuid.UUID
 	var payloadRaw json.RawMessage
-	err = tx.QueryRow(r.Context(), `SELECT action,resource_id,payload,requester_id,team_id FROM approval_requests WHERE id=$1 AND status='pending' FOR UPDATE`, id).Scan(&action, &resourceID, &payloadRaw, &requesterID, &requestTeam)
+	err = tx.QueryRow(r.Context(), `SELECT action,resource_type,resource_id,payload,requester_id,team_id FROM approval_requests WHERE id=$1 AND status='pending' FOR UPDATE`, id).Scan(&action, &resourceType, &resourceID, &payloadRaw, &requesterID, &requestTeam)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "처리할 검토 요청을 찾을 수 없습니다.")
 		return
@@ -176,5 +177,12 @@ func (s *Server) decideApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Store.Audit(r.Context(), &p.User.ID, "approval."+body.Decision, "approval", id.String(), map[string]any{})
+	// Two people may be waiting on this one decision: the requester, always,
+	// and — when a share was approved — the person it was for.
+	subject := s.approvalSubject(r.Context(), resourceType, resourceID)
+	s.mailApprovalDecided(r.Context(), p.User, requesterID, action, subject, body.Decision, body.Comment)
+	if body.Decision == "approved" && action == "space_share" {
+		s.mailSpaceShared(r.Context(), p.User, resourceID, sharePayload.TargetUserID, sharePayload.Permission)
+	}
 	writeJSON(w, 200, map[string]string{"status": body.Decision})
 }

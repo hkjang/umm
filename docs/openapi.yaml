@@ -1210,7 +1210,7 @@ paths:
       responses: { '200': { description: Setting sections } }
   /admin/settings/{section}:
     parameters:
-      - { in: path, name: section, required: true, schema: { type: string, enum: [general, oidc, security, workflow, dream, ai_gateway, intelligence, ptium, analytics, handoff] } }
+      - { in: path, name: section, required: true, schema: { type: string, enum: [general, oidc, security, workflow, dream, ai_gateway, intelligence, ptium, analytics, handoff, mail] } }
     put:
       operationId: put_admin_settings_section
       tags: [Admin]
@@ -1234,6 +1234,16 @@ paths:
         The `handoff` section is `{"targets": [{"name", "origin", "formats": [...]}]}` — the
         services a space may be sent to; `origin` is a scheme and host with no path, and
         `formats` are the standard's words (markdown, docx, csv, xlsx, txt, pptx). Empty by default.
+        The `mail` section is the in-house SMTP notification standard, with the section prefix
+        dropped from its keys: `enabled` (off by default), `smtp_host`, `smtp_port` (25),
+        `security` (`auto` — take what the relay offers — `none`, `starttls`, `tls`),
+        `skip_tls_verify`, `username` and `password` (optional; an internal relay usually has
+        neither — the password is stored encrypted, returned masked with `password_configured`,
+        and a masked save keeps the stored one), `from_address`, `from_name`, `base_url` (links in
+        mail; falls back to the general section's `public_url`), `timeout_seconds` (10), and one
+        switch per event: `notify_approval_request`, `notify_approval_decision`,
+        `notify_space_shared`, `notify_mention`, `notify_comment`. Turning `enabled` on without
+        `smtp_host` is refused with 400.
       requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
       responses: { '200': { description: Saved }, '400': { $ref: '#/components/responses/Error' } }
   /admin/oidc/test:
@@ -2243,6 +2253,77 @@ paths:
       description: What an administrator does after fixing a snippet, to see whether anything is still refused.
       responses:
         '200': { description: Emptied }
+  /admin/mail/deliveries:
+    get:
+      operationId: get_admin_mail_deliveries
+      tags: [Admin]
+      summary: What left the building — every mail attempt, newest first
+      description: |
+        One row per attempt to one address: when, for which event, to whom, with what
+        subject, and whether the relay took it. Sent and failed alike — a ledger of failures
+        only cannot answer "it never arrived". The body is not kept; the subject and the
+        recipient are what the question needs, and a body here would make this table a copy
+        of every comment. Rows are kept 90 days.
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [queued, sent, failed] } }
+        - { in: query, name: limit, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        '200':
+          description: Deliveries, newest first, with counts by status over everything kept
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  byStatus: { type: object, additionalProperties: { type: integer } }
+                  deliveries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        event: { type: string, example: approval.requested }
+                        recipient: { type: string }
+                        subject: { type: string }
+                        spaceId: { type: string, format: uuid }
+                        actorId: { type: string, format: uuid }
+                        status: { type: string, enum: [queued, sent, failed] }
+                        attempts: { type: integer }
+                        errorMessage: { type: string, description: The relay's answer when the attempt failed }
+                        createdAt: { type: string, format: date-time }
+                        updatedAt: { type: string, format: date-time }
+  /admin/mail/test:
+    post:
+      operationId: post_admin_mail_test
+      tags: [Admin]
+      summary: Send one real mail with the saved settings
+      description: |
+        Relay settings are rarely right the first time. This sends one message through the
+        exact path the notifications use and answers with what the relay said, on the caller's
+        time rather than in the background. It does not require `enabled`: proving the relay
+        before turning notifications on is the right order. The attempt is recorded in the
+        deliveries ledger under the event `test`. The recipient defaults to the
+        administrator's own address.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recipient: { type: string, format: email }
+      responses:
+        '200':
+          description: The relay accepted the message
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent: { type: boolean, example: true }
+                  recipient: { type: string }
+        '400': { description: 'The settings are incomplete (no host, sender without @, STARTTLS required but not offered) or no recipient is known; `detail` says which' }
+        '502': { description: 'The relay refused or did not answer; `detail` carries its words' }
 components:
   securitySchemes:
     cookieAuth: { type: apiKey, in: cookie, name: umm_session }

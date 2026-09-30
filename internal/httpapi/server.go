@@ -25,6 +25,7 @@ import (
 	"github.com/hkjang/umm/internal/auth"
 	"github.com/hkjang/umm/internal/cryptoutil"
 	"github.com/hkjang/umm/internal/dream"
+	"github.com/hkjang/umm/internal/mail"
 	"github.com/hkjang/umm/internal/mcp"
 	"github.com/hkjang/umm/internal/observability"
 	"github.com/hkjang/umm/internal/realtime"
@@ -39,10 +40,13 @@ type Server struct {
 	Cipher   *cryptoutil.Cipher
 	Dreams   *dream.Service
 	Webhooks *webhook.Service
-	Metrics  *observability.Registry
-	Events   *realtime.Hub
-	Version  string
-	WebDir   string
+	// Mail sends event notifications through the company relay; nil when the
+	// binary was built without one (tests), in which case nothing is sent.
+	Mail    *mail.Service
+	Metrics *observability.Registry
+	Events  *realtime.Hub
+	Version string
+	WebDir  string
 	// TrustedProxies contains only reverse proxies that may supply forwarding
 	// headers. An empty list is the secure default for direct deployments.
 	TrustedProxies []netip.Prefix
@@ -233,6 +237,8 @@ func (s *Server) router() chi.Router {
 				admin.With(s.aiQuota).Post("/ai-evals/{caseID}/run", s.runAIEval)
 				admin.Get("/analytics/violations", s.analyticsViolations)
 				admin.Delete("/analytics/violations", s.forgetAnalyticsViolations)
+				admin.Get("/mail/deliveries", s.adminMailDeliveries)
+				admin.Post("/mail/test", s.adminSendTestMail)
 			})
 		})
 	})
