@@ -7,7 +7,7 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: ['src/**/*.test.{ts,tsx}', 'scripts/**/*.test.mjs'],
     // The project is often developed on a Windows-mounted filesystem where
     // spawning a fork and booting jsdom is slow; the defaults time the worker
     // out before the first test runs.
