@@ -1,0 +1,13 @@
+{
+  "name": "umm",
+  "private": true,
+  "description": "Anchors npm to this repository. The frontend lives in web/, so before this file existed any `npm run ...` at the repository root walked past the checkout and bound to whatever package.json happened to sit in an ancestor directory (a developer's home directory, for example) — `npm test` answered 'Missing script', and a foreign file that did define a script of that name would have run instead. The scripts below are the ones CI runs with working-directory: web, forwarded with the same `npm --prefix web` form the Makefile uses. Having a package.json here also pins the module type for scripts/*.js, which are CommonJS. Deliberately no `version` field: scripts/check-version.sh guards VERSION against web/package.json by explicit path, and a third copy of that number here would be one more place for a release to break.",
+  "scripts": {
+    "typecheck": "npm --prefix web run typecheck",
+    "lint": "npm --prefix web run lint",
+    "test": "npm --prefix web test",
+    "test:offline-queue": "npm --prefix web run test:offline-queue",
+    "verify:pwa": "npm --prefix web run verify:pwa",
+    "build": "npm --prefix web run build"
+  }
+}

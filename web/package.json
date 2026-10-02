@@ -3,15 +3,18 @@
   "private": true,
   "version": "0.76.3",
   "type": "module",
+  "engines": {
+    "node": ">=22.22.2"
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
     "lint": "oxlint src && prettier --check src",
     "format": "prettier --write src",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:offline-queue": "node scripts/verify-offline-queue.mjs",
+    "test": "node scripts/run-on-supported-node.mjs vitest run",
+    "test:watch": "node scripts/run-on-supported-node.mjs vitest",
+    "test:offline-queue": "node scripts/run-on-supported-node.mjs scripts/verify-offline-queue.mjs",
     "verify:pwa": "node scripts/verify-pwa.mjs",
     "e2e": "playwright test",
     "preview": "vite preview --host 0.0.0.0"
