@@ -4,7 +4,7 @@
   "version": "0.76.3",
   "type": "module",
   "engines": {
-    "node": ">=22.22.2"
+    "node": "^22.22.2 || ^24.15.0"
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0",

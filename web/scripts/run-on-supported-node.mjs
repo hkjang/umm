@@ -10,8 +10,8 @@
  * the interpreter the developer selected, and everything started through a
  * `#!/usr/bin/env node` shim boots on it.
  *
- * Both test entry points break on an interpreter below the floor, and neither
- * of them says so:
+ * The test entry points break on an unsupported interpreter in three separate
+ * ways, and none of them says so:
  *
  *   npm test                    vitest boots jsdom, which loads undici, which
  *                               reads markAsUncloneable out of
@@ -22,17 +22,32 @@
  *                               function` inside undici and the run reports
  *                               "no tests" with an exit code of 1.
  *
+ *   npm test                    from Node 25 the `localStorage` global ships
+ *                               unflagged, as an accessor on globalThis that
+ *                               hands back a store needing --localstorage-file.
+ *                               It outranks the one jsdom installs, so the
+ *                               tests that reach for web storage fail on
+ *                               `localStorage.clear is not a function` -- 58 of
+ *                               186 on 25.9.0. Node 22, 23 and 24 have no such
+ *                               global, and 26 will inherit it, so engines.node
+ *                               names the bands that work rather than an open
+ *                               upper end -- which is why it is a range with a
+ *                               hole in it and not a lower bound.
+ *
  *   npm run test:offline-queue  imports src/offline-queue.ts directly and
  *                               leaves the types for Node to strip, which is
  *                               only unflagged from 22.18. Below it the script
  *                               throws ERR_UNKNOWN_FILE_EXTENSION ".ts".
  *
- * Neither message names Node or a version, so the fix is not discoverable from
- * the failure. So: prefer this process's own interpreter, fall back to the one
- * npm itself is running (npm_node_execpath, the one the developer chose), then
- * to a PATH entry outside any node_modules, and refuse to guess when none of
- * them clears the floor. Refusing is the point -- a run that cannot use a
- * supported interpreter must exit non-zero rather than report green.
+ * None of those messages names Node or a version, so the fix is not
+ * discoverable from the failure -- and the shadowing-localStorage one is worse
+ * than undiscoverable, since it reads as 58 assertions about this product
+ * failing. So: prefer this process's own interpreter, fall back to the one npm
+ * itself is running (npm_node_execpath, the one the developer chose), then to a
+ * PATH entry outside any node_modules, and refuse to guess when none of them is
+ * supported. Refusing is the point -- a run that cannot use a supported
+ * interpreter must exit non-zero rather than report green, and the one thing it
+ * must never do is run anyway and blame the tests.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -40,6 +55,8 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { delimiter, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { parseRange } from './node-range.mjs';
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const manifestPath = join(packageRoot, 'package.json');
@@ -51,30 +68,19 @@ const fail = (message) => {
 };
 
 /*
- * Only a bare `>=x.y.z` floor is understood. Widening engines.node to a real
- * semver range would leave this comparison reading the wrong thing, so say so
- * instead of quietly accepting every interpreter.
+ * engines.node is the whole declaration of where these tests run, holes and
+ * all; node-range.mjs returns nothing for a range it cannot read, and that has
+ * to be a failure rather than a shrug -- a misread range accepts the
+ * interpreters this exists to turn away.
  */
 const declared = (manifest.engines?.node ?? '').trim();
-const floorParts = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(declared);
-if (!floorParts) {
-  fail(`engines.node is ${JSON.stringify(declared)}; this script only reads ">=x.y.z".`);
+const isSupported = parseRange(declared);
+if (!isSupported) {
+  fail(
+    `engines.node is ${JSON.stringify(declared)}; this script reads "||"-separated ` +
+      'clauses of "^x.y.z", ">=", ">", "<=", "<" and exact comparators.',
+  );
 }
-const floor = floorParts.slice(1, 4).map(Number);
-
-const clearsFloor = (version) => {
-  const parts = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version);
-  if (!parts) {
-    return false;
-  }
-  const found = parts.slice(1, 4).map(Number);
-  for (let i = 0; i < floor.length; i += 1) {
-    if (found[i] !== floor[i]) {
-      return found[i] > floor[i];
-    }
-  }
-  return true;
-};
 
 const versionOf = (executable) => {
   const probe = spawnSync(executable, ['--version'], { encoding: 'utf8' });
@@ -99,16 +105,21 @@ add(process.env.npm_node_execpath);
  * npm_node_execpath only survives one hop. The repository root delegates with
  * `npm --prefix web test`, and that nested npm is itself found on the shadowed
  * PATH, so it boots on the shadowing interpreter and then reports *that* as
- * npm_node_execpath -- both candidates above come back below the floor even
- * though a supported Node is installed and still on PATH behind the shadow.
+ * npm_node_execpath -- both candidates above come back unsupported even though
+ * a supported Node is installed and still on PATH behind the shadow.
  *
  * So fall back to scanning PATH, skipping any entry under a node_modules
  * directory: an interpreter vendored there is some package's dependency, never
  * the toolchain the developer selected, and those are exactly the entries npm
  * prepends. Ordinary installations (nvm, a system package, the CI setup-node
  * step, the Dockerfile's image) all sit outside node_modules and are found here.
+ *
+ * Which of several installed Nodes gets picked is then just PATH order, so the
+ * set this walks has to be the real one: with a lower bound standing in for it,
+ * a machine whose /usr/bin/node is a newer unsupported release got that one
+ * chosen for it and failed as if the product were broken.
  */
-if (!candidates.some((candidate) => clearsFloor(candidate.version))) {
+if (!candidates.some((candidate) => isSupported(candidate.version))) {
   const vendored = `${sep}node_modules${sep}`;
   for (const entry of (process.env.PATH ?? '').split(delimiter)) {
     if (entry && !`${entry}${sep}`.includes(vendored)) {
@@ -117,7 +128,7 @@ if (!candidates.some((candidate) => clearsFloor(candidate.version))) {
   }
 }
 
-const chosen = candidates.find((candidate) => clearsFloor(candidate.version));
+const chosen = candidates.find((candidate) => isSupported(candidate.version));
 if (!chosen) {
   const found = [...new Set(candidates.map((c) => `${c.version} (${c.path})`))].join(', ');
   fail(
@@ -130,7 +141,8 @@ if (!chosen) {
 if (chosen.path !== process.execPath) {
   console.error(
     `run-on-supported-node: PATH gave Node ${process.versions.node} (${process.execPath}), ` +
-      `below engines.node ${declared}; running on ${chosen.version} (${chosen.path}) instead.`,
+      `which engines.node ${declared} does not cover; ` +
+      `running on ${chosen.version} (${chosen.path}) instead.`,
   );
 }
 
