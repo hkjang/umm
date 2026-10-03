@@ -161,7 +161,28 @@ if (target.endsWith('.mjs') || target.endsWith('.js')) {
   entry = join(packageRoot, target);
 } else {
   const resolve = createRequire(manifestPath).resolve;
-  const dependencyManifestPath = resolve(`${target}/package.json`);
+  let dependencyManifestPath;
+  /*
+   * In a checkout where `npm ci` has not run yet there is no node_modules to
+   * resolve against, and letting that throw is the one failure mode this file
+   * had left unnamed: the uncaught MODULE_NOT_FOUND ends with `Node.js
+   * v<version>`, which reads as the shadowed-interpreter problem above -- and
+   * does so directly beneath this script's own notice about having switched
+   * interpreters. Two release verifications of `npm test` chased Node instead
+   * of the install. Name the install, and say it is not the interpreter.
+   */
+  try {
+    dependencyManifestPath = resolve(`${target}/package.json`);
+  } catch (error) {
+    if (error?.code !== 'MODULE_NOT_FOUND') {
+      throw error;
+    }
+    fail(
+      `${target} is not installed: nothing resolves ${target}/package.json from ` +
+        `${manifestPath}. Run \`npm ci --prefix ${packageRoot}\` first. This is a ` +
+        'missing install, not an unsupported interpreter.',
+    );
+  }
   const { bin } = JSON.parse(readFileSync(dependencyManifestPath, 'utf8'));
   const relative = typeof bin === 'string' ? bin : bin?.[target];
   if (!relative) {
