@@ -113,6 +113,7 @@ import {
 import BacklinkRow from '../components/BacklinkRow';
 import { relationLabel, relationOptions } from '../lib/edge-vocabulary';
 import { restoreAfterFailedWrite } from '../lib/optimistic-write';
+import { spaceDisplayName } from '../lib/space-name';
 import ClusterNode, { type ClusterNodeData } from '../components/ClusterNode';
 import { showError, showInfo, showSuccess } from '../ui-notifications';
 
@@ -2127,7 +2128,7 @@ function CanvasInner() {
     await dismissDream();
     navigate(`/dreams?focus=${id}`);
   };
-  const activeName = spaces.find((s) => s.id === activeSpace)?.name || 'My Space';
+  const activeName = spaceDisplayName(spaces, activeSpace, t('내 공간'));
 
   return (
     <div className="canvas-page" ref={canvasRef}>
