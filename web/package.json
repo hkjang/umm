@@ -8,8 +8,11 @@
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "prebuild": "node scripts/require-installed.mjs typescript vite",
     "build": "tsc -b && vite build",
+    "pretypecheck": "node scripts/require-installed.mjs typescript",
     "typecheck": "tsc -b --pretty false",
+    "prelint": "node scripts/require-installed.mjs oxlint prettier",
     "lint": "oxlint src && prettier --check src",
     "format": "prettier --write src",
     "test": "node scripts/run-on-supported-node.mjs vitest run",
