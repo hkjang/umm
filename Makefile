@@ -8,11 +8,26 @@ test-go:
 	go vet ./...
 	go test ./...
 
+# The frontend gates of the CI verify job, in the order ci.yml runs them, so
+# `make test-web` answers the same question CI will. The two that come first
+# are the ones whose verdict does not depend on the commit: the dependency
+# audit asks a registry that publishes new advisories daily, so a tree that
+# was green yesterday fails today without anyone touching it. Leaving the
+# audit out of this target is what let GHSA-68fv-2mgg-jv7q (source-map-js,
+# high) reach CI unseen — it turned a pull request red for something the
+# branch had not changed, and main was equally red. Keep this list in step
+# with the Frontend section of .github/workflows/ci.yml; `npm ci` is the one
+# step not repeated here, because installing is `make web`'s job and this
+# target should not delete a working node_modules.
 test-web:
+	npm --prefix web run test:offline-queue
+	npm --prefix web audit --audit-level=high
 	npm --prefix web run typecheck
 	npm --prefix web run lint
 	node web/scripts/check-i18n.mjs
 	npm --prefix web test
+	npm --prefix web run build
+	npm --prefix web run verify:pwa
 
 lint:
 	npm --prefix web run lint
