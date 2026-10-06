@@ -114,6 +114,7 @@ import BacklinkRow from '../components/BacklinkRow';
 import { relationLabel, relationOptions } from '../lib/edge-vocabulary';
 import { restoreAfterFailedWrite } from '../lib/optimistic-write';
 import { spaceDisplayName } from '../lib/space-name';
+import { downloadFileName } from '../lib/download-name';
 import ClusterNode, { type ClusterNodeData } from '../components/ClusterNode';
 import { showError, showInfo, showSuccess } from '../ui-notifications';
 
@@ -1964,7 +1965,7 @@ function CanvasInner() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `umm-${activeName}.md`;
+    anchor.download = downloadFileName(activeName, 'md');
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
     return true;
@@ -1988,7 +1989,7 @@ function CanvasInner() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `umm-${activeName}-${t('차례')}.md`;
+    anchor.download = downloadFileName(activeName, 'md', t('차례'));
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
     return true;
@@ -2022,7 +2023,7 @@ function CanvasInner() {
     const data = await canvasImage();
     const anchor = document.createElement('a');
     anchor.href = data;
-    anchor.download = `umm-${activeName}.png`;
+    anchor.download = downloadFileName(activeName, 'png');
     anchor.click();
     return true;
   };
@@ -2055,7 +2056,7 @@ function CanvasInner() {
     const width = image.naturalWidth * scale;
     const height = image.naturalHeight * scale;
     pdf.addImage(data, 'PNG', (pageWidth - width) / 2, (pageHeight - height) / 2, width, height, undefined, 'FAST');
-    pdf.save(`umm-${activeName.replace(/[\\/:*?"<>|]/g, '-')}.pdf`);
+    pdf.save(downloadFileName(activeName, 'pdf'));
     return true;
   };
   const runExport = async (kind: string, label: string, action: () => Promise<boolean>) => {
