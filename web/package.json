@@ -7,6 +7,7 @@
     "node": "^22.22.2 || ^24.15.0"
   },
   "scripts": {
+    "predev": "node scripts/require-installed.mjs vite",
     "dev": "vite --host 0.0.0.0",
     "prebuild": "node scripts/require-installed.mjs typescript vite",
     "build": "tsc -b && vite build",
@@ -19,7 +20,9 @@
     "test:watch": "node scripts/run-on-supported-node.mjs vitest",
     "test:offline-queue": "node scripts/run-on-supported-node.mjs scripts/verify-offline-queue.mjs",
     "verify:pwa": "node scripts/verify-pwa.mjs",
+    "pree2e": "node scripts/require-installed.mjs @playwright/test",
     "e2e": "playwright test",
+    "prepreview": "node scripts/require-installed.mjs vite",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {

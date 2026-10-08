@@ -24,7 +24,7 @@ const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
  * never to the root being tested.
  */
 const npmEntry = process.env.npm_execpath;
-const runNpmScript = (root, script) => {
+const runNpmScript = (root, script, scriptArgs = []) => {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('npm_')));
   const vendored = `${sep}node_modules${sep}`;
   env.PATH = (process.env.PATH ?? '')
@@ -33,6 +33,7 @@ const runNpmScript = (root, script) => {
     .join(delimiter);
 
   const args = ['--prefix', root, 'run', script];
+  if (scriptArgs.length > 0) args.push('--', ...scriptArgs);
   return npmEntry
     ? spawnSync(process.execPath, [npmEntry, ...args], { encoding: 'utf8', cwd: root, env })
     : spawnSync('npm', args, { encoding: 'utf8', cwd: root, env });
@@ -75,6 +76,9 @@ describe('a frontend gate run in a checkout where npm ci has not run', () => {
     ['typecheck', 'typescript'],
     ['lint', 'oxlint'],
     ['build', 'typescript'],
+    ['dev', 'vite'],
+    ['preview', 'vite'],
+    ['e2e', '@playwright/test'],
   ])(
     'tells %s which dependency is missing, where it looked, and how to install',
     (script, dependency) => {
@@ -87,12 +91,12 @@ describe('a frontend gate run in a checkout where npm ci has not run', () => {
     120_000,
   );
 
-  it.each(['typecheck', 'lint', 'build'])(
-    'refuses %s rather than reporting green',
+  it.each(['typecheck', 'lint', 'build', 'dev', 'preview', 'e2e'])(
+    'refuses %s with exit 1',
     (script) => {
       const run = runNpmScript(checkoutWithoutInstall(), script);
 
-      expect(run.status).not.toBe(0);
+      expect(run.status).toBe(1);
     },
     120_000,
   );
@@ -106,7 +110,7 @@ describe('a frontend gate run in a checkout where npm ci has not run', () => {
    * `npm test` chased Node instead of the install, so the exact wording of that
    * misdiagnosis is pinned out of the output.
    */
-  it.each(['typecheck', 'lint', 'build'])(
+  it.each(['typecheck', 'lint', 'build', 'dev', 'preview', 'e2e'])(
     'blames neither the interpreter nor a missing bin for %s',
     (script) => {
       const run = runNpmScript(checkoutWithoutInstall(), script);
@@ -114,7 +118,7 @@ describe('a frontend gate run in a checkout where npm ci has not run', () => {
       expect(run.stderr).not.toMatch(/Node\.js v\d/);
       expect(run.stderr).not.toContain('MODULE_NOT_FOUND');
       expect(run.stderr).not.toContain('Require stack');
-      for (const bin of ['tsc', 'oxlint', 'prettier', 'vite']) {
+      for (const bin of ['tsc', 'oxlint', 'prettier', 'vite', 'playwright']) {
         expect(run.stderr).not.toContain(`${bin}: not found`);
       }
     },
@@ -129,10 +133,17 @@ describe('a frontend gate run in a checkout where npm ci has not run', () => {
  * should not grow a line per run for a condition that holds.
  */
 describe('the same guard in this installed checkout', () => {
-  it('passes every dependency the three gates declare, and says nothing', () => {
+  it('passes every dependency the guarded scripts declare, and says nothing', () => {
     const run = spawnSync(
       process.execPath,
-      [join(packageRoot, 'scripts', 'require-installed.mjs'), 'typescript', 'oxlint', 'prettier', 'vite'],
+      [
+        join(packageRoot, 'scripts', 'require-installed.mjs'),
+        'typescript',
+        'oxlint',
+        'prettier',
+        'vite',
+        '@playwright/test',
+      ],
       { encoding: 'utf8', cwd: packageRoot },
     );
 
@@ -140,4 +151,22 @@ describe('the same guard in this installed checkout', () => {
     expect(run.stderr).toBe('');
     expect(run.stdout).toBe('');
   }, 30_000);
+
+  // These flags reach the real CLIs without starting a server or a browser.
+  it.each([
+    ['dev', '--help', /Usage:\s+\$ vite \[root\]/],
+    ['preview', '--help', /Usage:\s+\$ vite preview \[root\]/],
+    ['e2e', '--list', /Total: [1-9]\d* tests? in [1-9]\d* files?/],
+  ])(
+    'lets npm run %s reach its installed CLI',
+    (script, argument, cliOutput) => {
+      const run = runNpmScript(packageRoot, script, [argument]);
+
+      expect(run.status).toBe(0);
+      expect(run.stderr).toBe('');
+      expect(run.stdout).toMatch(cliOutput);
+      expect(run.stdout).not.toContain('require-installed:');
+    },
+    120_000,
+  );
 });
