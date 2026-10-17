@@ -5,6 +5,7 @@
   "scripts": {
     "typecheck": "npm --prefix web run typecheck",
     "lint": "npm --prefix web run lint",
+    "pretest": "node web/scripts/ensure-install.mjs",
     "test": "npm --prefix web test",
     "test:offline-queue": "npm --prefix web run test:offline-queue",
     "verify:pwa": "npm --prefix web run verify:pwa",
