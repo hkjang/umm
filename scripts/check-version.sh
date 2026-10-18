@@ -35,5 +35,23 @@ if [ ! -f "$root/docs/releases/v$version.md" ]; then
   status=1
 fi
 
+# The Go patch release is pinned twice and both pins have to name the same one.
+# go.mod decides what CI builds and scans with; the Dockerfile builder stage
+# decides what the release image is built with, and the official golang images
+# set GOTOOLCHAIN=local, so that stage ignores the `toolchain` line entirely.
+# Written after 2026-10-16, when only go.mod was raised: the CI vulnerability
+# gate went green while the released image still carried a standard library
+# with 12 known advisories. These are Go patch numbers rather than the product
+# version, so they are compared against each other instead of through check().
+go_toolchain="$(sed -n 's/^toolchain go\([0-9][0-9.]*\)$/\1/p' "$root/go.mod" | head -1)"
+go_builder="$(sed -n 's/^FROM golang:\([0-9][0-9.]*\)-alpine.*/\1/p' "$root/Dockerfile" | head -1)"
+# An empty side is a failure too: it means the line moved or changed shape, and
+# letting missing equal missing would leave this check dead but passing.
+if [ -z "$go_toolchain" ] || [ -z "$go_builder" ] || [ "$go_toolchain" != "$go_builder" ]; then
+  printf 'Go pin mismatch: go.mod `toolchain go...` is %s, Dockerfile `FROM golang:...-alpine` go-build stage is %s; both must name the same Go patch release\n' \
+    "${go_toolchain:-missing}" "${go_builder:-missing}" >&2
+  status=1
+fi
+
 [ "$status" -eq 0 ] && printf 'version %s is consistent across every file that carries it\n' "$version"
 exit "$status"
