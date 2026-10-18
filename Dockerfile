@@ -6,7 +6,7 @@ RUN npm ci --ignore-scripts
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.26.7-alpine AS go-build
+FROM golang:1.26.9-alpine AS go-build
 ARG VERSION=dev
 WORKDIR /src
 RUN apk add --no-cache ca-certificates
